@@ -155,14 +155,28 @@ const CSS = `
 /* Video page (full window over the app) */
 .dshl-pagewrap { position: absolute; inset: 0; z-index: 1; pointer-events: auto; background: var(--dsw-alias-bg-base, #fff); }
 .dshl.page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-.dshl.page .dshl-main { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 440px); align-items: stretch; padding-bottom: 16px; }
-.dshl.page .dshl-col { align-content: start; overflow: auto; }
+.dshl.page .dshl-main { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 420px); align-items: stretch; padding-bottom: 16px; }
+/* Video page: player on top, then the status row, then subtitles/glossary filling what is left; chat on the right. */
+.dshl.page .dshl-col { display: flex; flex-direction: column; min-height: 0; container-type: size; }
+.dshl.page .dshl-col > .dshl-drop { flex: 1; aspect-ratio: auto; min-height: 0; }
+.dshl.page .dshl-stage { flex: none; width: 100%; max-height: max(240px, calc(100cqh - 270px)); }
 .dshl.page .dshl-side { position: static; height: 100%; max-height: none; }
-.dshl.page.theater .dshl-side { display: flex; }
+.dshl-under { display: flex; flex-direction: column; flex: 1; min-height: 210px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--l1); }
+.dshl-under .dshl-sidetabs { align-items: center; padding: 0 12px 0 10px; }
+.dshl-under .dshl-sidetabs > button { flex: none; padding: 0 14px; }
+.dshl-tools.inline { flex: 1; justify-content: flex-end; min-width: 0; margin: 0; padding-left: 12px; }
+.dshl-tools.inline .dshl-field { flex: 0 1 220px; width: auto; height: 30px; margin: 0; }
+.dshl-tools.inline .dshl-seg { flex: none; }
+.dshl-under .dshl-panel { padding-top: 8px; }
+.dshl.page.theater .dshl-under { display: none; }
+.dshl.page.theater .dshl-stage { max-height: 100cqh; }
 @media (max-width: 1000px) {
   .dshl.page { display: block; overflow: auto; }
   .dshl.page .dshl-main { grid-template-columns: minmax(0, 1fr); align-items: start; }
-  .dshl.page .dshl-col { overflow: visible; }
+  .dshl.page .dshl-col { container-type: normal; }
+  .dshl.page .dshl-col > .dshl-drop { min-height: 320px; aspect-ratio: 16 / 9; }
+  .dshl.page .dshl-stage { max-height: none; }
+  .dshl-under { flex: none; height: 60vh; min-height: 360px; }
   .dshl.page .dshl-side { height: 70vh; min-height: 420px; }
 }
 @media (max-width: 600px) {
@@ -364,9 +378,9 @@ const CSS = `
   border: 1px solid var(--line); border-radius: 12px; background: var(--l1); }
 @media (max-width: 1000px) { .dshl-side { position: static; max-height: none; } }
 .dshl-sidetabs { display: flex; gap: 4px; padding: 0 10px; border-bottom: 1px solid var(--line); }
-.dshl-sidetabs button { flex: 1; height: 42px; margin-bottom: -1px; padding: 0 4px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font-size: 13.5px; white-space: nowrap; cursor: pointer; }
-.dshl-sidetabs button:hover { color: var(--ink); }
-.dshl-sidetabs button.on { border-bottom-color: var(--ink); color: var(--ink); font-weight: 600; }
+.dshl-sidetabs > button { flex: 1; height: 42px; margin-bottom: -1px; padding: 0 4px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font-size: 13.5px; white-space: nowrap; cursor: pointer; }
+.dshl-sidetabs > button:hover { color: var(--ink); }
+.dshl-sidetabs > button.on { border-bottom-color: var(--ink); color: var(--ink); font-weight: 600; }
 .dshl-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 14px; }
 .dshl-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .dshl-tools .dshl-seg { height: 30px; }

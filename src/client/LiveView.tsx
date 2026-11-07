@@ -34,7 +34,7 @@ interface Task { id: string; url?: string; kind: 'original' | 'subtitled' | 'vid
 interface Term { src: string; tr: Record<string, string>; origin: 'auto' | 'user' }
 interface Dep { name: string; ok: boolean; hint?: string }
 interface Armed { jobId: string; rtmp?: string; key?: string }
-type Tab = 'chat' | 'transcript' | 'glossary'
+type Tab = 'transcript' | 'glossary'
 
 export interface LiveViewInjected {
   sessionId: string
@@ -149,7 +149,7 @@ export function LiveView(props: LiveViewInjected) {
   const [subStyle, setSubStyle] = useState<SubStyle>(() => loadStyle(lines))
   const [delay, setDelay] = useState(8)
   const [theater, setTheater] = useState(false)
-  const [tab, setTab] = useState<Tab>(onClose ? 'chat' : 'transcript')
+  const [tab, setTab] = useState<Tab>('transcript')
   const [query, setQuery] = useState('')
   const [trMode, setTrMode] = useState<'lines' | 'read'>('lines')
   /** Reading view: which languages to show ('src' = original); empty = follow the subtitle lines. */
@@ -456,6 +456,77 @@ export function LiveView(props: LiveViewInjected) {
     </div>
   )
 
+  const trSeg = (
+    <div className="dshl-seg">
+      <button className={trMode === 'lines' ? 'on' : ''} onClick={() => setTrMode('lines')}>{t('tr.mode.lines')}</button>
+      <button className={trMode === 'read' ? 'on' : ''} onClick={() => setTrMode('read')}>{t('tr.mode.read')}</button>
+    </div>
+  )
+  const trSearch = <label className="dshl-field small block"><Icon.search /><input type="text" value={query} placeholder={t('tr.search')} onChange={e => setQuery(e.target.value)} /></label>
+  const trAction = trMode === 'lines'
+    ? <button className="dshl-btn small quiet" title={t('tr.copy')} onClick={copyAll}><Icon.copy /> {t('tr.copyShort')}</button>
+    : <button className="dshl-btn small quiet" onClick={() => downloadMd()}><Icon.download /> {t('tr.md')}</button>
+  /** On the video page the tools share the tab row, leaving the height to the lines. */
+  const inline = pageMode && tab === 'transcript' && !!job
+  /** Subtitle lines and glossary: under the player on the video page, beside it in a conversation. */
+  const transcriptBox = (
+    <>
+      <div className="dshl-sidetabs" role="tablist">
+        {(['transcript', 'glossary'] as Tab[]).map(k => (
+          <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{t(`tab.${k}` as LiveKey)}</button>
+        ))}
+        {inline && <div className="dshl-tools inline">{trMode === 'lines' && trSearch}{trSeg}{trAction}</div>}
+      </div>
+      {!job && <div className="dshl-panel dshl-muted">{t('tr.empty')}</div>}
+
+      {tab === 'transcript' && job && (
+        <div className="dshl-panel">
+          {!pageMode && <div className="dshl-tools">{trSeg}<span className="grow" />{trAction}</div>}
+          {trMode === 'lines' ? (
+            !pageMode && trSearch
+          ) : readable.length > 1 && (
+            <div className="dshl-checks2" role="group">
+              {readable.map(k => (
+                <button key={k} className={readLangs.includes(k) ? 'on' : ''} aria-pressed={readLangs.includes(k)} onClick={() => toggleRead(k)}>
+                  <i aria-hidden="true" />{k === 'src' ? nameWithSpoken('src') : langName(k)}
+                </button>
+              ))}
+            </div>
+          )}
+          {trMode === 'lines' ? (
+            <div className="dshl-lines" ref={linesBox} onWheel={() => { userScrolled.current = Date.now() }} onTouchMove={() => { userScrolled.current = Date.now() }}>
+              {shown.length === 0 && <div className="dshl-muted pad">{t('tr.empty')}</div>}
+              {shown.map(c => (
+                <button className={`dshl-line ${c.id === activeId ? 'active' : ''} ${c.polished ? '' : 'raw'}`} key={c.id} onClick={() => player.current?.seek(c.start)}>
+                  <span className="ts">{CLOCK(c.start)}</span>
+                  <span className="txt">
+                    {shownLines.map((k, i) => { const v = lineText(c, k); return v ? <span className={i === 0 ? 'main' : 'sub'} key={k}>{v}</span> : null })}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="dshl-read">
+              {paragraphs.length === 0 && <div className="dshl-muted pad">{t('tr.empty')}</div>}
+              {paragraphs.some(p => p.speaker) && <p className="dshl-muted small">{t('tr.speakers.tip')}</p>}
+              {paragraphs.map((p, i) => (
+                <section key={i} className={p.cues.some(c => c.id === activeId) ? 'active' : ''}>
+                  <header>
+                    {p.speaker && <b>{speakerName(p.speaker)}</b>}
+                    <button className="ts" onClick={() => player.current?.seek(p.start)}>{CLOCK(p.start)}</button>
+                  </header>
+                  {readLangs.filter(l => p.texts[l]).map((l, k) => <p key={l} className={k === 0 ? 'src' : 'tr'}>{p.texts[l]}</p>)}
+                </section>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'glossary' && job && <GlossaryPanel jobId={job.id} terms={terms} targets={job.tgtLangs} langName={langName} t={t} onTerms={setTerms} />}
+    </>
+  )
+
   return (
     <div className={`dshl ${theater ? 'theater' : ''} ${pageMode ? 'page' : ''}`} data-dsh-own-drop="dsh-live"
       // Files dropped here belong to this view: keep them away from the chat composer's page-wide drop handler.
@@ -542,74 +613,12 @@ export function LiveView(props: LiveViewInjected) {
               <UsagePill usage={job.usage} t={t} ui={ui} />
               {job.status === 'running' && !job.vod && <button className="dshl-btn small" onClick={stop}>{t('in.stop')}</button>}
             </div>
+            {pageMode && <section className="dshl-under">{transcriptBox}</section>}
             </>}
           </div>
 
           <aside className="dshl-side">
-            <div className="dshl-sidetabs" role="tablist">
-              {((pageMode ? ['chat', 'transcript', 'glossary'] : ['transcript', 'glossary']) as Tab[]).map(k => (
-                <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{t(`tab.${k}` as LiveKey)}</button>
-              ))}
-            </div>
-
-            {tab !== 'chat' && !job && <div className="dshl-panel dshl-muted">{t('tr.empty')}</div>}
-
-            {tab === 'transcript' && job && (
-              <div className="dshl-panel">
-                <div className="dshl-tools">
-                  <div className="dshl-seg">
-                    <button className={trMode === 'lines' ? 'on' : ''} onClick={() => setTrMode('lines')}>{t('tr.mode.lines')}</button>
-                    <button className={trMode === 'read' ? 'on' : ''} onClick={() => setTrMode('read')}>{t('tr.mode.read')}</button>
-                  </div>
-                  <span className="grow" />
-                  {trMode === 'lines'
-                    ? <button className="dshl-btn small quiet" title={t('tr.copy')} onClick={copyAll}><Icon.copy /> {t('tr.copyShort')}</button>
-                    : <button className="dshl-btn small quiet" onClick={() => downloadMd()}><Icon.download /> {t('tr.md')}</button>}
-                </div>
-                {trMode === 'lines' ? (
-                  <label className="dshl-field small block"><Icon.search /><input type="text" value={query} placeholder={t('tr.search')} onChange={e => setQuery(e.target.value)} /></label>
-                ) : readable.length > 1 && (
-                  <div className="dshl-checks2" role="group">
-                    {readable.map(k => (
-                      <button key={k} className={readLangs.includes(k) ? 'on' : ''} aria-pressed={readLangs.includes(k)} onClick={() => toggleRead(k)}>
-                        <i aria-hidden="true" />{k === 'src' ? nameWithSpoken('src') : langName(k)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {trMode === 'lines' ? (
-                  <div className="dshl-lines" ref={linesBox} onWheel={() => { userScrolled.current = Date.now() }} onTouchMove={() => { userScrolled.current = Date.now() }}>
-                    {shown.length === 0 && <div className="dshl-muted pad">{t('tr.empty')}</div>}
-                    {shown.map(c => (
-                      <button className={`dshl-line ${c.id === activeId ? 'active' : ''} ${c.polished ? '' : 'raw'}`} key={c.id} onClick={() => player.current?.seek(c.start)}>
-                        <span className="ts">{CLOCK(c.start)}</span>
-                        <span className="txt">
-                          {shownLines.map((k, i) => { const v = lineText(c, k); return v ? <span className={i === 0 ? 'main' : 'sub'} key={k}>{v}</span> : null })}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="dshl-read">
-                    {paragraphs.length === 0 && <div className="dshl-muted pad">{t('tr.empty')}</div>}
-                    {paragraphs.some(p => p.speaker) && <p className="dshl-muted small">{t('tr.speakers.tip')}</p>}
-                    {paragraphs.map((p, i) => (
-                      <section key={i} className={p.cues.some(c => c.id === activeId) ? 'active' : ''}>
-                        <header>
-                          {p.speaker && <b>{speakerName(p.speaker)}</b>}
-                          <button className="ts" onClick={() => player.current?.seek(p.start)}>{CLOCK(p.start)}</button>
-                        </header>
-                        {readLangs.filter(l => p.texts[l]).map((l, k) => <p key={l} className={k === 0 ? 'src' : 'tr'}>{p.texts[l]}</p>)}
-                      </section>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {tab === 'chat' && <ChatPanel face={chatFace} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} />}
-
-            {tab === 'glossary' && job && <GlossaryPanel jobId={job.id} terms={terms} targets={job.tgtLangs} langName={langName} t={t} onTerms={setTerms} />}
+            {pageMode ? <ChatPanel face={chatFace} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} /> : transcriptBox}
           </aside>
         </main>
       )}
