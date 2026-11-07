@@ -131,9 +131,17 @@ export class LiveJob extends EventEmitter {
     }
   }
 
+  /** Start subtitles by themselves once media flows (new jobs; not ones brought back after a restart). */
+  autoSubs = false
+
   private setStatus(status: JobStatus, message?: string): void {
     this.status = status
     this.message = message
+    // Media is flowing (a push source stops "waiting"): subtitles start without being asked, once.
+    if (this.autoSubs && status === 'running' && !message && this.subs.state === 'off') {
+      this.autoSubs = false
+      setTimeout(() => void this.startSubs(0).catch(err => this.deps.log(`[${this.id}] auto subtitles: ${(err as Error).message}`)), 0)
+    }
     this.deps.log(`[${this.id}] ${status}${message ? `: ${message}` : ''}`)
     this.persist()
     this.emit('state', this.summary())
@@ -381,7 +389,12 @@ export class LiveJob extends EventEmitter {
       at = segs[i]!.start
       input = ['-live_start_index', String(i), '-max_reload', '100000', '-i', this.m3u8]
     }
-    const provider = this.deps.makeProvider()
+    let provider: SpeechProvider
+    try { provider = this.deps.makeProvider() } catch (err) {
+      // No key / nothing installed: leave subtitles off and say why.
+      this.setStatus(this.status, (err as Error).message)
+      return
+    }
     this.provider = provider
     this.runOffset = at
     this.subs = { state: 'running', at }

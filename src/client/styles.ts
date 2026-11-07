@@ -471,7 +471,7 @@ const CSS = `
 .dshl .srow { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; font-size: 13.5px; }
 .dshl-pop.settings { width: 320px; padding: 6px 12px; }
 .dshl-pop.settings .srow + .srow { border-top: 1px solid var(--line-soft); }
-.dshl-pop.settings .srow > select, .dshl-pop.settings .srow > .dshl-seg { width: 148px; }
+.dshl-pop.settings .srow > select, .dshl-pop.settings .srow > .dshl-seg { width: 168px; }
 .dshl-pop.settings .srow > .dshl-seg button { flex: 1; padding: 0 6px; }
 .dshl .srow.col { display: grid; justify-content: stretch; gap: 8px; padding: 10px 0; }
 .dshl .srow .keyline { display: flex; align-items: center; gap: 6px; }
@@ -480,7 +480,11 @@ const CSS = `
   font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
 .dshl .srow .ok { color: var(--ok); font-size: 12.5px; }
 .dshl .srow .bad { color: var(--live); font-size: 12.5px; }
-.dshl .srow a { color: var(--accent); font-size: 12.5px; text-decoration: none; }
+.dshl .srow a { color: var(--accent); font-size: 12.5px; text-decoration: none; white-space: nowrap; }
+.dshl .srow .keyline .from { color: var(--faint); font-size: 12px; }
+.dshl .srow .keyline .dshl-link { margin-left: auto; }
+.dshl .srow .keyfoot { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: var(--faint); font-size: 12px; line-height: 1.5; }
+.dshl .srow .hint { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
 .dshl-pop.usage { min-width: 320px; padding: 12px 14px; }
 .dshl-pop.usage h3 { margin: 0 0 8px; color: var(--muted); font-size: 12.5px; font-weight: 600; }
 .dshl-pop.usage table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }

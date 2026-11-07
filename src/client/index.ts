@@ -13,11 +13,40 @@ import { openPage, PasteChip, SidebarButton, VideoPage, type SessionsLike } from
 
 export const inject = ['slots', 'locale', 'sessions', 'workspaces']
 
+/**
+ * The conversation services the pages use, the same on older and newer
+ * DS-Harness: newer versions open conversations through uiWorkspace, mark the
+ * one on screen as retained by the main view, and assemble messages in
+ * uiConversation.
+ */
+function sessionsOf(ctx: any, extra: { uiWorkspace?: any; uiConversation?: any }): SessionsLike {
+  const s = ctx.sessions
+  const list = () => s.list.getSnapshot()
+  return {
+    current: () => list().current ?? (Object.values(list().byId ?? {}) as any[]).find(x => (x?.retainedBy?.mainView ?? 0) > 0)?.id,
+    has: id => !!list().byId?.[id],
+    open: id => (extra.uiWorkspace?.openSession ? extra.uiWorkspace.openSession(id) : s.open(id)),
+    create: o => s.create(o),
+    face: id => s.binding(id)?.session,
+    chat: id => {
+      const b = s.binding(id)
+      if (!b || !extra.uiConversation) return undefined
+      try { return extra.uiConversation.binding(b).target('chat') } catch { return undefined }
+    },
+    subscribe: fn => s.list.subscribe(fn),
+  }
+}
+
 export function apply(ctx: any): void {
   ensureStyles()
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-live: dictionaries')
   const t = ctx.locale.bind(NS) as (key: LiveKey) => string
-  const sessions = (): SessionsLike => ctx.sessions
+  // Newer DS-Harness services, picked up when present (older versions have neither).
+  const extra: { uiWorkspace?: any; uiConversation?: any } = {}
+  ctx.inject(['uiWorkspace'], (c: any) => { c.effect(() => { extra.uiWorkspace = c.uiWorkspace; return () => { extra.uiWorkspace = undefined } }, 'dsh-live: workspace navigation') })
+  ctx.inject(['uiConversation'], (c: any) => { c.effect(() => { extra.uiConversation = c.uiConversation; return () => { extra.uiConversation = undefined } }, 'dsh-live: conversation view') })
+  let adapter: SessionsLike | undefined
+  const sessions = (): SessionsLike => (adapter ??= sessionsOf(ctx, extra))
 
   ctx.slots.inject('conversation.view', () => ctx.slots.register({
     name: 'conversation.view',
@@ -58,7 +87,7 @@ export function apply(ctx: any): void {
     if (!s) return
     const page = pageStore.get()
     if (page.open && page.sessionId === r.sessionId) return
-    if (s.list.getSnapshot().current !== r.sessionId) return
+    if (s.current() !== r.sessionId) return
     void openPage(s, { sessionId: r.sessionId })
   }), 'dsh-live: open requests')
 }

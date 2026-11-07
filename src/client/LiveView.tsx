@@ -9,7 +9,7 @@ import { SubtitleMenu } from './SubtitleMenu.tsx'
 import type { LiveKey } from './locales.ts'
 import { LoginDialog } from './LoginDialog.tsx'
 import { Player, type CueLike, type PlayerHandle, type PlayerMenu } from './Player.tsx'
-import { Settings, type Browser, type KeyInfo } from './Settings.tsx'
+import { engineLabel, Settings, type Browser, type Provider } from './Settings.tsx'
 import { loadStyle, reconcile, saveStyle, type SubStyle } from './subStyle.tsx'
 
 type Source = 'url' | 'push' | 'file'
@@ -41,6 +41,8 @@ export interface LiveViewInjected {
   t: (key: LiveKey) => string
   /** Page mode (video page): the session's chat lives in the side panel. */
   chatFace?: SessionFaceLike
+  /** Page mode: the session's messages, on DS-Harness versions that keep them apart. */
+  chatSource?: { getSnapshot(): any; subscribe(fn: () => void): () => void }
   /** Page mode: leave the video page. */
   onClose?: () => void
   /** A link to open right away (sidebar, paste prompt). */
@@ -114,7 +116,7 @@ const siteName = (url: string) => /youtu\.?be/.test(url) ? 'YouTube' : /bilibili
 const media = (dirId: string, file: string) => `/live/media/${encodeURIComponent(dirId)}/${encodeURIComponent(file)}`
 
 export function LiveView(props: LiveViewInjected) {
-  const { sessionId, t, chatFace, onClose, pending, onPendingDone } = props
+  const { sessionId, t, chatFace, chatSource, onClose, pending, onPendingDone } = props
   const pageMode = !!onClose
   // What to watch and how
   const [input, setInput] = useState('')
@@ -128,7 +130,9 @@ export function LiveView(props: LiveViewInjected) {
   const [spoken, setSpoken] = useState('auto')
   const [login, setLoginRaw] = useState('auto')
   const [browsers, setBrowsers] = useState<Browser[]>([])
-  const [openaiKey, setOpenaiKey] = useState<KeyInfo>({ set: false })
+  const [providers, setProviders] = useState<Provider[]>([])
+  const [keysShared, setKeysShared] = useState(false)
+  const engineName = (id: string) => engineLabel(t, id)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Environment
   const [langs, setLangs] = useState<Record<string, string>>({})
@@ -166,16 +170,22 @@ export function LiveView(props: LiveViewInjected) {
   const langName = useCallback((k: string) => (k === 'src' ? t('sub.source') : langLabel(k, ui, langs[k])), [langs, t, ui])
   // Lines on screen: the job's own lines while one is shown, else the picker.
   const shownLines = lines
-  const options = () => ({ mode, srcLang: spoken, tgtLangs: translationsOf(lines), provider: engine || 'local', conversationId: sessionId })
+  /** The chosen recognition, or — when it can't run here (no key, not installed) — the first one that can. */
+  const usableEngine = () => {
+    const want = engine || 'local'
+    const p = providers.find(x => x.id === want)
+    return !p || p.ready ? want : (providers.find(x => x.ready)?.id ?? want)
+  }
+  const options = () => ({ mode, srcLang: spoken, tgtLangs: translationsOf(lines), provider: usableEngine(), conversationId: sessionId })
 
   // ── Load environment and any job of this conversation ──
   useEffect(() => {
     fetch('/live/api/deps').then(r => r.json()).then(d => {
       setDeps(d.deps ?? []); setLangs(d.langs ?? {}); setHasTranslator(!!d.translator)
       if (d.dataDir) setJobsDir(`${d.dataDir}/jobs`)
-      if (d.keys?.openai) setOpenaiKey(d.keys.openai)
-      // OpenAI when it has a key, else this Mac — unless the user already chose.
-      setEngineRaw(prev => prev || (d.keys?.openai?.set ? 'openai' : 'local'))
+      setProviders(d.providers ?? []); setKeysShared(!!d.keysShared)
+      // This computer when it can, else an online service with a key — unless the user already chose.
+      setEngineRaw(prev => prev || d.defaultEngine || 'local')
     }).catch(() => {})
     fetch('/live/api/settings').then(r => r.json()).then(s => { setLoginRaw(s.cookies ?? 'auto'); setBrowsers(s.browsers ?? []) }).catch(() => {})
     fetch(`/live/api/job?conversationId=${encodeURIComponent(sessionId)}`).then(r => r.json()).then(j => {
@@ -279,7 +289,8 @@ export function LiveView(props: LiveViewInjected) {
   const startSubs = async (from?: number) => {
     if (!job) return
     setError('')
-    if ((engine || 'local') === 'openai' && !openaiKey.set) { setSettingsOpen(true); setError(t('set.key.needed')); return }
+    const p = providers.find(x => x.id === usableEngine())
+    if (p && !p.ready) { setSettingsOpen(true); setError(t(p.online ? 'set.key.needed' : 'set.local.needed').replace('{s}', engineName(p.id))); return }
     try { setJob(await post('subs', { ...options(), jobId: job.id, action: 'start', from })) } catch (e) { setError((e as Error).message) }
   }
   const pauseSubs = async () => { if (job) setJob(await post('subs', { jobId: job.id, action: 'pause' }).catch(() => job)) }
@@ -551,8 +562,8 @@ export function LiveView(props: LiveViewInjected) {
           {canDownloadLink && <button className="dshl-btn icon" onClick={downloadOnly} title={t('in.download.tip')}><Icon.download /></button>}
           <button className="dshl-btn primary" onClick={() => start()} disabled={!classify(input)}>{t('in.open')}</button>
           <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={setMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
-            login={login} onLogin={chooseLogin} browsers={browsers} openai={openaiKey}
-            onOpenai={k => { setOpenaiKey(k); if (k.set) { setEngine('openai'); setError('') } }}
+            login={login} onLogin={chooseLogin} browsers={browsers} providers={providers} shared={keysShared} name={engineName}
+            onKey={(id, k) => { setProviders(ps => ps.map(p => p.id === id ? { ...p, key: k, ready: k.set } : p)); if (k.set) setError('') }}
             open={settingsOpen} onOpen={setSettingsOpen} t={t} />
         </div>
       </header>
@@ -618,7 +629,7 @@ export function LiveView(props: LiveViewInjected) {
           </div>
 
           <aside className="dshl-side">
-            {pageMode ? <ChatPanel face={chatFace} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} /> : transcriptBox}
+            {pageMode ? <ChatPanel face={chatFace} source={chatSource} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} /> : transcriptBox}
           </aside>
         </main>
       )}
@@ -739,7 +750,7 @@ function UsagePill({ usage, t, ui }: { usage?: Usage; t: (k: LiveKey) => string;
               </tbody>
             </table>
           ) : <p className="dshl-muted">{t('usage.none')}</p>}
-          {audio.map(([k, v]) => <p key={k} className="dshl-muted small">{t(k === 'openai' ? 'usage.audio.openai' : 'usage.audio.local').replace('{t}', CLOCK(v))}</p>)}
+          {audio.map(([k, v]) => <p key={k} className="dshl-muted small">{t('usage.audio').replace('{s}', engineLabel(t, k)).replace('{t}', CLOCK(v))}</p>)}
         </div>
       )}
     </span>

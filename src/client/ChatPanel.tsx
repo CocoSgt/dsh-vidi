@@ -31,8 +31,8 @@ const toolsOf = (blocks: readonly Block[] | undefined) =>
  * it (same tools, files, history), shown the way this page needs it — short
  * messages, which tools ran, and one-tap prompts that carry the current time.
  */
-export function ChatPanel(props: { face?: SessionFaceLike; now: number; lines: string[]; hasVideo: boolean; jobsDir?: string; t: (k: LiveKey) => string }) {
-  const { face, now, lines, hasVideo, jobsDir, t } = props
+export function ChatPanel(props: { face?: SessionFaceLike; source?: { getSnapshot(): any; subscribe(fn: () => void): () => void }; now: number; lines: string[]; hasVideo: boolean; jobsDir?: string; t: (k: LiveKey) => string }) {
+  const { face, source, now, lines, hasVideo, jobsDir, t } = props
   // Files in the video folder open from the chat (played or downloaded by the browser).
   const fileUrl = (p: string) => {
     if (!jobsDir || !p.startsWith(`${jobsDir}/`)) return undefined
@@ -40,16 +40,19 @@ export function ChatPanel(props: { face?: SessionFaceLike; now: number; lines: s
     return id && rest.length ? `/live/media/${encodeURIComponent(id)}/${rest.map(encodeURIComponent).join('/')}` : undefined
   }
   const snap = useSyncExternalStore(face?.subscribe.bind(face) ?? NOOP, () => face?.getSnapshot() ?? EMPTY)
+  // Newer DS-Harness: messages come from the conversation's chat view ("legacy" keeps the flat list).
+  const view = useSyncExternalStore(source?.subscribe.bind(source) ?? NOOP, () => source?.getSnapshot() ?? EMPTY)
+  const flat = view?.legacy ?? snap
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const list = useRef<HTMLDivElement>(null)
   const box = useRef<HTMLTextAreaElement>(null)
 
-  const nodes: any[] = Array.isArray(snap.nodes) ? snap.nodes : Array.isArray(snap.chat?.nodes) ? snap.chat.nodes : []
+  const nodes: any[] = Array.isArray(flat.nodes) ? flat.nodes : Array.isArray(snap.chat?.nodes) ? snap.chat.nodes : []
   const running: boolean = !!snap.running
-  const partialText = textOf(snap.partial?.blocks)
-  const partialTools = toolsOf(snap.partial?.blocks)
-  const runningTools: string[] = (snap.runningCalls ?? []).map((c: any) => c.name ?? c.toolName ?? '').filter(Boolean)
+  const partialText = textOf(flat.partial?.blocks)
+  const partialTools = toolsOf(flat.partial?.blocks)
+  const runningTools: string[] = (flat.runningCalls ?? []).map((c: any) => c.name ?? c.toolName ?? '').filter(Boolean)
 
   useEffect(() => { list.current?.scrollTo({ top: list.current.scrollHeight }) }, [nodes.length, partialText.length, running])
 

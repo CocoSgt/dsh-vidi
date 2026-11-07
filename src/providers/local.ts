@@ -1,9 +1,25 @@
 import type { ProviderCue, SpeechProvider } from '../types.ts'
-import { pcmToWav, type WhisperServer } from '../whisper.ts'
+import { pcmToWav } from '../whisper.ts'
 import { PauseChunker, type Chunk } from './chunker.ts'
 
+/** What turns one chunk of speech into text: the local whisper server or an online service. */
+export interface ChunkEngine {
+  /** Engine id, used for usage and logs ('local', 'gemini', 'groq'…). */
+  name: string
+  acquire?(): Promise<unknown>
+  release?(): void
+  transcribe(wav: Buffer, lang: string, prompt: string): Promise<{
+    text: string
+    lang?: string
+    langProb?: number
+    logprob?: number
+    /** Timed pieces within the chunk (seconds from its start), when the service gives them. */
+    segments?: { start: number; end: number; text: string }[]
+  }>
+}
+
 export interface LocalOptions {
-  whisper: WhisperServer
+  engine: ChunkEngine
   /** Source language code or 'auto'. */
   lang: string
   /** Shortest chunk worth sending (seconds). */
@@ -27,12 +43,31 @@ const HALLUCINATION = new RegExp([
 ].join('|'), 'i')
 
 /**
- * Local whisper.cpp provider. Cuts the audio at short pauses and transcribes
- * each chunk on the resident whisper-server, strictly in order; the previous
- * text and the glossary ride along as prompt for continuity.
+ * Split a long chunk's text into subtitle-sized lines at sentence ends,
+ * sharing the time by length (services that give no timings).
+ */
+export function splitTimed(text: string, start: number, end: number): { start: number; end: number; text: string }[] {
+  if (end - start < 7) return [{ start, end, text }]
+  const parts = text.match(/[^.!?。！？]+[.!?。！？]+["'”’」』)）]*\s*|[^.!?。！？]+$/g)?.map(p => p.trim()).filter(Boolean) ?? [text]
+  if (parts.length < 2) return [{ start, end, text }]
+  const total = parts.reduce((n, p) => n + p.length, 0)
+  let t = start
+  return parts.map(p => {
+    const d = (end - start) * p.length / total
+    const piece = { start: t, end: t + d, text: p }
+    t += d
+    return piece
+  })
+}
+
+/**
+ * Chunked recognition: cuts the audio at short pauses and transcribes each
+ * chunk with the engine (the resident whisper-server, or an online service),
+ * strictly in order; the previous text and the glossary ride along as prompt
+ * for continuity.
  */
 export class LocalProvider implements SpeechProvider {
-  readonly name = 'local'
+  get name(): string { return this.opts.engine.name }
   readonly translates = false
   private readonly chunker: PauseChunker
   private queue: Promise<void> = Promise.resolve()
@@ -53,7 +88,7 @@ export class LocalProvider implements SpeechProvider {
   async start(emit: (cue: ProviderCue) => void, onError: (err: Error) => void): Promise<void> {
     this.emit = emit
     this.onError = onError
-    await this.opts.whisper.acquire()
+    await this.opts.engine.acquire?.()
   }
 
   push(pcm: Buffer): void {
@@ -76,7 +111,7 @@ export class LocalProvider implements SpeechProvider {
         const hint = (this.opts.prompt?.(start, end) ?? '').slice(-400)
         const prompt = [hint, this.lastText.slice(-160)].filter(Boolean).join(' ')
         const lang0 = this.opts.lang === 'auto' ? (this.locked ?? 'auto') : this.opts.lang
-        const { text, lang, langProb, logprob } = await this.opts.whisper.transcribe(wav, lang0, prompt)
+        const { text, lang, langProb, logprob, segments } = await this.opts.engine.transcribe(wav, lang0, prompt)
         if (!meaningful(text) || HALLUCINATION.test(text.trim())) return
         // Low confidence: usually music or noise turned into words.
         if (logprob !== undefined && logprob < -1.1) return
@@ -87,7 +122,10 @@ export class LocalProvider implements SpeechProvider {
         this.lastShort = text.length < 24 ? text : ''
         if (lang0 === 'auto' && lang && (langProb ?? 0) >= 0.8 && text.replace(/\s/g, '').length >= 12) this.locked = lang
         this.lastText = text
-        this.emit?.({ start, end, src: text, lang: lang0 === 'auto' ? lang : lang0, final: true })
+        const pieces = segments && segments.length > 1
+          ? segments.filter(x => meaningful(x.text)).map(x => ({ start: start + x.start, end: Math.min(end, start + x.end), text: x.text.trim() }))
+          : splitTimed(text, start, end)
+        for (const p of pieces) this.emit?.({ start: p.start, end: p.end, src: p.text, lang: lang0 === 'auto' ? lang : lang0, final: true })
       } catch (err) {
         this.onError?.(err as Error)
       } finally {
@@ -100,6 +138,6 @@ export class LocalProvider implements SpeechProvider {
     this.chunker.flush(1)
     await this.queue
     this.stopped = true
-    this.opts.whisper.release()
+    this.opts.engine.release?.()
   }
 }

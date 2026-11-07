@@ -6,11 +6,22 @@ import type { LiveKey } from './locales.ts'
 import { LiveView } from './LiveView.tsx'
 
 /** The client services this page uses (DS-Harness ctx.sessions). */
+/** A changing value the page can subscribe to (DS-Harness snapshot sources). */
+export interface Source<T> { getSnapshot(): T; subscribe(fn: () => void): () => void }
+
+/** The conversation services this page uses, smoothed over DS-Harness versions (see index.ts). */
 export interface SessionsLike {
-  list: { getSnapshot(): { current?: string; byId: Record<string, unknown> } }
+  /** The conversation on screen. */
+  current(): string | undefined
+  has(id: string): boolean
   open(id: string): void
   create(opts: { cwd?: string; workspaceId?: string }): Promise<string>
-  binding(id: string): { session: SessionFaceLike } | undefined
+  /** Send, stop, running state. */
+  face(id: string): SessionFaceLike | undefined
+  /** The conversation's messages (newer DS-Harness keeps them apart from the session state). */
+  chat(id: string): Source<any> | undefined
+  /** Fires when the conversation list changes (opened, created, loaded). */
+  subscribe(fn: () => void): () => void
 }
 
 const PAGE_SESSION = 'dsh-live.pageSession'
@@ -28,7 +39,7 @@ export interface WorkspacesLike {
 async function pageSession(sessions: SessionsLike, workspaces: WorkspacesLike, title: string): Promise<string> {
   let saved: string | null = null
   try { saved = localStorage.getItem(PAGE_SESSION) } catch {}
-  if (saved && sessions.list.getSnapshot().byId[saved]) return saved
+  if (saved && sessions.has(saved)) return saved
   const deps = await fetch('/live/api/deps').then(r => r.json()).catch(() => ({}))
   const ws = await workspaces.create({ path: deps.dataDir })
   const workspaceId = ws.workspaceId ?? ws.id
@@ -44,7 +55,7 @@ async function pageSession(sessions: SessionsLike, workspaces: WorkspacesLike, t
  * The page's session becomes current so its chat is live; closing goes back.
  */
 export async function openPage(sessions: SessionsLike, opts: { sessionId?: string; pending?: string; workspaces?: WorkspacesLike; title?: string } = {}): Promise<void> {
-  const current = sessions.list.getSnapshot().current
+  const current = sessions.current()
   const sid = opts.sessionId ?? await pageSession(sessions, opts.workspaces!, opts.title ?? 'Video')
   if (sid !== current) sessions.open(sid)
   const prev = pageStore.get()
@@ -54,18 +65,21 @@ export async function openPage(sessions: SessionsLike, opts: { sessionId?: strin
 export function closePage(sessions: SessionsLike): void {
   const { returnTo } = pageStore.get()
   pageStore.set({ open: false, pending: undefined })
-  if (returnTo && sessions.list.getSnapshot().byId[returnTo]) sessions.open(returnTo)
+  if (returnTo && sessions.has(returnTo)) sessions.open(returnTo)
 }
 
 /** Full-window video page (shell.overlay): player, subtitles, terms and the chat with DeepSeek. */
 export function VideoPage(props: { sessions: SessionsLike; t: (k: LiveKey) => string }) {
   const { sessions, t } = props
   const page = useSyncExternalStore(pageStore.subscribe, pageStore.get)
+  // The session's handles appear once it is open: follow the list until they do.
+  const face = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.face(page.sessionId) : undefined)
+  const chat = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.chat(page.sessionId) : undefined)
   if (!page.open || !page.sessionId) return null
   return (
     <div className="dshl-pagewrap">
       <LiveView key={page.sessionId} sessionId={page.sessionId} t={t}
-        chatFace={sessions.binding(page.sessionId)?.session}
+        chatFace={face} chatSource={chat}
         onClose={() => closePage(sessions)}
         pending={page.pending} onPendingDone={() => pageStore.set({ pending: undefined })} />
     </div>

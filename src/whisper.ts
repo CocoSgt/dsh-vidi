@@ -37,7 +37,7 @@ export function pcmToWav(pcm: Buffer, rate = 16000): Buffer {
  * short chunk costs only inference time. Started lazily, stopped on dispose.
  */
 /** whisper.cpp reports language names; the rest of the plugin uses codes. */
-const ISO: Record<string, string> = {
+export const ISO: Record<string, string> = {
   english: 'en', chinese: 'zh', japanese: 'ja', korean: 'ko', spanish: 'es', french: 'fr', german: 'de', portuguese: 'pt', russian: 'ru',
   italian: 'it', arabic: 'ar', hindi: 'hi', indonesian: 'id', vietnamese: 'vi', thai: 'th', turkish: 'tr', dutch: 'nl', polish: 'pl', ukrainian: 'uk',
 }

@@ -14,10 +14,11 @@ import { exportCues, type ExportFormat } from './export.ts'
 import { Glossary } from './glossary.ts'
 import { LiveJob } from './job.ts'
 import { Downloads } from './downloads.ts'
-import { KeyStore } from './keys.ts'
+import { KeyStore, type Credentials } from './keys.ts'
 import { installedBrowsers, type CookieChoice } from './sites.ts'
 import { LocalProvider } from './providers/local.ts'
-import { OpenAIProvider, verifyOpenAIKey } from './providers/openai.ts'
+import { OpenAIProvider } from './providers/openai.ts'
+import { geminiEngine, SERVICES, service, verifyKey, whisperApiEngine } from './providers/cloud.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
 import type { JobOptions, SourceKind, SpeechProvider } from './types.ts'
 import type { JobDeps } from './job.ts'
@@ -40,6 +41,7 @@ export interface Config {
   srtPort: number
   openaiApiKey: string
   openaiModel: string
+  geminiModel: string
 }
 
 export const Config: z<Config> = z.object({
@@ -51,8 +53,9 @@ export const Config: z<Config> = z.object({
   glossary: z.string().role('textarea').default('').description('Terms to keep consistent, one per line (e.g. "Dots = Dots"). Each stream also builds its own glossary automatically.'),
   rtmpPort: z.number().default(1935).description('Port for incoming RTMP pushes (OBS → rtmp://<this machine>/live).'),
   srtPort: z.number().default(9000).description('Port for incoming SRT pushes.'),
-  openaiApiKey: z.string().role('secret').default('').description('OpenAI API key for online subtitles (can also be entered on the Live page, or set OPENAI_API_KEY).'),
+  openaiApiKey: z.string().role('secret').default('').description('OpenAI API key for online subtitles. Usually not needed here: keys saved in DSH (Models page) or on the video page are used.'),
   openaiModel: z.string().default('gpt-live-transcribe').description('OpenAI realtime transcription model.'),
+  geminiModel: z.string().default('auto').description('Gemini model for online subtitles ("auto" picks the newest Flash model your key can use).'),
 }) as never
 
 const MIME: Record<string, string> = {
@@ -118,7 +121,22 @@ export function apply(ctx: Context, config: Config): void {
   })
   const translator = new Translator(() => llm)
 
+  // Online speech keys come from DSH's own key store (shared with the Models page) when the host has one.
   const keys = new KeyStore(join(config.dataDir, 'keys.json'), () => ({ openai: config.openaiApiKey }))
+  void keys.refresh()
+  ctx.inject(['credentials'], (c: any) => {
+    c.effect(() => {
+      keys.creds = c.credentials as Credentials
+      void keys.refresh()
+      const off = c.on?.('credentials/updated', () => void keys.refresh())
+      return () => { off?.(); keys.creds = undefined; void keys.refresh() }
+    }, 'dsh-live: speech keys')
+  })
+  /** Whether whisper.cpp and its model are installed (checked at start and on each deps request). */
+  let localReady = false
+  void checkDeps(config.whisperModel).then(d => { localReady = d.filter(x => ['ffmpeg', 'whisper-server', 'whisper model'].includes(x.name)).every(x => x.ok) })
+  /** Recognition to use when nothing was chosen: this computer if it can, else the first online service with a key. */
+  const defaultEngine = (): string => localReady ? 'local' : (SERVICES.find(s => keys.get(s.id))?.id ?? 'local')
 
   // Page-level preferences (which browser login to use for video sites).
   const settingsFile = join(config.dataDir, 'settings.json')
@@ -128,7 +146,7 @@ export function apply(ctx: Context, config: Config): void {
   }
   const savePrefs = (patch: Partial<Prefs>) => { try { writeFileSync(settingsFile, JSON.stringify({ ...prefs(), ...patch }, null, 2)) } catch {} }
   /** Subtitle options last used on the page: tools and commands reuse them. */
-  const lastOptions = (): NonNullable<Prefs['last']> => prefs().last ?? { tgtLangs: [config.defaultTargetLang], srcLang: 'auto', provider: keys.get('openai') ? 'openai' : 'local', mode: 'realtime' }
+  const lastOptions = (): NonNullable<Prefs['last']> => prefs().last ?? { tgtLangs: [config.defaultTargetLang], srcLang: 'auto', provider: defaultEngine(), mode: 'realtime' }
 
   /** Browser notifications: "show this video" for a session (tools, /video). */
   const bus = new EventEmitter()
@@ -136,25 +154,33 @@ export function apply(ctx: Context, config: Config): void {
   const downloads = new Downloads(join(config.dataDir, 'jobs'), () => prefs().cookies, log)
 
   function makeProvider(opts: JobOptions, glossary: Glossary, usage: UsageMeter, job?: LiveJob): SpeechProvider {
-    switch (opts.provider) {
-      case 'openai': {
-        const apiKey = keys.get('openai')
-        if (!apiKey) throw new Error('no OpenAI API key yet: add one under “Services & keys”')
+    const svc = service(opts.provider)
+    if (svc) {
+      if (!keys.get(svc.id)) throw new Error(`no ${svc.label} key yet: add one in the video page settings or on the DSH Models page`)
+      if (svc.kind === 'realtime') {
         return new OpenAIProvider({
-          apiKey, model: config.openaiModel, lang: opts.srcLang,
+          apiKey: keys.get('openai')!, model: config.openaiModel, lang: opts.srcLang,
           delay: opts.mode === 'polished' ? 'high' : 'low',
           minSec: Math.max(config.minChunkSec, 2), maxSec: Math.max(config.maxChunkSec, 8),
           keywords: () => glossary.terms.map(t => t.src), log,
           onUsage: u => usage.add('openai', config.openaiModel, u),
         })
       }
-      case 'local':
-      default:
-        return new LocalProvider({
-          whisper, lang: opts.srcLang === 'auto' ? 'auto' : opts.srcLang,
-          minSec: config.minChunkSec, maxSec: config.maxChunkSec, prompt: (start, end) => job ? job.asrHint(start, end, glossary.forAsr()) : (glossary.forAsr() ? `Glossary: ${glossary.forAsr()}.` : ''),
-        })
+      // Chunk by chunk over the network: longer chunks mean fewer requests (free tiers count them).
+      const key = () => keys.get(svc.id)
+      const engine = svc.kind === 'gemini'
+        ? geminiEngine(config.geminiModel, key, (model, u) => usage.add('gemini', model, u), log)
+        : whisperApiEngine(svc, svc.model, key)
+      return new LocalProvider({
+        engine, lang: opts.srcLang === 'auto' ? 'auto' : opts.srcLang, minSec: 3, maxSec: 10,
+        prompt: (start, end) => job ? job.asrHint(start, end, glossary.forAsr()) : (glossary.forAsr() ? `Glossary: ${glossary.forAsr()}.` : ''),
+      })
     }
+    return new LocalProvider({
+      engine: { name: 'local', acquire: () => whisper.acquire(), release: () => whisper.release(), transcribe: (wav, lang, prompt) => whisper.transcribe(wav, lang, prompt) },
+      lang: opts.srcLang === 'auto' ? 'auto' : opts.srcLang,
+      minSec: config.minChunkSec, maxSec: config.maxChunkSec, prompt: (start, end) => job ? job.asrHint(start, end, glossary.forAsr()) : (glossary.forAsr() ? `Glossary: ${glossary.forAsr()}.` : ''),
+    })
   }
 
   /** First non-internal IPv4 address, for push instructions shown to the user. */
@@ -262,6 +288,7 @@ export function apply(ctx: Context, config: Config): void {
     job = new LiveJob(id, opts, jobDeps(dir, opts, () => job, waiting))
     jobs.set(id, job)
     if (!waiting) byConversation.set(opts.conversationId, id)
+    job.autoSubs = true
     void job.start()
     return job
   }
@@ -272,33 +299,35 @@ export function apply(ctx: Context, config: Config): void {
     const route = url.pathname.replace(/^\/live\/api\/?/, '')
     try {
       if (route === 'deps') {
-        const deps = await checkDeps(config.whisperModel)
-        const localReady = deps.filter(d => ['ffmpeg', 'whisper-server', 'whisper model'].includes(d.name)).every(d => d.ok)
+        const [deps] = await Promise.all([checkDeps(config.whisperModel), keys.refresh()])
+        localReady = deps.filter(d => ['ffmpeg', 'whisper-server', 'whisper model'].includes(d.name)).every(d => d.ok)
         return send(res, 200, {
           deps, translator: translator.available, langs: LANGS, defaultTargetLang: config.defaultTargetLang, dataDir: config.dataDir,
           providers: [
-            { id: 'openai', online: true, ready: keys.info('openai').set },
             { id: 'local', online: false, ready: localReady },
+            ...SERVICES.map(s => ({ id: s.id, label: s.label, online: true, ready: keys.info(s.id).set, key: keys.info(s.id), keyUrl: s.keyUrl })),
           ],
-          keys: { openai: keys.info('openai') },
+          defaultEngine: defaultEngine(),
+          keysShared: !!keys.creds,
         })
       }
       if (route === 'keys' && req.method === 'POST') {
-        // { name: 'openai', key: '...' } saves (empty key removes); { name, test: true } checks the stored key.
+        // { name: 'gemini', key: '...' } saves (empty key removes); { name, test: true } checks the stored key.
         const b = await readJson(req)
-        if (b.name !== 'openai') return send(res, 400, { error: 'unknown service' })
+        const svc = service(String(b.name))
+        if (!svc) return send(res, 400, { error: 'unknown service' })
         if (typeof b.key === 'string') {
           const key = b.key.trim()
           if (key) {
-            const check = await verifyOpenAIKey(key)
+            const check = await verifyKey(svc, key)
             if (!check.ok) return send(res, 400, { error: check.message ?? 'key rejected' })
           }
-          keys.save('openai', key)
-          return send(res, 200, { openai: keys.info('openai') })
+          await keys.save(svc.id, key)
+          return send(res, 200, { key: keys.info(svc.id) })
         }
-        const key = keys.get('openai')
+        const key = keys.get(svc.id)
         if (!key) return send(res, 400, { error: 'no key' })
-        const check = await verifyOpenAIKey(key)
+        const check = await verifyKey(svc, key)
         return send(res, check.ok ? 200 : 400, check.ok ? { ok: true } : { error: check.message })
       }
       if (route === 'start' && req.method === 'POST') {
@@ -380,7 +409,8 @@ export function apply(ctx: Context, config: Config): void {
           if (typeof b.srcLang === 'string') opts.srcLang = b.srcLang
           if (typeof b.provider === 'string') opts.provider = b.provider
           if (b.mode === 'realtime' || b.mode === 'polished') opts.mode = b.mode
-          if (opts.provider === 'openai' && !keys.get('openai')) return send(res, 400, { error: 'no OpenAI key' })
+          const svc = opts.provider ? service(opts.provider) : undefined
+          if (svc) { await keys.refresh(); if (!keys.get(svc.id)) return send(res, 400, { error: `no ${svc.label} key` }) }
           savePrefs({ last: { ...lastOptions(), ...opts } as NonNullable<Prefs['last']> })
           void job.startSubs(typeof b.from === 'number' ? b.from : undefined, opts)
         }
