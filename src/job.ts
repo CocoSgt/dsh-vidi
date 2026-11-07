@@ -354,8 +354,8 @@ export class LiveJob extends EventEmitter {
     ]
     const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
     this.ffmpeg = ff
-    // A push source is "waiting" until its first segment lands.
-    if (this.message) {
+    // A push source is "waiting" until its first segment lands (the status is set right after this call).
+    if (this.opts.source === 'push') {
       const wait = setInterval(() => {
         if (this.ffmpeg !== ff) { clearInterval(wait); return }
         if (this.segments().length) { clearInterval(wait); this.setStatus('running') }
