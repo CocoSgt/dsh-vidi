@@ -153,6 +153,8 @@ const CSS = `
 @media (max-width: 1000px) { .dshl-main { grid-template-columns: minmax(0, 1fr); } }
 
 /* Video page (full window over the app) */
+.dshl-toast { position: fixed; left: 50%; bottom: 28px; z-index: 2147483001; max-width: min(560px, calc(100vw - 32px)); padding: 10px 16px; border-radius: 10px;
+  background: rgba(28,28,31,.95); color: #f2f2f3; font: 13.5px/1.5 system-ui, -apple-system, sans-serif; box-shadow: 0 10px 30px rgba(0,0,0,.3); transform: translateX(-50%); pointer-events: none; }
 .dshl-pagewrap { position: absolute; inset: 0; z-index: 1; pointer-events: auto; background: var(--dsw-alias-bg-base, #fff); }
 .dshl.page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .dshl.page .dshl-main { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 420px); align-items: stretch; padding-bottom: 16px; }

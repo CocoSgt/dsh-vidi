@@ -16,6 +16,8 @@ export interface PageState {
   returnTo?: string
   /** Link to load when the page opens (paste chip, sidebar). */
   pending?: string
+  /** Why the page could not open (shown briefly). */
+  error?: string
 }
 
 let page: PageState = { open: false }

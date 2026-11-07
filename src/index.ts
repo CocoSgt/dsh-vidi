@@ -29,6 +29,23 @@ import { EventEmitter } from 'node:events'
 import { WhisperServer } from './whisper.ts'
 
 export const name = 'dsh-vidi'
+
+/** What companion plugins get from `ctx.vidi`. */
+export interface VidiService {
+  version: 1
+  /** Where recordings, subtitles, frames and clips are kept. */
+  dataDir: string
+  /** The video open in a conversation (brought back from disk when needed). */
+  job(conversationId: string): LiveJob | undefined
+  jobById(id: string): LiveJob | undefined
+  jobs(): LiveJob[]
+  /** A new video was opened. Returns a function that stops listening. */
+  onJob(fn: (job: LiveJob) => void): () => void
+  /** The subtitle model (translation, polishing), when one is set up. */
+  llm(): LlmHandle | undefined
+}
+
+export type { LiveJob } from './job.ts'
 export const inject = ['webServer']
 
 export interface Config {
@@ -348,6 +365,7 @@ export function apply(ctx: Context, config: Config): void {
     jobs.set(id, job)
     if (!waiting) byConversation.set(opts.conversationId, id)
     job.autoSubs = true
+    bus.emit('job', job)
     void job.start()
     return job
   }
@@ -722,6 +740,23 @@ export function apply(ctx: Context, config: Config): void {
     },
     subsDefaults: lastOptions,
   })
+
+  /**
+   * For companion plugins (a Studio edition and the like): the jobs with their
+   * tools — frames, clips with subtitles drawn in, cues and events — and the
+   * subtitle model, so a companion adds its own workflow without a copy of any
+   * of this. Inject 'vidi' to use it.
+   */
+  const vidiService: VidiService = {
+    version: 1,
+    dataDir: config.dataDir,
+    job: conversationId => jobForConversation(conversationId),
+    jobById: id => jobs.get(id),
+    jobs: () => [...jobs.values()],
+    onJob: fn => { bus.on('job', fn); return () => { bus.off('job', fn) } },
+    llm: () => llm,
+  }
+  ctx.effect(() => (ctx as any).provide('vidi', vidiService), 'dsh-vidi: companion service')
 
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/api', handler: api }), 'dsh-vidi: api route')
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/media', handler: media }), 'dsh-vidi: media route')

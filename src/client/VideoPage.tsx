@@ -29,7 +29,11 @@ const PAGE_SESSION = 'dsh-live.pageSession'
 export interface WorkspacesLike {
   create(input: { path: string }): Promise<{ workspaceId?: string; id?: string; title?: string }>
   rename(workspaceId: string, title: string): Promise<unknown>
+  /** Newer DS-Harness: the registered workspaces. */
+  list?: { getSnapshot(): { items?: readonly { workspaceId: string; path: string; title: string }[] } }
 }
+
+const samePath = (a?: string, b?: string) => !!a && !!b && a.replace(/\/+$/, '') === b.replace(/\/+$/, '')
 
 /**
  * The video page's own conversation: reused while it exists, created when not.
@@ -40,8 +44,12 @@ async function pageSession(sessions: SessionsLike, workspaces: WorkspacesLike, t
   let saved: string | null = null
   try { saved = localStorage.getItem(PAGE_SESSION) } catch {}
   if (saved && sessions.has(saved)) return saved
-  const deps = await fetch('/live/api/deps').then(r => r.json()).catch(() => ({}))
-  const ws = await workspaces.create({ path: deps.dataDir })
+  const deps = await fetch('/live/api/deps').then(r => r.json())
+  if (!deps?.dataDir) throw new Error('the video plugin is not running yet')
+  // The video folder may already be a workspace (an earlier install): reuse it rather than create it again.
+  const known = () => workspaces.list?.getSnapshot().items?.find(w => samePath(w.path, deps.dataDir))
+  let ws: { workspaceId?: string; id?: string; title?: string } | undefined = known()
+  if (!ws) ws = await workspaces.create({ path: deps.dataDir }).catch(err => { const again = known(); if (again) return again; throw err })
   const workspaceId = ws.workspaceId ?? ws.id
   if (workspaceId && ws.title !== title) await workspaces.rename(workspaceId, title).catch(() => {})
   const id = await sessions.create(workspaceId ? { workspaceId } : { cwd: deps.dataDir })
@@ -55,6 +63,17 @@ async function pageSession(sessions: SessionsLike, workspaces: WorkspacesLike, t
  * The page's session becomes current so its chat is live; closing goes back.
  */
 export async function openPage(sessions: SessionsLike, opts: { sessionId?: string; pending?: string; workspaces?: WorkspacesLike; title?: string } = {}): Promise<void> {
+  try {
+    await showPage(sessions, opts)
+  } catch (err) {
+    // Say why instead of doing nothing.
+    console.error('[dsh-vidi] could not open the video page', err)
+    pageStore.set({ error: (err as Error).message || String(err) })
+    setTimeout(() => { if (pageStore.get().error) pageStore.set({ error: undefined }) }, 6000)
+  }
+}
+
+async function showPage(sessions: SessionsLike, opts: { sessionId?: string; pending?: string; workspaces?: WorkspacesLike; title?: string }): Promise<void> {
   const current = sessions.current()
   const sid = opts.sessionId ?? await pageSession(sessions, opts.workspaces!, opts.title ?? 'Video')
   if (sid !== current) sessions.open(sid)
@@ -75,6 +94,7 @@ export function VideoPage(props: { sessions: SessionsLike; t: (k: LiveKey) => st
   // The session's handles appear once it is open: follow the list until they do.
   const face = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.face(page.sessionId) : undefined)
   const chat = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.chat(page.sessionId) : undefined)
+  if (page.error && !page.open) return <div className="dshl-toast" role="alert">{t('page.failed').replace('{e}', page.error)}</div>
   if (!page.open || !page.sessionId) return null
   return (
     <div className="dshl-pagewrap">

@@ -10,7 +10,7 @@ import { fetchComments, ffmpegInput, LoginRequired, resolveSite, type CookieChoi
 import { translateBatch, type LlmHandle } from './translate.ts'
 import { fetchSiteSubs, loadSiteSubs, type SiteCue, type SiteTrack } from './sitesubs.ts'
 import type { Translator } from './translate.ts'
-import { Restream, type BurnStyle, type RestreamStatus, type Target } from './restream.ts'
+import { drawSubtitles, Restream, type BurnStyle, type RestreamStatus, type Target } from './restream.ts'
 import type { Cue, JobOptions, JobStatus, JobSummary, ProviderCue, SpeechProvider, SubsState } from './types.ts'
 import type { UsageMeter } from './usage.ts'
 
@@ -686,7 +686,7 @@ export class LiveJob extends EventEmitter {
   }
 
   /** What the player would show at media time t, line by line (the same rules: no repeats, line-end marks dropped). */
-  private rowsAt(t: number, style: BurnStyle): { text: string; size: number; main: boolean }[] {
+  rowsAt(t: number, style: BurnStyle): { text: string; size: number; main: boolean }[] {
     const cue = this.cues.find(c => c.final && c.start <= t && t < Math.max(c.end, c.start + 1.2))
     const text = (key: string): string | undefined => {
       if (key.startsWith('site:')) return this.siteCues.get(key)?.find(c => c.start <= t && t < c.end)?.text
@@ -790,6 +790,56 @@ export class LiveJob extends EventEmitter {
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '160k', ...(maps.length ? ['-c:s', 'mov_text'] : []),
       '-movflags', '+faststart', out], { timeout: 600_000 })
     for (const f of readdirSync(dir)) if (f.startsWith(`.${name}.`)) rmSync(join(dir, f), { force: true })
+    return out
+  }
+
+  /**
+   * Cut [from, to] into an MP4 with the subtitles drawn into the picture,
+   * looking exactly like the player (and the restream): each change of the
+   * lines on screen becomes one transparent picture, shown for its stretch.
+   */
+  async burnClip(from: number, to: number, style: BurnStyle, opts: { height?: 720 | 1080; out?: string } = {}): Promise<string> {
+    if (!(to > from)) throw new Error('end must be after start')
+    const h = opts.height ?? 1080, w = Math.round(h * 16 / 9)
+    const dir = join(this.deps.dir, 'clips')
+    mkdirSync(dir, { recursive: true })
+    const name = `clip_${from.toFixed(1)}-${to.toFixed(1)}_subs`.replace(/\./g, '_')
+    const out = opts.out ?? join(dir, `${name}.mp4`)
+    const tmp = join(dir, `.${name}`)
+    mkdirSync(tmp, { recursive: true })
+    // Stretches with the same lines on screen, sampled every 0.1 s.
+    const spans: { start: number; end: number; key: string; rows: ReturnType<LiveJob['rowsAt']> }[] = []
+    for (let t = from; t < to; t += 0.1) {
+      const rows = this.rowsAt(t, style)
+      const key = JSON.stringify(rows)
+      const last = spans.at(-1)
+      if (last && last.key === key) last.end = Math.min(to, t + 0.1)
+      else spans.push({ start: t, end: Math.min(to, t + 0.1), key, rows })
+    }
+    const pictures = new Map<string, string>()
+    const lines = ['ffconcat version 1.0']
+    for (const s of spans) {
+      let file = pictures.get(s.key)
+      if (!file) {
+        file = join(tmp, `${pictures.size}.png`)
+        const png = await drawSubtitles(s.rows, style, w, h)
+        if (!png) throw new Error('subtitles could not be drawn on this computer')
+        writeFileSync(file, png)
+        pictures.set(s.key, file)
+      }
+      lines.push(`file '${file.replace(/'/g, "'\\''")}'`, `duration ${(s.end - s.start).toFixed(3)}`)
+    }
+    lines.push(`file '${pictures.get(spans.at(-1)!.key)!.replace(/'/g, "'\\''")}'`)
+    const list = join(tmp, 'subs.ffconcat')
+    writeFileSync(list, lines.join('\n') + '\n')
+    const { args } = this.mediaFor(from, to)
+    try {
+      await run('ffmpeg', ['-v', 'error', '-y', ...args, '-f', 'concat', '-safe', '0', '-i', list, '-t', String(to - from),
+        '-filter_complex', `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[v];[1:v]format=rgba,setpts=PTS-STARTPTS[s];[v][s]overlay=0:0:eof_action=repeat,format=yuv420p[o]`,
+        '-map', '[o]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', out], { timeout: 900_000 })
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
     return out
   }
 
