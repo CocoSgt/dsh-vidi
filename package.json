@@ -3,7 +3,13 @@
   "version": "0.1.0",
   "description": "A video tool for DeepSeek Harness: watch live streams, videos and podcasts with real-time subtitles in any language, then clip and download",
   "type": "module",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CocoSgt/dsh-vidi.git"
+  },
+  "homepage": "https://github.com/CocoSgt/dsh-vidi#readme",
+  "bugs": "https://github.com/CocoSgt/dsh-vidi/issues",
   "engines": {
     "dsh": ">=0.2.2-rc.1"
   },
@@ -25,7 +31,8 @@
     "icon.svg",
     "locale/*.json",
     "README.md",
-    "README.zh-CN.md"
+    "README.zh-CN.md",
+    "LICENSE.md"
   ],
   "scripts": {
     "build": "tsdown",

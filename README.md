@@ -11,6 +11,7 @@ A video tool for DeepSeek Harness: watch live streams, videos and podcasts with 
 - **Two paces**: real-time shows lines as they are heard; polished arrives a little later with misheard words fixed from context.
 - **The subtitle model looks at the video**: polishing uses the page's title, description and comments, and — when the chosen model reads images — a frame of that stretch. It also keeps a glossary of names and terms for the video.
 - **Chat with DeepSeek beside the video**: grab this moment, cut this part, summarise, download the original — all in one conversation, with files saved in the video's folder.
+- **Restream**: push the video with its subtitles drawn into the picture to Bilibili, Douyin, Kuaishou, WeChat Channels, Douyu, Huya, YouTube, Twitch or any RTMP/SRT address — several at once; each platform connects and reconnects on its own.
 - **Export**: SRT / VTT subtitles, transcripts by line or paragraph, clips with subtitle tracks.
 - English and Chinese interface; works on phones.
 
@@ -39,6 +40,10 @@ Set separately under the gear:
 
 Online transcription uses the model providers you have set up in DSH (Models page) — OpenAI, Google, Groq, SiliconFlow, Zhipu GLM: their key and address work as they are, whatever the key is called. A service DSH doesn't have yet can get a key right on the video page; it is checked, then saved in DSH.
 
+## Restreaming
+
+In the player, open **Restream**, add a platform (paste the server address and stream key from the platform's own streaming tool — e.g. Bilibili 直播姬, Douyin 直播伴侣, WeChat Channels Assistant), tick the ones to use and start. It starts from where you are watching, with the subtitles you see; for a live stream that is a few seconds behind live, so the lines are ready. Stream keys stay on this computer.
+
 ## Streaming from OBS
 
 Open the video page: the empty page shows the server address and stream key. In OBS choose the "Custom" service and paste them. Default ports: RTMP 1935, SRT 9000 (changeable in the plugin settings).
@@ -54,4 +59,4 @@ Recordings, subtitles, frames and clips live in `~/.dsh/live/jobs/<id>/` (change
 
 ## License
 
-MIT
+[PolyForm Noncommercial 1.0.0](LICENSE.md): use, change and share it freely for anything except commercial purposes. No copyleft: your own changes can stay under whatever terms you like, as long as the use is noncommercial.
