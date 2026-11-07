@@ -16,6 +16,8 @@ export interface OpenAIOptions {
   /** Glossary terms, sent as recognition keywords. */
   keywords?: () => string[]
   log?: (msg: string) => void
+  /** Token usage reported by the service, per finished line. */
+  onUsage?: (u: { inputTokens?: number; outputTokens?: number }) => void
   /** Override for tests. */
   url?: string
 }
@@ -215,6 +217,8 @@ export class OpenAIProvider implements SpeechProvider {
         const it = this.item(id)
         const text = String(ev.transcript ?? '').trim()
         if (text) it.text = text
+        const u = ev.usage as { type?: string; input_tokens?: number; output_tokens?: number } | undefined
+        if (u && typeof u.input_tokens === 'number') this.opts.onUsage?.({ inputTokens: u.input_tokens, outputTokens: u.output_tokens ?? 0 })
         this.show(id, it, true)
         this.items.delete(id)
         this.owed = Math.max(0, this.owed - 1)

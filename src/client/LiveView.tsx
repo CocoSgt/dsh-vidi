@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from './icons.tsx'
 import { langLabel } from './langs.ts'
-import { LinePicker } from './LinePicker.tsx'
+import { LineList } from './LinePicker.tsx'
 import type { LiveKey } from './locales.ts'
 import { LoginDialog } from './LoginDialog.tsx'
-import { Player, type CueLike, type PlayerHandle } from './Player.tsx'
+import { Player, type CueLike, type PlayerHandle, type PlayerMenu } from './Player.tsx'
 import { Settings, type Browser, type KeyInfo } from './Settings.tsx'
 import { defaultStyle, loadStyle, preset, reconcile, saveStyle, SubtitleSettings, type PresetName, type SubStyle } from './subStyle.tsx'
 
@@ -15,12 +15,19 @@ interface Summary {
   source: Source; url: string; mode: string; srcLang: string; tgtLangs: string[]; provider: string; files: string[]
   startedAt: number; ingest?: { rtmp?: string; srt?: string; key?: string }
   vod?: boolean; duration?: number; loginBrowser?: string; needsLogin?: NeedsLogin
+  subs?: { state: 'off' | 'running' | 'paused' | 'done'; at: number }
+  usage?: Usage
+}
+interface Usage {
+  models: { provider: string; model: string; input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; calls: number }[]
+  audio: Record<string, number>
+  total: number
 }
 interface Task { id: string; url?: string; kind: 'original' | 'subtitled'; dirId: string; title?: string; status: 'running' | 'done' | 'error'; pct: number; file?: string; error?: string; needsLogin?: NeedsLogin }
 interface Term { src: string; tr: Record<string, string>; origin: 'auto' | 'user' }
 interface Dep { name: string; ok: boolean; hint?: string }
 interface Armed { jobId: string; rtmp?: string; key?: string }
-type Tab = 'transcript' | 'glossary' | 'style' | 'download'
+type Tab = 'transcript' | 'glossary'
 
 export interface LiveViewInjected {
   sessionId: string
@@ -122,12 +129,7 @@ export function LiveView(props: LiveViewInjected) {
   const langOptions = useMemo(() => Object.entries(langs).filter(([k]) => k !== 'auto').map(([k, v]) => [k, langLabel(k, ui, v)] as [string, string]), [langs, ui])
   const langName = useCallback((k: string) => (k === 'src' ? t('sub.source') : langLabel(k, ui, langs[k])), [langs, t, ui])
   // Lines on screen: the job's own lines while one is shown, else the picker.
-  const shownLines = useMemo(() => {
-    if (!job) return lines
-    const avail = new Set(['src', ...job.tgtLangs])
-    const keep = lines.filter(l => avail.has(l))
-    return keep.length ? keep : [...job.tgtLangs, 'src']
-  }, [job, lines])
+  const shownLines = lines
   const options = () => ({ mode, srcLang: spoken, tgtLangs: lines.filter(l => l !== 'src'), provider: engine || 'local', conversationId: sessionId })
 
   // ── Load environment and any job of this conversation ──
@@ -206,15 +208,32 @@ export function LiveView(props: LiveViewInjected) {
   const chooseLogin = (id: string) => { setLoginRaw(id); void post('settings', { cookies: id }).catch(() => {}) }
 
   // ── Actions ──
+  /** Open a source: play and record only. Subtitles (which cost tokens) start from the player. */
   const start = async (target = input, forced?: Source) => {
     setError('')
     const c = forced ? { source: forced, url: target } : classify(target)
     if (!c) return
-    if ((engine || 'local') === 'openai' && !openaiKey.set) { setSettingsOpen(true); setError(t('set.key.needed')); return }
     try {
       const j = await post('start', { ...options(), source: c.source, url: c.url })
       setCues([]); setTerms([]); setJob(j); setArmed(null)
     } catch (e) { setError((e as Error).message) }
+  }
+  const subs = job?.subs ?? { state: 'off' as const, at: 0 }
+  const startSubs = async (from?: number) => {
+    if (!job) return
+    setError('')
+    if ((engine || 'local') === 'openai' && !openaiKey.set) { setSettingsOpen(true); setError(t('set.key.needed')); return }
+    try { setJob(await post('subs', { ...options(), jobId: job.id, action: 'start', from })) } catch (e) { setError((e as Error).message) }
+  }
+  const pauseSubs = async () => { if (job) setJob(await post('subs', { jobId: job.id, action: 'pause' }).catch(() => job)) }
+  // Picking a new translation language while subtitles run: pause and resume with it.
+  const changeLines = async (next: string[]) => {
+    const before = lines.filter(l => l !== 'src').join(','), after = next.filter(l => l !== 'src').join(',')
+    setLines(next)
+    if (job && subs.state === 'running' && before !== after) {
+      await pauseSubs()
+      try { setJob(await post('subs', { ...options(), tgtLangs: next.filter(l => l !== 'src'), jobId: job.id, action: 'start' })) } catch {}
+    }
   }
   const stop = async () => { if (job) await post('stop', { jobId: job.id }).catch(() => {}) }
   const downloadOnly = async () => {
@@ -245,9 +264,16 @@ export function LiveView(props: LiveViewInjected) {
     return q ? rows.filter(c => c.src.toLowerCase().includes(q) || Object.values(c.tr ?? {}).some(v => v.toLowerCase().includes(q))) : rows
   }, [cues, query])
   const activeId = useMemo(() => cues.filter(c => c.start <= now + 0.2).at(-1)?.id, [cues, now])
+  // Follow the playing line inside the list only (scrollIntoView would also scroll the whole page),
+  // and leave the list alone for a few seconds after the user scrolls it.
+  const userScrolled = useRef(0)
   useEffect(() => {
-    if (query || tab !== 'transcript') return
-    linesBox.current?.querySelector('.active')?.scrollIntoView({ block: 'nearest' })
+    const box = linesBox.current
+    if (!box || query || tab !== 'transcript' || Date.now() - userScrolled.current < 5000) return
+    const el = box.querySelector<HTMLElement>('.active')
+    if (!el) return
+    const top = el.offsetTop - box.offsetTop, bottom = top + el.offsetHeight
+    if (top < box.scrollTop || bottom > box.scrollTop + box.clientHeight) box.scrollTo({ top: Math.max(0, top - box.clientHeight / 3), behavior: 'smooth' })
   }, [activeId, query, tab])
   const lineText = (c: CueLike, k: string) => (k === 'src' ? c.src : c.tr?.[k])
   const copyAll = () => void navigator.clipboard.writeText(shown.map(c => `[${CLOCK(c.start)}] ${shownLines.map(k => lineText(c, k)).filter(Boolean).join('\n')}`).join('\n\n'))
@@ -256,15 +282,14 @@ export function LiveView(props: LiveViewInjected) {
   const subsAt = cues.filter(c => c.final).at(-1)?.end ?? 0
   const statusText = !job ? '' :
     job.status === 'resolving' ? (job.loginBrowser ? t('st.login').replace('{b}', browsers.find(b => b.id === job.loginBrowser)?.label ?? job.loginBrowser) : t('st.resolving')) :
-    job.status === 'running' ? (job.message ? t('st.waitPush') : job.vod ? t('st.vod') : t('st.live')) :
+    job.status === 'running' ? (job.message ? t('st.waitPush') : job.vod ? t('st.loading') : t('st.live')) :
+    job.status === 'stopped' && job.vod ? t('st.ready') :
     t(`st.${job.status}` as LiveKey)
-  const statusDetail = job?.status === 'running' && !job.message
-    ? (job.vod ? `${CLOCK(subsAt)}${job.duration ? ` / ${CLOCK(job.duration)}` : ''}` : CLOCK(Math.max(0, (tick - job.startedAt) / 1000)))
-    : ''
+  const statusDetail = job?.status === 'running' && !job.message && !job.vod ? CLOCK(Math.max(0, (tick - job.startedAt) / 1000)) : ''
 
   const missing = deps.filter(d => !d.ok && (d.name === 'ffmpeg' || (d.name === 'yt-dlp') || ((engine || 'local') === 'local' && d.name.startsWith('whisper'))))
   const needsModel = !hasTranslator && shownLines.some(l => l !== 'src')
-  const canDownloadLink = !active && classify(input)?.source === 'url' && !/^(rtmps?|srt|rtsp|udp):/i.test(classify(input)!.url)
+  const canDownloadLink = classify(input)?.source === 'url' && !/^(rtmps?|srt|rtsp|udp):/i.test(classify(input)!.url)
 
   return (
     <div className={`dshl ${theater ? 'theater' : ''}`} data-dsh-own-drop="dsh-live"
@@ -275,45 +300,24 @@ export function LiveView(props: LiveViewInjected) {
       onDrop={e => { if (!e.dataTransfer.types.includes('Files')) return; e.preventDefault(); e.stopPropagation(); setDragging(false); const f = e.dataTransfer.files[0]; if (f && !active) void onFile(f) }}>
 
       <header className="dshl-top">
-        {active ? (
-          <div className="dshl-bar">
-            <span className={`dshl-pill ${job!.status === 'running' && !job!.message ? 'live' : ''}`}>
-              {job!.status === 'running' && !job!.message && <i className="dot" />}{statusText}
-            </span>
-            {statusDetail && <span className="dshl-time">{statusDetail}</span>}
-            <span className="dshl-title" title={job!.title || job!.url}>{job!.title || (job!.source === 'push' ? '' : job!.url)}</span>
-            <button className="dshl-btn stop" onClick={stop} disabled={job!.status === 'stopping'}>{t('in.stop')}</button>
-          </div>
-        ) : (
-          <>
-            <div className="dshl-bar">
-              <label className="dshl-field">
-                <Icon.link />
-                <input type="text" value={input} placeholder={t('in.placeholder')} onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') void start() }} />
-                <button className="ghost" title={t('in.file.tip')} onClick={() => fileInput.current?.click()}>
-                  {uploading !== null ? <span className="pct">{t('in.uploading').replace('{p}', String(uploading))}</span> : <Icon.folder />}
-                </button>
-                <input ref={fileInput} type="file" accept="video/*,audio/*,.mkv,.ts,.flv" hidden
-                  onChange={e => { const f = e.target.files?.[0]; if (f) void onFile(f); e.target.value = '' }} />
-              </label>
-              {canDownloadLink && <button className="dshl-btn" onClick={downloadOnly} title={t('in.download.tip')}><Icon.download /></button>}
-              <button className="dshl-btn primary" onClick={() => start()} disabled={!classify(input)}>{t('in.start')}</button>
-            </div>
-            <div className="dshl-bar opts">
-              <LinePicker lines={lines} onChange={setLines} options={langOptions} name={langName} t={t} />
-              <div className="dshl-seg">
-                <button className={mode === 'realtime' ? 'on' : ''} title={t('mode.realtime.tip')} onClick={() => setMode('realtime')}>{t('mode.realtime')}</button>
-                <button className={mode === 'polished' ? 'on' : ''} title={t('mode.polished.tip')} onClick={() => setMode('polished')}>{t('mode.polished')}</button>
-              </div>
-              <span className="grow" />
-              <Settings engine={engine || 'local'} onEngine={setEngine} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
-                login={login} onLogin={chooseLogin} browsers={browsers} openai={openaiKey}
-                onOpenai={k => { setOpenaiKey(k); if (k.set) { setEngine('openai'); setError('') } }}
-                open={settingsOpen} onOpen={setSettingsOpen} t={t} />
-            </div>
-          </>
-        )}
+        <div className="dshl-bar">
+          <label className="dshl-field">
+            <Icon.link />
+            <input type="text" value={input} placeholder={t('in.placeholder')} onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') void start() }} />
+            <button className="ghost" title={t('in.file.tip')} onClick={() => fileInput.current?.click()}>
+              {uploading !== null ? <span className="pct">{t('in.uploading').replace('{p}', String(uploading))}</span> : <Icon.folder />}
+            </button>
+            <input ref={fileInput} type="file" accept="video/*,audio/*,.mkv,.ts,.flv" hidden
+              onChange={e => { const f = e.target.files?.[0]; if (f) void onFile(f); e.target.value = '' }} />
+          </label>
+          {canDownloadLink && <button className="dshl-btn icon" onClick={downloadOnly} title={t('in.download.tip')}><Icon.download /></button>}
+          <button className="dshl-btn primary" onClick={() => start()} disabled={!classify(input)}>{t('in.open')}</button>
+          <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={setMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
+            login={login} onLogin={chooseLogin} browsers={browsers} openai={openaiKey}
+            onOpenai={k => { setOpenaiKey(k); if (k.set) { setEngine('openai'); setError('') } }}
+            open={settingsOpen} onOpen={setSettingsOpen} t={t} />
+        </div>
       </header>
 
       {missing.length > 0 && <div className="dshl-note warn">{t('note.install')} {missing.map(d => <code key={d.name}>{d.hint}</code>)}</div>}
@@ -321,7 +325,7 @@ export function LiveView(props: LiveViewInjected) {
       {(error || job?.status === 'error') && (
         <div className="dshl-note warn"><span>{error || job?.message}</span>{job && !active && <button className="dshl-link" onClick={() => start(job.url, job.source)}>{t('st.retry')}</button>}</div>
       )}
-      {!active && tasks.length > 0 && (
+      {tasks.length > 0 && (
         <div className="dshl-tasks">
           {tasks.filter(x => x.kind === 'original').slice(0, 3).map(x => <TaskRow key={x.id} task={x} t={t} />)}
         </div>
@@ -347,21 +351,46 @@ export function LiveView(props: LiveViewInjected) {
           <div className="dshl-col">
             <Player ref={player}
               src={job.status === 'resolving' || job.status === 'error' ? null : `/live/media/${encodeURIComponent(job.id)}/hls/index.m3u8`}
-              live={job.status === 'running'} vod={job.vod} duration={job.duration}
+              live={job.status === 'running'} vod={job.vod} duration={job.duration} subsAt={subs.state === 'off' ? undefined : subs.at}
               waitingText={job.status === 'resolving' ? statusText : t('player.waiting')}
-              cues={cues} style={subStyle} delay={delay} onDelay={setDelay} showDelay={job.mode === 'realtime' && job.status === 'running'}
-              theater={theater} onTheater={() => setTheater(v => !v)} onOpenSettings={() => setTab('style')} onTime={setNow} t={t} />
-            {!active && (
-              <div className="dshl-done">
-                <span className="dshl-pill">{statusText}</span>
-                <span className="dshl-title">{job.title || job.url}</span>
-              </div>
-            )}
+              cues={cues} style={subStyle} delay={delay} onDelay={setDelay} showDelay={mode === 'realtime' && job.status === 'running'}
+              theater={theater} onTheater={() => setTheater(v => !v)} onTime={setNow} t={t}
+              action={<SubsButton state={subs.state} at={subs.at} onStart={() => startSubs(now)} onPause={pauseSubs} onResume={() => startSubs()} t={t} />}
+              menus={[
+                {
+                  id: 'cc', icon: <Icon.cc />, title: t('menu.cc'), content: (
+                    <>
+                      <LineList lines={lines} onChange={l => void changeLines(l)} options={langOptions} name={langName} t={t} />
+                      <div className="dshl-seg wide">
+                        {(['everyday', 'present', 'single'] as PresetName[]).map(p => (
+                          <button key={p} onClick={() => setSubStyle(preset(p, shownLines))}>{t(`preset.${p}` as LiveKey)}</button>
+                        ))}
+                      </div>
+                      <SubtitleSettings style={subStyle} onChange={setSubStyle} t={t} onReset={() => setSubStyle(defaultStyle(shownLines))} langName={langName} />
+                    </>
+                  ),
+                },
+                {
+                  id: 'download', icon: <Icon.download />, title: t('menu.download'), content: (
+                    <DownloadPanel job={job} active={active} lines={shownLines} tasks={tasks.filter(x => x.dirId === job.id)} sessionId={sessionId}
+                      onTask={refreshTasks} langName={langName} t={t} />
+                  ),
+                },
+              ]} />
+            <div className="dshl-done">
+              <span className={`dshl-pill ${job.status === 'running' && !job.message && !job.vod ? 'live' : ''}`}>
+                {job.status === 'running' && !job.message && !job.vod && <i className="dot" />}{statusText}
+              </span>
+              {statusDetail && <span className="dshl-time">{statusDetail}</span>}
+              <span className="dshl-title" title={job.title || job.url}>{job.title || (job.source === 'push' ? '' : job.url)}</span>
+              <UsagePill usage={job.usage} t={t} ui={ui} />
+              {job.status === 'running' && !job.vod && <button className="dshl-btn small" onClick={stop}>{t('in.stop')}</button>}
+            </div>
           </div>
 
           <aside className="dshl-side">
             <div className="dshl-sidetabs" role="tablist">
-              {(['transcript', 'glossary', 'style', 'download'] as Tab[]).map(k => (
+              {(['transcript', 'glossary'] as Tab[]).map(k => (
                 <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{t(`tab.${k}` as LiveKey)}</button>
               ))}
             </div>
@@ -372,7 +401,7 @@ export function LiveView(props: LiveViewInjected) {
                   <label className="dshl-field small"><Icon.search /><input type="text" value={query} placeholder={t('tr.search')} onChange={e => setQuery(e.target.value)} /></label>
                   <button className="ghost" title={t('tr.copy')} onClick={copyAll}><Icon.copy /></button>
                 </div>
-                <div className="dshl-lines" ref={linesBox}>
+                <div className="dshl-lines" ref={linesBox} onWheel={() => { userScrolled.current = Date.now() }} onTouchMove={() => { userScrolled.current = Date.now() }}>
                   {shown.length === 0 && <div className="dshl-muted pad">{t('tr.empty')}</div>}
                   {shown.map(c => (
                     <button className={`dshl-line ${c.id === activeId ? 'active' : ''}`} key={c.id} onClick={() => player.current?.seek(c.start)}>
@@ -387,22 +416,6 @@ export function LiveView(props: LiveViewInjected) {
             )}
 
             {tab === 'glossary' && <GlossaryPanel jobId={job.id} terms={terms} targets={job.tgtLangs} langName={langName} t={t} onTerms={setTerms} />}
-
-            {tab === 'style' && (
-              <div className="dshl-panel">
-                <div className="dshl-seg wide">
-                  {(['everyday', 'present', 'single'] as PresetName[]).map(p => (
-                    <button key={p} onClick={() => setSubStyle(preset(p, shownLines))}>{t(`preset.${p}` as LiveKey)}</button>
-                  ))}
-                </div>
-                <SubtitleSettings style={subStyle} onChange={setSubStyle} t={t} onReset={() => setSubStyle(defaultStyle(shownLines))} langName={langName} />
-              </div>
-            )}
-
-            {tab === 'download' && (
-              <DownloadPanel job={job} active={active} lines={shownLines} tasks={tasks.filter(x => x.dirId === job.id)} sessionId={sessionId}
-                onTask={refreshTasks} langName={langName} t={t} />
-            )}
           </aside>
         </main>
       )}
@@ -413,6 +426,53 @@ export function LiveView(props: LiveViewInjected) {
           onClose={() => setLoginFor(null)} onRetry={() => { const r = loginFor.retry; setLoginFor(null); r() }} />
       )}
     </div>
+  )
+}
+
+function SubsButton(props: { state: 'off' | 'running' | 'paused' | 'done'; at: number; onStart: () => void; onPause: () => void; onResume: () => void; t: (k: LiveKey) => string }) {
+  const { state, at, onStart, onPause, onResume, t } = props
+  if (state === 'done') return <span className="dshl-subsbtn done" title={t('subs.done')}><Icon.cc /> ✓</span>
+  if (state === 'running') return <button className="dshl-subsbtn running" onClick={onPause} title={t('subs.pause.tip')}><i className="dot" />{CLOCK(at)} · {t('subs.pause')}</button>
+  if (state === 'paused') return <button className="dshl-subsbtn" onClick={onResume} title={t('subs.resume.tip').replace('{t}', CLOCK(at))}>{t('subs.resume')} {CLOCK(at)}</button>
+  return <button className="dshl-subsbtn" onClick={onStart} title={t('subs.start.tip')}>{t('subs.start')}</button>
+}
+
+const fmtTokens = (n: number, ui: 'en' | 'zh') =>
+  ui === 'zh' && n >= 10000 ? `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)}万` : n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n)
+
+/** Total tokens for this video; hover or click for per-model input / output / cache. */
+function UsagePill({ usage, t, ui }: { usage?: Usage; t: (k: LiveKey) => string; ui: 'en' | 'zh' }) {
+  const [open, setOpen] = useState(false)
+  const total = usage?.total ?? 0
+  const audio = Object.entries(usage?.audio ?? {}).filter(([, v]) => v > 1)
+  if (!total && !audio.length) return null
+  const n = (v: number) => fmtTokens(v, ui)
+  return (
+    <span className="dshl-usage" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button className="dshl-pill" onClick={() => setOpen(v => !v)}>{t('usage.tokens').replace('{n}', n(total))}</button>
+      {open && (
+        <div className="dshl-pop right up usage">
+          <h3>{t('usage.title')}</h3>
+          {usage?.models.length ? (
+            <table>
+              <thead><tr><th>{t('usage.model')}</th><th>{t('usage.input')}</th><th>{t('usage.output')}</th><th>{t('usage.cache')}</th><th>{t('usage.calls')}</th></tr></thead>
+              <tbody>
+                {usage.models.map(m => (
+                  <tr key={`${m.provider}/${m.model}`}>
+                    <td title={m.provider}>{m.model}</td>
+                    <td>{n(m.input)}</td>
+                    <td title={m.reasoning ? t('usage.reasoning').replace('{n}', n(m.reasoning)) : undefined}>{n(m.output)}</td>
+                    <td>{n(m.cacheRead + m.cacheWrite)}</td>
+                    <td>{m.calls}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <p className="dshl-muted">{t('usage.none')}</p>}
+          {audio.map(([k, v]) => <p key={k} className="dshl-muted small">{t(k === 'openai' ? 'usage.audio.openai' : 'usage.audio.local').replace('{t}', CLOCK(v))}</p>)}
+        </div>
+      )}
+    </span>
   )
 }
 

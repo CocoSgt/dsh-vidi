@@ -32,6 +32,9 @@ export type Mode = 'realtime' | 'polished'
 
 export type JobStatus = 'resolving' | 'running' | 'stopping' | 'stopped' | 'error'
 
+/** Subtitles are separate from playback: off until asked, can pause and resume. */
+export type SubsState = 'off' | 'running' | 'paused' | 'done'
+
 /** Where the media comes from. */
 export type SourceKind = 'url' | 'push' | 'file'
 
@@ -69,4 +72,6 @@ export interface JobSummary extends JobOptions {
   loginBrowser?: string
   /** Set when the site needs a login no browser session provided. */
   needsLogin?: { site: string; browser?: string; detail: string }
+  subs?: { state: SubsState; at: number }
+  usage?: import('./usage.ts').UsageSummary
 }

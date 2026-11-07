@@ -16,6 +16,8 @@ async function post(path: string, body: unknown): Promise<any> {
 export function Settings(props: {
   engine: string
   onEngine: (e: string) => void
+  mode: 'realtime' | 'polished'
+  onMode: (m: 'realtime' | 'polished') => void
   spoken: string
   onSpoken: (l: string) => void
   langOptions: [string, string][]
@@ -29,7 +31,7 @@ export function Settings(props: {
   onOpen: (v: boolean) => void
   t: (k: LiveKey) => string
 }) {
-  const { engine, onEngine, spoken, onSpoken, langOptions, login, onLogin, browsers, openai, onOpenai, disabled, open, onOpen, t } = props
+  const { engine, onEngine, mode, onMode, spoken, onSpoken, langOptions, login, onLogin, browsers, openai, onOpenai, disabled, open, onOpen, t } = props
   const box = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -78,6 +80,13 @@ export function Settings(props: {
               {!openai.set && <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">{t('set.key.get')} ↗</a>}
             </div>
           )}
+          <label className="srow">
+            <span>{t('set.mode')}</span>
+            <span className="dshl-seg">
+              <button className={mode === 'realtime' ? 'on' : ''} title={t('mode.realtime.tip')} onClick={() => onMode('realtime')}>{t('mode.realtime')}</button>
+              <button className={mode === 'polished' ? 'on' : ''} title={t('mode.polished.tip')} onClick={() => onMode('polished')}>{t('mode.polished')}</button>
+            </span>
+          </label>
           <label className="srow">
             <span>{t('set.spoken')}</span>
             <select value={spoken} disabled={disabled} onChange={e => onSpoken(e.target.value)}>

@@ -26,7 +26,7 @@ export class Glossary {
 
   constructor(
     private readonly file: string,
-    private readonly targets: string[],
+    private targets: string[],
     private readonly llm: () => LlmHandle | undefined,
     private readonly onChange: (terms: Term[]) => void,
     private readonly log: (msg: string) => void,
@@ -54,6 +54,10 @@ export class Glossary {
   private save(): void {
     writeFileSync(this.file, JSON.stringify(this.terms, null, 2))
     this.onChange(this.terms)
+  }
+
+  setTargets(targets: string[]): void {
+    this.targets = targets
   }
 
   /** Text block for translation prompts. */

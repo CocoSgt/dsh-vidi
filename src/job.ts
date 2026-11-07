@@ -7,7 +7,8 @@ import { defaultExports, exportCues, type ExportFormat } from './export.ts'
 import type { Glossary } from './glossary.ts'
 import { ffmpegInput, LoginRequired, resolveSite, type CookieChoice } from './sites.ts'
 import type { Translator } from './translate.ts'
-import type { Cue, JobOptions, JobStatus, JobSummary, ProviderCue, SpeechProvider } from './types.ts'
+import type { Cue, JobOptions, JobStatus, JobSummary, ProviderCue, SpeechProvider, SubsState } from './types.ts'
+import type { UsageMeter } from './usage.ts'
 
 const run = promisify(execFile)
 
@@ -16,14 +17,16 @@ const DIRECT = /^(rtmps?|srt|rtsp|udp):\/\/|\.(m3u8|mpd|mp4|m4v|mov|mkv|webm|mp3
 /** Direct URLs that are files (videos) rather than live streams. */
 const FILE_LIKE = /\.(mp4|m4v|mov|mkv|webm|mp3|m4a|aac|wav|flac|ogg)(\?|$)/i
 
-/** Pace for videos: stop reading ahead once recognition or translation is this far behind (seconds / lines). */
+/** Pace for subtitles: stop reading ahead once recognition or translation is this far behind (seconds / lines). */
 const AHEAD_MAX_SEC = 30
 const AHEAD_MAX_LINES = 10
 
 export interface JobDeps {
   dir: string
-  provider: SpeechProvider
+  /** A fresh speech provider for each subtitle run (uses the job's current options). */
+  makeProvider: () => SpeechProvider
   translator: Translator
+  usage: UsageMeter
   glossary: Glossary
   log: (msg: string) => void
   /** Listening addresses for push sources. */
@@ -44,10 +47,15 @@ interface Input {
 }
 
 /**
- * One live session: resolve the stream, run a single ffmpeg that writes a
- * browser-playable HLS recording and a 16 kHz PCM tap from the same input
- * (so subtitles and picture share one media clock), feed the tap to the
- * speech provider, translate final lines, and save everything on stop.
+ * One video or live stream, in two independent parts:
+ *
+ * - Opening (free): one ffmpeg turns the source into a browser-playable HLS
+ *   recording on disk. Videos are fetched as fast as the network allows.
+ * - Subtitles (costs tokens, only when asked): a second ffmpeg reads audio
+ *   from that recording from a given point, feeds the speech provider, and
+ *   finished lines get translated. Pause kills the reader; resume starts a new
+ *   one where the last stopped. Because it reads the recording, a live
+ *   stream loses nothing while subtitles are paused.
  *
  * Events: 'state' (JobSummary), 'cue' (Cue — new or revised).
  */
@@ -59,6 +67,11 @@ export class LiveJob extends EventEmitter {
   readonly startedAt = Date.now()
   readonly cues: Cue[] = []
   private ffmpeg?: ChildProcess
+  private reader?: ChildProcess
+  private provider?: SpeechProvider
+  /** Subtitles: off until asked; `at` = media time processed so far. */
+  subs: { state: SubsState; at: number } = { state: 'off', at: 0 }
+  private captureDone = false
   private nextId = 1
   private drafts = new Map<string, number>()
   ingest?: { rtmp?: string; srt?: string; key?: string }
@@ -81,6 +94,7 @@ export class LiveJob extends EventEmitter {
       startedAt: this.startedAt, dir: this.deps.dir, cueCount: this.cues.length,
       files: existsSync(this.deps.dir) ? readdirSync(this.deps.dir).filter(f => /\.(mp4|m4a|srt|vtt|txt|md|json|jsonl)$/.test(f)) : [],
       ingest: this.ingest, vod: this.vod, duration: this.duration, loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
+      subs: { ...this.subs }, usage: this.deps.usage.summary(),
     }
   }
 
@@ -155,11 +169,11 @@ export class LiveJob extends EventEmitter {
     return { args, audio: '0:a:0', video: audioOnly ? undefined : '0:v:0?', vcodec: audioOnly ? undefined : only.vcodec }
   }
 
+  /** Open the source: resolve it and start recording/playback. No subtitles yet. */
   async start(): Promise<void> {
     try {
       this.emit('state', this.summary())
       const input = await this.resolve()
-      await this.deps.provider.start(c => this.onProviderCue(c), err => this.deps.log(`[${this.id}] provider: ${err.message}`))
       this.spawnFfmpeg(input)
       this.setStatus('running', this.opts.source === 'push' ? 'waiting for the incoming stream' : undefined)
     } catch (err) {
@@ -198,40 +212,139 @@ export class LiveJob extends EventEmitter {
       ...picture, '-map', input.audio, '-c:a', 'aac', '-b:a', '128k',
       '-f', 'hls', '-hls_time', '2', '-hls_list_size', '0', '-hls_playlist_type', 'event', '-hls_flags', 'independent_segments',
       '-hls_segment_filename', join(hls, 'seg_%05d.ts'), join(hls, 'index.m3u8'),
-      // Subtitle tap: 16 kHz mono PCM on stdout, same clock as the HLS output.
-      '-map', input.audio, '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1',
     ]
-    const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
     this.ffmpeg = ff
-    let first = true
-    ff.stdout!.on('data', (pcm: Buffer) => {
-      if (first) { first = false; if (this.message) this.setStatus('running') }
-      this.deps.provider.push(pcm)
-      // Videos are read faster than real time; pause reading (ffmpeg then waits too) while recognition or translation catches up.
-      if (this.vod && !ff.stdout!.isPaused() && this.behind()) {
-        ff.stdout!.pause()
-        const resume = setInterval(() => {
-          if (this.ffmpeg !== ff) { clearInterval(resume); return }
-          if (!this.behind(0.5)) { clearInterval(resume); ff.stdout!.resume() }
-        }, 300)
-      }
-    })
+    // A push source is "waiting" until its first segment lands.
+    if (this.message) {
+      const wait = setInterval(() => {
+        if (this.ffmpeg !== ff) { clearInterval(wait); return }
+        if (this.segments().length) { clearInterval(wait); this.setStatus('running') }
+      }, 400)
+    }
     ff.stderr!.on('data', (d: Buffer) => appendFileSync(join(this.deps.dir, 'ffmpeg.log'), d))
     ff.on('exit', code => {
       this.ffmpeg = undefined
-      if (this.status === 'running') void this.stop(code === 0 ? 'stream ended' : this.ffmpegError(code))
+      if (this.status !== 'running') return
+      void this.finishCapture(code === 0 ? 'ended' : this.ffmpegError(code), code === 0 || this.segments().length > 0)
     })
+  }
+
+  private get m3u8(): string {
+    return join(this.deps.dir, 'hls', 'index.m3u8')
+  }
+
+  /** Recorded segments so far: start time on the playback timeline and duration. */
+  private segments(): { start: number; dur: number }[] {
+    if (!existsSync(this.m3u8)) return []
+    const out: { start: number; dur: number }[] = []
+    let t = 0
+    for (const m of readFileSync(this.m3u8, 'utf8').matchAll(/#EXTINF:([\d.]+)/g)) { const d = Number(m[1]); out.push({ start: t, dur: d }); t += d }
+    return out
+  }
+
+  /** The recording is complete (video fetched, or live stream ended/stopped): close it and make the MP4. */
+  private async finishCapture(reason: string, ok: boolean): Promise<void> {
+    this.captureDone = true
+    await this.remux()
+    if (!this.vod || !this.duration) { const segs = this.segments(); const last = segs.at(-1); if (last) this.duration = last.start + last.dur }
+    this.setStatus(ok ? 'stopped' : 'error', reason)
+  }
+
+  // ── Subtitles ──
+
+  /**
+   * Start (or resume) subtitles from media time `from` (default: where the
+   * last run stopped). Options (lines, engine…) may have changed since opening.
+   */
+  async startSubs(from?: number, opts?: Partial<Pick<JobOptions, 'srcLang' | 'tgtLangs' | 'provider' | 'mode'>>): Promise<void> {
+    if (this.subs.state === 'running' || this.status === 'error') return
+    if (opts) Object.assign(this.opts, opts)
+    this.deps.glossary.setTargets(this.opts.tgtLangs)
+    // Wait for the first recorded segment.
+    for (let i = 0; i < 240 && !this.segments().length && (this.status as JobStatus) !== 'error'; i++) await new Promise(r => setTimeout(r, 500))
+    const segs = this.segments()
+    if (!segs.length) return
+    let at = Math.max(0, from ?? this.subs.at)
+    const finished = readFileSync(this.m3u8, 'utf8').includes('#EXT-X-ENDLIST')
+    // A growing playlist can't be seeked; start at the segment that contains `at` instead.
+    let input: string[]
+    if (finished) input = ['-ss', String(at), '-i', this.m3u8]
+    else {
+      const i = Math.max(0, segs.findLastIndex(sg => sg.start <= at))
+      at = segs[i]!.start
+      input = ['-live_start_index', String(i), '-max_reload', '100000', '-i', this.m3u8]
+    }
+    const provider = this.deps.makeProvider()
+    this.provider = provider
+    this.subs = { state: 'running', at }
+    this.emit('state', this.summary())
+    try {
+      await provider.start(c => this.onProviderCue(c, at), err => this.deps.log(`[${this.id}] provider: ${err.message}`))
+    } catch (err) {
+      this.subs = { state: 'paused', at }
+      this.setStatus(this.status, (err as Error).message)
+      return
+    }
+    const rd = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostdin', ...input, '-vn', '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    this.reader = rd
+    const offset = at
+    let bytes = 0
+    const tick = setInterval(() => this.emit('state', this.summary()), 1000)
+    rd.stdout!.on('data', (pcm: Buffer) => {
+      provider.push(pcm)
+      bytes += pcm.length
+      const sec = pcm.length / 32000
+      this.deps.usage.addAudio(provider.name, sec)
+      this.subs.at = offset + bytes / 32000
+      // Recognition or translation behind: wait (the recording keeps everything).
+      if (!rd.stdout!.isPaused() && this.behind()) {
+        rd.stdout!.pause()
+        const resume = setInterval(() => {
+          if (this.reader !== rd) { clearInterval(resume); return }
+          if (!this.behind(0.5)) { clearInterval(resume); rd.stdout!.resume() }
+        }, 300)
+      }
+    })
+    rd.stderr!.on('data', (d: Buffer) => appendFileSync(join(this.deps.dir, 'ffmpeg.log'), d))
+    rd.on('exit', () => {
+      clearInterval(tick)
+      if (this.reader !== rd) return
+      this.reader = undefined
+      // Read to the end of a finished recording: subtitles are done.
+      void this.endRun(this.captureDone ? 'done' : 'paused')
+    })
+  }
+
+  /** Pause subtitles; the next start resumes from here. */
+  async pauseSubs(): Promise<void> {
+    const rd = this.reader
+    if (!rd) return
+    this.reader = undefined
+    rd.kill('SIGKILL')
+    await this.endRun('paused')
+  }
+
+  private async endRun(state: SubsState): Promise<void> {
+    const p = this.provider
+    this.provider = undefined
+    await p?.stop().catch(() => {})
+    await this.translating
+    this.subs = { state, at: this.subs.at }
+    this.save()
+    this.emit('state', this.summary())
   }
 
   /** Is recognition or translation too far behind the media read so far? (`slack` < 1 waits until it is well caught up.) */
   private behind(slack = 1): boolean {
-    const asr = this.deps.provider.backlog?.() ?? 0
+    const asr = this.provider?.backlog?.() ?? 0
     return asr > AHEAD_MAX_SEC * slack || this.pendingTranslations > AHEAD_MAX_LINES * slack
   }
 
   /** Provider cues: drafts are revised in place by key; finals get translated. */
-  private onProviderCue(pc: ProviderCue): void {
-    const { key, ...rest } = pc
+  private onProviderCue(pc: ProviderCue, offset = 0): void {
+    const { key, ...raw } = pc
+    const rest = { ...raw, start: raw.start + offset, end: raw.end + offset }
     let cue: Cue
     const existing = key !== undefined ? this.drafts.get(key) : undefined
     if (existing !== undefined) {
@@ -245,7 +358,7 @@ export class LiveJob extends EventEmitter {
     if (cue.final && key !== undefined) this.drafts.delete(key)
     this.emit('cue', cue)
     if (cue.final) {
-      if (!this.deps.provider.translates && cue.tr === undefined) this.translate(cue)
+      if (!this.provider?.translates && cue.tr === undefined && this.opts.tgtLangs.length) this.translate(cue)
       else this.record(cue)
     }
   }
@@ -275,22 +388,27 @@ export class LiveJob extends EventEmitter {
     appendFileSync(join(this.deps.dir, 'cues.jsonl'), JSON.stringify(cue) + '\n')
   }
 
+  /** Stop recording (live) or fetching (video). Subtitles already running finish what was recorded. */
   async stop(reason = 'stopped by user'): Promise<void> {
-    if (this.status === 'stopping' || this.status === 'stopped') return
+    if (this.status !== 'running' && this.status !== 'resolving') return
     this.setStatus('stopping', reason)
     const ff = this.ffmpeg
     if (ff) {
+      this.ffmpeg = undefined
       // Let ffmpeg finish the current segment and the playlist; force only if it hangs.
       const exited = new Promise(r => ff.once('exit', r))
       ff.kill('SIGINT')
       await Promise.race([exited, new Promise(r => setTimeout(r, 5000))])
-      if (this.ffmpeg) ff.kill('SIGKILL')
+      ff.kill('SIGKILL')
     }
-    await this.deps.provider.stop().catch(() => {})
-    await this.translating
-    this.save()
-    await this.remux()
-    this.setStatus('stopped', reason)
+    this.status = 'running' // finishCapture sets the final state
+    await this.finishCapture(reason, true)
+  }
+
+  /** Stop everything (closing the job): recording and subtitles. */
+  async close(reason = 'closed'): Promise<void> {
+    await this.stop(reason)
+    await this.pauseSubs()
   }
 
   /** Write the default subtitle and transcript set (source, each target, multilingual). */
@@ -314,7 +432,7 @@ export class LiveJob extends EventEmitter {
 
   /** Turn the HLS recording into one MP4. */
   private async remux(): Promise<void> {
-    const m3u8 = join(this.deps.dir, 'hls', 'index.m3u8')
+    const m3u8 = this.m3u8
     if (!existsSync(m3u8)) return
     // An event playlist without ENDLIST makes ffmpeg wait for more segments forever.
     const text = readFileSync(m3u8, 'utf8')

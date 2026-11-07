@@ -20,6 +20,7 @@ import { LocalProvider } from './providers/local.ts'
 import { OpenAIProvider, verifyOpenAIKey } from './providers/openai.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
 import type { JobOptions, SourceKind, SpeechProvider } from './types.ts'
+import { metered, UsageMeter } from './usage.ts'
 import { WhisperServer } from './whisper.ts'
 
 export const name = 'dsh-live'
@@ -90,8 +91,23 @@ export function apply(ctx: Context, config: Config): void {
   let llm: LlmHandle | undefined
   ctx.inject(['llm', 'agentDefaultModel'], (c: any) => {
     c.effect(() => {
+      // Subtitle work is short and literal: switch the model's thinking off where the model allows it
+      // (checked once per model; models without that option are called as they are).
+      const offOk = new Map<string, Promise<boolean>>()
+      const canTurnOff = (provider: string, model: string): Promise<boolean> => {
+        const k = `${provider}/${model}`
+        if (!offOk.has(k)) {
+          offOk.set(k, Promise.resolve(typeof c.llm.resolveCallConfig === 'function'
+            ? c.llm.resolveCallConfig({ provider, model, reasoningEffort: 'off' }).then(() => true, () => false)
+            : false))
+        }
+        return offOk.get(k)!
+      }
       llm = {
-        stream: opts => c.llm.stream(opts),
+        async *stream(opts: Record<string, unknown>) {
+          const off = await canTurnOff(String(opts.provider), String(opts.model))
+          yield* c.llm.stream(off ? { ...opts, reasoningEffort: 'off' } : opts)
+        },
         selection: () => c.agentDefaultModel.currentSelection(),
       }
       return () => { llm = undefined }
@@ -108,7 +124,7 @@ export function apply(ctx: Context, config: Config): void {
   }
   const downloads = new Downloads(join(config.dataDir, 'jobs'), () => prefs().cookies, log)
 
-  function makeProvider(opts: JobOptions, glossary: Glossary): SpeechProvider {
+  function makeProvider(opts: JobOptions, glossary: Glossary, usage: UsageMeter): SpeechProvider {
     switch (opts.provider) {
       case 'openai': {
         const apiKey = keys.get('openai')
@@ -118,6 +134,7 @@ export function apply(ctx: Context, config: Config): void {
           delay: opts.mode === 'polished' ? 'high' : 'low',
           minSec: Math.max(config.minChunkSec, 2), maxSec: Math.max(config.maxChunkSec, 8),
           keywords: () => glossary.terms.map(t => t.src), log,
+          onUsage: u => usage.add('openai', config.openaiModel, u),
         })
       }
       case 'local':
@@ -150,7 +167,7 @@ export function apply(ctx: Context, config: Config): void {
     const a = armed
     armed = undefined
     if (!a) return
-    await a.job.stop('not needed')
+    await a.job.close('not needed')
     jobs.delete(a.job.id)
     if (a.job.cues.length === 0) rmSync(a.job.summary().dir, { recursive: true, force: true })
   }
@@ -170,7 +187,7 @@ export function apply(ctx: Context, config: Config): void {
       if (st.status === 'running' && !st.message && armed?.job === job) {
         armed = undefined
         const prev = byConversation.get(opts.conversationId)
-        if (prev && prev !== job.id) void jobs.get(prev)?.stop('replaced by a new stream')
+        if (prev && prev !== job.id) void jobs.get(prev)?.close('replaced')
         byConversation.set(opts.conversationId, job.id)
       }
     })
@@ -181,17 +198,22 @@ export function apply(ctx: Context, config: Config): void {
 
   async function startJob(opts: JobOptions, waiting = false): Promise<LiveJob> {
     const prev = waiting ? undefined : byConversation.get(opts.conversationId)
-    if (prev) await jobs.get(prev)?.stop('replaced by a new stream')
+    if (prev) await jobs.get(prev)?.close('replaced')
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const id = `${stamp}-${Math.random().toString(36).slice(2, 6)}`
     const dir = join(config.dataDir, 'jobs', id)
     mkdirSync(dir, { recursive: true })
     let job: LiveJob | undefined
-    const glossary = new Glossary(join(dir, 'glossary.json'), opts.tgtLangs, () => llm, terms => job?.emit('glossary', terms), log, config.glossary, join(config.dataDir, 'glossary.json'))
+    // Every model call for this video is counted (shown as token usage on the page).
+    let usageTimer: ReturnType<typeof setTimeout> | undefined
+    const usage = new UsageMeter(() => { usageTimer ??= setTimeout(() => { usageTimer = undefined; job?.emit('state', job.summary()) }, 800) })
+    const jobLlm = () => (llm ? metered(llm, usage) : undefined)
+    const glossary = new Glossary(join(dir, 'glossary.json'), opts.tgtLangs, jobLlm, terms => job?.emit('glossary', terms), log, config.glossary, join(config.dataDir, 'glossary.json'))
     job = new LiveJob(id, opts, {
       dir,
-      provider: makeProvider(opts, glossary),
-      translator,
+      makeProvider: () => makeProvider(job!.opts, glossary, usage),
+      translator: new Translator(jobLlm),
+      usage,
       glossary,
       log,
       ingest: { host: lanAddress(), rtmpPort: config.rtmpPort, srtPort: config.srtPort, key: waiting ? PUSH_KEY : undefined },
@@ -263,6 +285,23 @@ export function apply(ctx: Context, config: Config): void {
         const job = jobs.get(String(b.jobId))
         if (!job) return send(res, 404, { error: 'no such job' })
         void job.stop()
+        return send(res, 200, job.summary())
+      }
+      if (route === 'subs' && req.method === 'POST') {
+        // { jobId, action: 'start' | 'pause', from?, srcLang?, tgtLangs?, provider?, mode? }
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        if (b.action === 'pause') await job.pauseSubs()
+        else {
+          const opts: Partial<JobOptions> = {}
+          if (Array.isArray(b.tgtLangs)) opts.tgtLangs = (b.tgtLangs as unknown[]).map(String).slice(0, 4)
+          if (typeof b.srcLang === 'string') opts.srcLang = b.srcLang
+          if (typeof b.provider === 'string') opts.provider = b.provider
+          if (b.mode === 'realtime' || b.mode === 'polished') opts.mode = b.mode
+          if (opts.provider === 'openai' && !keys.get('openai')) return send(res, 400, { error: 'no OpenAI key' })
+          void job.startSubs(typeof b.from === 'number' ? b.from : undefined, opts)
+        }
         return send(res, 200, job.summary())
       }
       if (route === 'arm' && req.method === 'POST') {
@@ -396,7 +435,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/api', handler: api }), 'dsh-live: api route')
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/media', handler: media }), 'dsh-live: media route')
   ctx.effect(() => () => {
-    for (const job of jobs.values()) void job.stop('plugin unloaded')
+    for (const job of jobs.values()) void job.close('plugin unloaded')
     whisper.stop()
   }, 'dsh-live: shutdown')
 }

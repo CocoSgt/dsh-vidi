@@ -80,7 +80,8 @@ export class LocalProvider implements SpeechProvider {
         if (!meaningful(text) || HALLUCINATION.test(text.trim())) return
         // Low confidence: usually music or noise turned into words.
         if (logprob !== undefined && logprob < -1.1) return
-        if (lang0 === 'auto' && langProb !== undefined && langProb < 0.5) return
+        // Until the language is known, only accept confident detections (music scores around 0.6).
+        if (lang0 === 'auto' && langProb !== undefined && langProb < 0.8) return
         // The same short line again and again is a loop, not speech.
         if (text.length < 24 && text === this.lastShort) return
         this.lastShort = text.length < 24 ? text : ''
