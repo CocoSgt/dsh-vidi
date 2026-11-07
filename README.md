@@ -37,15 +37,7 @@ Set separately under the gear:
 - **Transcription**: speech to text. Whisper on this computer by default; or OpenAI, Google Gemini, Groq, SiliconFlow, Zhipu GLM.
 - **Subtitle model**: polishing, translation, glossary. DeepSeek by default; the list shows every model configured in DSH and marks the ones that read images.
 
-Online services use the keys DSH already has (the ones entered on its Models page work as they are); a key entered on the video page is checked, then saved in DSH.
-
-| Transcription service | Key names read |
-|---|---|
-| OpenAI | `OPENAI_API_KEY` |
-| Google Gemini | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
-| Groq | `GROQ_API_KEY` |
-| SiliconFlow | `SILICONFLOW_API_KEY` |
-| Zhipu GLM | `GLM_API_KEY`, `ZHIPUAI_API_KEY` or `ZAI_API_KEY` |
+Online transcription uses the model providers you have set up in DSH (Models page) — OpenAI, Google, Groq, SiliconFlow, Zhipu GLM: their key and address work as they are, whatever the key is called. A service DSH doesn't have yet can get a key right on the video page; it is checked, then saved in DSH.
 
 ## Streaming from OBS
 

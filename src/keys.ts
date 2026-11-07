@@ -12,8 +12,13 @@ export const KEY_REFS = {
 export type KeyName = keyof typeof KEY_REFS
 export const KEY_NAMES = Object.keys(KEY_REFS) as KeyName[]
 
+/** A model provider configured in DSH that can also do speech recognition. */
+export interface DshProvider { service: KeyName; ref?: string; base?: string; name: string }
+
 export interface KeyInfo {
   set: boolean
+  /** The DSH provider whose key this is (its display name), when it comes from DSH's model setup. */
+  provider?: string
   /** Where the key comes from: the DSH key store (shared with Models), the plugin settings, or the environment. */
   source?: 'dsh' | 'settings' | 'env' | 'page'
   /** Name it is stored under, e.g. GOOGLE_API_KEY. */
@@ -43,6 +48,10 @@ const mask = (k: string) => (k.length > 10 ? `${k.slice(0, 3)}…${k.slice(-4)}`
 export class KeyStore {
   private cache = new Map<KeyName, { key: string; info: KeyInfo }>()
   creds?: Credentials
+  /** Model providers configured in DSH (their key names and addresses), read fresh on each refresh. */
+  discover?: () => DshProvider[]
+  /** Addresses from DSH's provider setup, per service (e.g. SiliconFlow's international endpoint). */
+  bases = new Map<KeyName, string>()
 
   constructor(private readonly file: string, private readonly settings: () => Partial<Record<KeyName, string>>) {}
 
@@ -54,11 +63,16 @@ export class KeyStore {
   async refresh(): Promise<void> {
     const file = this.readFile()
     const next = new Map<KeyName, { key: string; info: KeyInfo }>()
+    const found = (() => { try { return this.discover?.() ?? [] } catch { return [] } })()
+    this.bases = new Map(found.filter(p => p.base).map(p => [p.service, p.base!]))
     for (const name of KEY_NAMES) {
       let hit: { key: string; info: KeyInfo } | undefined
-      for (const ref of KEY_REFS[name]) {
+      // First the providers set up in DSH (whatever their key is called), then the usual names.
+      const fromDsh = found.filter(p => p.service === name && p.ref)
+      const refs = [...fromDsh.map(p => ({ ref: p.ref!, provider: p.name })), ...KEY_REFS[name].map(ref => ({ ref, provider: undefined }))]
+      for (const { ref, provider } of refs) {
         const r = await this.creds?.resolve(ref).catch(() => undefined)
-        if (r?.value.trim()) { hit = { key: r.value.trim(), info: { set: true, source: r.source === 'file' ? 'dsh' : 'env', ref } }; break }
+        if (r?.value.trim()) { hit = { key: r.value.trim(), info: { set: true, source: r.source === 'file' || provider ? 'dsh' : 'env', ref, provider } }; break }
       }
       if (!hit && file[name]?.trim()) hit = { key: file[name]!.trim(), info: { set: true, source: 'page' } }
       if (!hit && this.settings()[name]?.trim()) hit = { key: this.settings()[name]!.trim(), info: { set: true, source: 'settings' } }

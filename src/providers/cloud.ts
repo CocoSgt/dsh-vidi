@@ -26,6 +26,18 @@ export const SERVICES: CloudService[] = [
 
 export const service = (id: string) => SERVICES.find(s => s.id === id)
 
+/** Which speech service a DSH model provider also is, by its address (or its id when it has none). */
+export function speechServiceOf(id: string, baseURL?: string): KeyName | undefined {
+  const host = (() => { try { return baseURL ? new URL(baseURL).host : '' } catch { return '' } })()
+  const k = `${host} ${id}`.toLowerCase()
+  if (/generativelanguage\.googleapis\.com|^ (google|gemini)$/.test(k)) return 'gemini'
+  if (/api\.openai\.com|^ openai$/.test(k)) return 'openai'
+  if (/api\.groq\.com|^ groq$/.test(k)) return 'groq'
+  if (/siliconflow/.test(k)) return 'siliconflow'
+  if (/bigmodel\.cn|(^|\.)z\.ai|^ (glm|zhipu|zhipuai|zai)$/.test(k)) return 'glm'
+  return undefined
+}
+
 const TIMEOUT = 30_000
 
 async function fail(r: Response): Promise<never> {

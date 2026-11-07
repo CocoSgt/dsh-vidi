@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Icon } from './icons.tsx'
 import type { LiveKey } from './locales.ts'
 
-export interface KeyInfo { set: boolean; source?: 'dsh' | 'settings' | 'env' | 'page'; ref?: string; hint?: string }
+export interface KeyInfo { set: boolean; source?: 'dsh' | 'settings' | 'env' | 'page'; ref?: string; hint?: string; provider?: string }
 export interface Browser { id: string; label: string }
 /** A recognition engine: this computer, or an online service with its key. */
 export interface Provider { id: string; label?: string; online: boolean; ready: boolean; key?: KeyInfo; keyUrl?: string }
@@ -88,7 +88,7 @@ export function Settings(props: {
       setMsg({ ok: true, text: value ? t('set.key.ok').replace('{h}', j.key.hint ?? '') : '' })
     } catch (e) { setMsg({ ok: false, text: (e as Error).message }) } finally { setBusy(false) }
   }
-  const from = key.source === 'dsh' ? t('set.key.fromDsh') : key.source === 'env' ? t('set.key.fromEnv') : ''
+  const from = key.source === 'dsh' ? (key.provider ? t('set.key.fromDshP').replace('{p}', key.provider) : t('set.key.fromDsh')) : key.source === 'env' ? t('set.key.fromEnv') : ''
 
   return (
     <div className="dshl-pick" ref={box}>

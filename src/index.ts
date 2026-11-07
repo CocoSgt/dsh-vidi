@@ -14,11 +14,11 @@ import { exportCues, type ExportFormat } from './export.ts'
 import { Glossary } from './glossary.ts'
 import { LiveJob } from './job.ts'
 import { Downloads } from './downloads.ts'
-import { KeyStore, type Credentials } from './keys.ts'
+import { KeyStore, type Credentials, type DshProvider } from './keys.ts'
 import { installedBrowsers, type CookieChoice } from './sites.ts'
 import { LocalProvider } from './providers/local.ts'
 import { OpenAIProvider } from './providers/openai.ts'
-import { geminiEngine, SERVICES, service, verifyKey, whisperApiEngine } from './providers/cloud.ts'
+import { geminiEngine, SERVICES, service, speechServiceOf, verifyKey, whisperApiEngine } from './providers/cloud.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
 import type { JobOptions, SourceKind, SpeechProvider } from './types.ts'
 import type { JobDeps } from './job.ts'
@@ -156,6 +156,25 @@ export function apply(ctx: Context, config: Config): void {
 
   // Online speech keys come from DSH's own key store (shared with the Models page) when the host has one.
   const keys = new KeyStore(join(config.dataDir, 'keys.json'), () => ({ openai: config.openaiApiKey }))
+  // Model providers set up in DSH (Models page): the ones that also do speech recognition lend their key and address.
+  keys.discover = () => {
+    const loader = (ctx as any).get?.('loader') ?? (ctx as any).loader
+    if (!loader?.entries) return []
+    const val = (x: any) => (x && typeof x.get === 'function' ? x.get() : x)
+    const out: DshProvider[] = []
+    for (const row of loader.entries()) {
+      if (!/llm-pi-ai$/.test(String(row.options?.name ?? ''))) continue
+      const cfg = row.fiber?.effectiveConfig ?? row.options?.config ?? {}
+      const providers = val(cfg.providers) ?? {}
+      for (const [id, raw] of Object.entries(providers as Record<string, any>)) {
+        const p = val(raw) ?? {}
+        const base = typeof val(p.baseURL) === 'string' ? String(val(p.baseURL)).replace(/\/+$/, '') : undefined
+        const service = speechServiceOf(id, base)
+        if (service) out.push({ service, ref: val(p.apiKeyEnv), base: service === 'gemini' || service === 'openai' ? undefined : base, name: String(val(p.displayName) ?? id) })
+      }
+    }
+    return out
+  }
   void keys.refresh()
   ctx.inject(['credentials'], (c: any) => {
     c.effect(() => {
@@ -208,7 +227,7 @@ export function apply(ctx: Context, config: Config): void {
       const key = () => keys.get(svc.id)
       const engine = svc.kind === 'gemini'
         ? geminiEngine(config.geminiModel, key, (model, u) => usage.add('gemini', model, u), log)
-        : whisperApiEngine(svc, svc.model, key)
+        : whisperApiEngine({ ...svc, base: keys.bases.get(svc.id) ?? svc.base }, svc.model, key)
       return new LocalProvider({
         engine, lang: opts.srcLang === 'auto' ? 'auto' : opts.srcLang, minSec: 3, maxSec: 10,
         prompt: (start, end) => job ? job.asrHint(start, end, glossary.forAsr()) : (glossary.forAsr() ? `Glossary: ${glossary.forAsr()}.` : ''),

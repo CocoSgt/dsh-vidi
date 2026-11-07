@@ -37,15 +37,7 @@ DeepSeek Harness 里的视频工具：看直播、视频和播客，同时出任
 - **转写模型**：把语音转成文字。默认用本机 Whisper；也可以选 OpenAI、Google Gemini、Groq、硅基流动、智谱 GLM。
 - **字幕模型**：精修、翻译、整理词表。默认 DeepSeek，列表里是你在 DSH 里配置的所有模型，能看图的会标出来。
 
-在线服务的密钥和 DSH 共用同一份（DSH 的模型设置里填过的直接能用）；在视频页里填的新密钥会先验证，再存进 DSH。
-
-| 转写服务 | 读取的密钥名 |
-|---|---|
-| OpenAI | `OPENAI_API_KEY` |
-| Google Gemini | `GEMINI_API_KEY` 或 `GOOGLE_API_KEY` |
-| Groq | `GROQ_API_KEY` |
-| 硅基流动 | `SILICONFLOW_API_KEY` |
-| 智谱 GLM | `GLM_API_KEY`、`ZHIPUAI_API_KEY` 或 `ZAI_API_KEY` |
+在线转写直接用你在 DSH 模型设置里配好的服务商（OpenAI、Google、Groq、硅基流动、智谱 GLM），它们的密钥和地址拿来就用，不管密钥叫什么名字。DSH 里还没配的服务，也可以在视频页里直接填密钥，验证后存进 DSH。
 
 ## 用 OBS 推流
 
