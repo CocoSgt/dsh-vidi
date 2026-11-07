@@ -85,8 +85,19 @@ function cookieHeader(raw: unknown): string | undefined {
 }
 
 async function dump(url: string, browser: string | undefined): Promise<Resolved> {
-  const { stdout } = await run('yt-dlp', ['--no-warnings', '--no-playlist', ...cookieArgs(browser), '-J', '-f', WATCH_FORMAT, url],
-    { timeout: 120_000, maxBuffer: 64 * 1024 * 1024 })
+  let stdout = ''
+  // A logged-in request can still get 412/429 when the site is rate-limiting: wait and retry.
+  for (const wait of browser ? [0, 3000, 8000] : [0]) {
+    if (wait) await new Promise(r => setTimeout(r, wait))
+    try {
+      stdout = (await run('yt-dlp', ['--no-warnings', '--no-playlist', ...cookieArgs(browser), '-J', '-f', WATCH_FORMAT, url],
+        { timeout: 120_000, maxBuffer: 64 * 1024 * 1024 })).stdout
+      break
+    } catch (err) {
+      const msg = String((err as { stderr?: string }).stderr || (err as Error).message)
+      if (wait === 8000 || !browser || !/HTTP Error (412|429)/.test(msg)) throw err
+    }
+  }
   const info = JSON.parse(stdout) as Record<string, any>
   const formats: Record<string, any>[] = info.requested_formats ?? [info]
   const inputs = formats.filter(f => f.url).map(f => {

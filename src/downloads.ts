@@ -69,7 +69,16 @@ export class Downloads {
     // Same policy as watching: the browser already known to work, else try without a login and retry with one.
     const first = opts.browser ?? (choice === 'auto' || choice === 'none' ? undefined : choice)
     const retry = first === undefined && choice === 'auto' ? auto : undefined
-    const go = (browser: string | undefined) => downloadOriginal(opts.url, dir, browser, pct => { task.pct = pct })
+    // Sites like Bilibili answer 412 now and then under load: wait and try again before giving up.
+    const go = async (browser: string | undefined): Promise<string> => {
+      for (const wait of [0, 3000, 8000]) {
+        if (wait) { this.log(`download: site refused, retrying in ${wait / 1000}s`); await new Promise(r => setTimeout(r, wait)) }
+        try { return await downloadOriginal(opts.url, dir, browser, pct => { task.pct = pct }) } catch (err) {
+          if (wait === 8000 || !/HTTP Error (412|429)|timed out|reset/i.test((err as Error).message)) throw err
+        }
+      }
+      throw new Error('unreachable')
+    }
     void go(first)
       .catch(err => {
         if (retry && NEEDS_LOGIN.test((err as Error).message)) { this.log(`download: retrying with ${retry}'s saved login`); task.pct = 0; return go(retry) }
@@ -80,7 +89,10 @@ export class Downloads {
         const msg = (err as Error).message
         task.status = 'error'
         task.error = msg
-        if (NEEDS_LOGIN.test(msg)) task.needsLogin = { site: siteOf(opts.url), browser: first ?? retry, detail: msg }
+        // Only ask for a login when none was used; a logged-in refusal (412/429) is the site rate-limiting.
+        const usedLogin = !!(first ?? retry)
+        if (NEEDS_LOGIN.test(msg) && (!usedLogin || /sign in|log ?in|members|premium|private video/i.test(msg))) task.needsLogin = { site: siteOf(opts.url), browser: first ?? retry, detail: msg }
+        else if (/HTTP Error (412|429)/.test(msg)) task.error = `${siteOf(opts.url)} is refusing requests for now (rate limit); try again in a minute`
         this.log(`download failed: ${msg}`)
       })
     return task

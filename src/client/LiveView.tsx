@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { onOpenRequest } from './bus.ts'
+import { ChatPanel, type SessionFaceLike } from './ChatPanel.tsx'
 import { Icon } from './icons.tsx'
 import { langLabel } from './langs.ts'
 import { LineList } from './LinePicker.tsx'
@@ -27,11 +29,18 @@ interface Task { id: string; url?: string; kind: 'original' | 'subtitled'; dirId
 interface Term { src: string; tr: Record<string, string>; origin: 'auto' | 'user' }
 interface Dep { name: string; ok: boolean; hint?: string }
 interface Armed { jobId: string; rtmp?: string; key?: string }
-type Tab = 'transcript' | 'glossary'
+type Tab = 'chat' | 'transcript' | 'glossary'
 
 export interface LiveViewInjected {
   sessionId: string
   t: (key: LiveKey) => string
+  /** Page mode (video page): the session's chat lives in the side panel. */
+  chatFace?: SessionFaceLike
+  /** Page mode: leave the video page. */
+  onClose?: () => void
+  /** A link to open right away (sidebar, paste prompt). */
+  pending?: string
+  onPendingDone?: () => void
 }
 
 const CLOCK = (s: number) => {
@@ -84,7 +93,8 @@ function Copyable({ value }: { value: string }) {
 const media = (dirId: string, file: string) => `/live/media/${encodeURIComponent(dirId)}/${encodeURIComponent(file)}`
 
 export function LiveView(props: LiveViewInjected) {
-  const { sessionId, t } = props
+  const { sessionId, t, chatFace, onClose, pending, onPendingDone } = props
+  const pageMode = !!onClose
   // What to watch and how
   const [input, setInput] = useState('')
   const [lines, setLinesRaw] = useState<string[]>(() => store.get('lines', ['zh', 'src']))
@@ -102,6 +112,7 @@ export function LiveView(props: LiveViewInjected) {
   const [langs, setLangs] = useState<Record<string, string>>({})
   const [deps, setDeps] = useState<Dep[]>([])
   const [hasTranslator, setHasTranslator] = useState(true)
+  const [jobsDir, setJobsDir] = useState<string>()
   // Job
   const [job, setJob] = useState<Summary | null>(null)
   const [cues, setCues] = useState<CueLike[]>([])
@@ -116,7 +127,7 @@ export function LiveView(props: LiveViewInjected) {
   const [subStyle, setSubStyle] = useState<SubStyle>(() => loadStyle(lines))
   const [delay, setDelay] = useState(8)
   const [theater, setTheater] = useState(false)
-  const [tab, setTab] = useState<Tab>('transcript')
+  const [tab, setTab] = useState<Tab>(onClose ? 'chat' : 'transcript')
   const [query, setQuery] = useState('')
   const [now, setNow] = useState(0)
   const [tick, setTick] = useState(Date.now())
@@ -136,6 +147,7 @@ export function LiveView(props: LiveViewInjected) {
   useEffect(() => {
     fetch('/live/api/deps').then(r => r.json()).then(d => {
       setDeps(d.deps ?? []); setLangs(d.langs ?? {}); setHasTranslator(!!d.translator)
+      if (d.dataDir) setJobsDir(`${d.dataDir}/jobs`)
       if (d.keys?.openai) setOpenaiKey(d.keys.openai)
       // OpenAI when it has a key, else this Mac — unless the user already chose.
       setEngineRaw(prev => prev || (d.keys?.openai?.set ? 'openai' : 'local'))
@@ -150,6 +162,14 @@ export function LiveView(props: LiveViewInjected) {
   useEffect(() => { setSubStyle(s => reconcile(s, shownLines)) }, [shownLines.join(',')])
   useEffect(() => { saveStyle(subStyle) }, [subStyle])
   useEffect(() => { const id = setInterval(() => setTick(Date.now()), 1000); return () => clearInterval(id) }, [])
+
+  // ── Videos opened for this conversation elsewhere (DeepSeek's live_open, /video) ──
+  useEffect(() => onOpenRequest(r => {
+    if (r.sessionId !== sessionId || !r.jobId) return
+    fetch(`/live/api/job?jobId=${encodeURIComponent(r.jobId)}`).then(x => x.json()).then(j => {
+      if (j) { setJob(j); setCues(j.cues ?? []); setTerms(j.terms ?? []); setArmed(null) }
+    }).catch(() => {})
+  }), [sessionId])
 
   // ── Live updates for the shown job ──
   useEffect(() => {
@@ -189,8 +209,13 @@ export function LiveView(props: LiveViewInjected) {
   }, [armed?.jobId, active])
 
   // ── Downloads: poll while any is running ──
+  // Tasks already finished when the view opened (their failures don't prompt again).
+  const seenTasks = useRef<Set<string> | null>(null)
   const refreshTasks = useCallback(() => {
-    fetch(`/live/api/downloads?conversationId=${encodeURIComponent(sessionId)}`).then(r => r.json()).then(setTasks).catch(() => {})
+    fetch(`/live/api/downloads?conversationId=${encodeURIComponent(sessionId)}`).then(r => r.json()).then((list: Task[]) => {
+      if (seenTasks.current === null) seenTasks.current = new Set(list.filter(x => x.status !== 'running').map(x => x.id))
+      setTasks(list)
+    }).catch(() => {})
   }, [sessionId])
   useEffect(() => { refreshTasks() }, [refreshTasks])
   useEffect(() => {
@@ -218,6 +243,13 @@ export function LiveView(props: LiveViewInjected) {
       setCues([]); setTerms([]); setJob(j); setArmed(null)
     } catch (e) { setError((e as Error).message) }
   }
+  useEffect(() => {
+    if (!pending) return
+    setInput(pending)
+    void start(pending)
+    onPendingDone?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending])
   const subs = job?.subs ?? { state: 'off' as const, at: 0 }
   const startSubs = async (from?: number) => {
     if (!job) return
@@ -249,7 +281,8 @@ export function LiveView(props: LiveViewInjected) {
       await start(path, 'file')
     } catch (e) { setError((e as Error).message) } finally { setUploading(null) }
   }
-  const failedTask = tasks.find(x => x.status === 'error' && x.needsLogin)
+  // Only failures that happen while this view is open ask for a login (not old ones on reopen).
+  const failedTask = tasks.find(x => x.status === 'error' && x.needsLogin && !seenTasks.current?.has(x.id))
   useEffect(() => {
     if (!failedTask?.needsLogin) return
     const url = failedTask.url
@@ -291,8 +324,24 @@ export function LiveView(props: LiveViewInjected) {
   const needsModel = !hasTranslator && shownLines.some(l => l !== 'src')
   const canDownloadLink = classify(input)?.source === 'url' && !/^(rtmps?|srt|rtsp|udp):/i.test(classify(input)!.url)
 
+  const hasMain = !!job && !(job.status === 'error' && !job.files.length)
+  const emptyBox = (
+    <div className="dshl-drop">
+            <h2>{t('empty.title')}</h2>
+            <p>{t('empty.body')}</p>
+            {armed?.rtmp && (
+              <div className="dshl-pushinfo" title={t('in.push.tip')}>
+                <Icon.push />
+                <span>{t('push.title')}</span>
+                <span className="kv"><em>{t('push.server')}</em><Copyable value={armed.rtmp} /></span>
+                {armed.key && <span className="kv"><em>{t('push.key')}</em><Copyable value={armed.key} /></span>}
+              </div>
+            )}
+          </div>
+  )
+
   return (
-    <div className={`dshl ${theater ? 'theater' : ''}`} data-dsh-own-drop="dsh-live"
+    <div className={`dshl ${theater ? 'theater' : ''} ${pageMode ? 'page' : ''}`} data-dsh-own-drop="dsh-live"
       // Files dropped here belong to this view: keep them away from the chat composer's page-wide drop handler.
       onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) e.stopPropagation() }}
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.stopPropagation(); e.preventDefault(); if (!active) setDragging(true) } }}
@@ -301,6 +350,7 @@ export function LiveView(props: LiveViewInjected) {
 
       <header className="dshl-top">
         <div className="dshl-bar">
+          {onClose && <button className="dshl-btn icon back" onClick={onClose} title={t('page.back')}><Icon.arrow /></button>}
           <label className="dshl-field">
             <Icon.link />
             <input type="text" value={input} placeholder={t('in.placeholder')} onChange={e => setInput(e.target.value)}
@@ -331,7 +381,7 @@ export function LiveView(props: LiveViewInjected) {
         </div>
       )}
 
-      {!job || (job.status === 'error' && !job.files.length) ? (
+      {!hasMain && !pageMode ? (
         <section className="dshl-empty">
           <div className="dshl-drop">
             <h2>{t('empty.title')}</h2>
@@ -349,6 +399,7 @@ export function LiveView(props: LiveViewInjected) {
       ) : (
         <main className="dshl-main">
           <div className="dshl-col">
+            {!hasMain || !job ? emptyBox : <>
             <Player ref={player}
               src={job.status === 'resolving' || job.status === 'error' ? null : `/live/media/${encodeURIComponent(job.id)}/hls/index.m3u8`}
               live={job.status === 'running'} vod={job.vod} duration={job.duration} subsAt={subs.state === 'off' ? undefined : subs.at}
@@ -386,16 +437,19 @@ export function LiveView(props: LiveViewInjected) {
               <UsagePill usage={job.usage} t={t} ui={ui} />
               {job.status === 'running' && !job.vod && <button className="dshl-btn small" onClick={stop}>{t('in.stop')}</button>}
             </div>
+            </>}
           </div>
 
           <aside className="dshl-side">
             <div className="dshl-sidetabs" role="tablist">
-              {(['transcript', 'glossary'] as Tab[]).map(k => (
+              {((pageMode ? ['chat', 'transcript', 'glossary'] : ['transcript', 'glossary']) as Tab[]).map(k => (
                 <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{t(`tab.${k}` as LiveKey)}</button>
               ))}
             </div>
 
-            {tab === 'transcript' && (
+            {tab !== 'chat' && !job && <div className="dshl-panel dshl-muted">{t('tr.empty')}</div>}
+
+            {tab === 'transcript' && job && (
               <div className="dshl-panel">
                 <div className="dshl-tools">
                   <label className="dshl-field small"><Icon.search /><input type="text" value={query} placeholder={t('tr.search')} onChange={e => setQuery(e.target.value)} /></label>
@@ -415,7 +469,9 @@ export function LiveView(props: LiveViewInjected) {
               </div>
             )}
 
-            {tab === 'glossary' && <GlossaryPanel jobId={job.id} terms={terms} targets={job.tgtLangs} langName={langName} t={t} onTerms={setTerms} />}
+            {tab === 'chat' && <ChatPanel face={chatFace} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} />}
+
+            {tab === 'glossary' && job && <GlossaryPanel jobId={job.id} terms={terms} targets={job.tgtLangs} langName={langName} t={t} onTerms={setTerms} />}
           </aside>
         </main>
       )}

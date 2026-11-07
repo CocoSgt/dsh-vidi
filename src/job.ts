@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { defaultExports, exportCues, type ExportFormat } from './export.ts'
@@ -72,7 +72,7 @@ export class LiveJob extends EventEmitter {
   /** Subtitles: off until asked; `at` = media time processed so far. */
   subs: { state: SubsState; at: number } = { state: 'off', at: 0 }
   private captureDone = false
-  private nextId = 1
+  nextId = 1
   private drafts = new Map<string, number>()
   ingest?: { rtmp?: string; srt?: string; key?: string }
   private translating: Promise<void> = Promise.resolve()
@@ -102,7 +102,49 @@ export class LiveJob extends EventEmitter {
     this.status = status
     this.message = message
     this.deps.log(`[${this.id}] ${status}${message ? `: ${message}` : ''}`)
+    this.persist()
     this.emit('state', this.summary())
+  }
+
+  /** job.json: enough to bring the job back after a restart (finished, not recording). */
+  private persist(): void {
+    if (this.opts.source === 'push' && this.message) return // an idle push listener is not worth keeping
+    try {
+      writeFileSync(join(this.deps.dir, 'job.json'), JSON.stringify({
+        id: this.id, opts: this.opts, title: this.title, vod: this.vod, duration: this.duration,
+        startedAt: this.startedAt, subs: this.subs, status: this.status,
+      }, null, 2))
+    } catch {}
+  }
+
+  /** Bring back a job from its folder: recording finished, subtitles paused where they were. */
+  static restore(dir: string, deps: JobDeps): LiveJob | undefined {
+    try {
+      const j = JSON.parse(readFileSync(join(dir, 'job.json'), 'utf8')) as { id: string; opts: JobOptions; title?: string; vod?: boolean; duration?: number; subs?: { state: SubsState; at: number }; status?: JobStatus }
+      const job = new LiveJob(j.id, j.opts, deps)
+      job.title = j.title
+      job.vod = !!j.vod
+      job.duration = j.duration
+      job.captureDone = true
+      job.status = j.status === 'error' ? 'error' : 'stopped'
+      job.message = 'restored'
+      const seen = new Map<number, Cue>()
+      if (existsSync(join(dir, 'cues.jsonl'))) {
+        for (const line of readFileSync(join(dir, 'cues.jsonl'), 'utf8').split('\n')) {
+          if (!line.trim()) continue
+          try { const c = JSON.parse(line) as Cue; seen.set(c.id, c) } catch {}
+        }
+      }
+      job.cues.push(...[...seen.values()].sort((a, b) => a.start - b.start))
+      job.nextId = Math.max(0, ...job.cues.map(c => c.id)) + 1
+      const at = j.subs?.at ?? job.cues.at(-1)?.end ?? 0
+      job.subs = { state: j.subs?.state === 'done' ? 'done' : at > 0 ? 'paused' : 'off', at }
+      // A recording cut short by a restart still needs its MP4.
+      if (!existsSync(join(dir, 'recording.mp4'))) void job.remux()
+      return job
+    } catch {
+      return undefined
+    }
   }
 
   /** Video codec and duration of a file or URL (no video → vcodec undefined). */
@@ -332,6 +374,7 @@ export class LiveJob extends EventEmitter {
     await this.translating
     this.subs = { state, at: this.subs.at }
     this.save()
+    this.persist()
     this.emit('state', this.summary())
   }
 
@@ -428,6 +471,71 @@ export class LiveJob extends EventEmitter {
   /** On-demand export for the UI (any line selection and format). */
   exportText(langs: string[], format: ExportFormat): string {
     return exportCues(this.cues, langs, format, this.title)
+  }
+
+  // ── Media helpers for tools and extensions ──
+
+  /** Best available picture source for time range [from, to]: original download, finished recording, or recorded segments. */
+  private mediaFor(from: number, to: number): { args: string[]; offset: number } {
+    const original = readdirSync(this.deps.dir).find(n => /^original\.(mp4|mkv|webm)$/.test(n))
+    if (original) return { args: ['-ss', String(from), '-i', join(this.deps.dir, original)], offset: 0 }
+    if (this.captureDone && existsSync(join(this.deps.dir, 'recording.mp4'))) return { args: ['-ss', String(from), '-i', join(this.deps.dir, 'recording.mp4')], offset: 0 }
+    // Still recording: splice the segments that cover the range.
+    const segs = this.segments()
+    const files = readFileSync(this.m3u8, 'utf8').split('\n').filter(l => l && !l.startsWith('#'))
+    const first = Math.max(0, segs.findLastIndex(sg => sg.start <= from))
+    let last = segs.findIndex(sg => sg.start + sg.dur >= to)
+    if (last < 0) last = segs.length - 1
+    if (!segs.length || first > last) throw new Error('that part has not been recorded yet')
+    const list = files.slice(first, last + 1).map(f => join(this.deps.dir, 'hls', f)).join('|')
+    return { args: ['-ss', String(from - segs[first]!.start), '-i', `concat:${list}`], offset: 0 }
+  }
+
+  /** Save one frame at media time `at` (seconds) as JPEG; returns the file path. */
+  async frame(at: number): Promise<string> {
+    const dir = join(this.deps.dir, 'frames')
+    mkdirSync(dir, { recursive: true })
+    const out = join(dir, `frame_${at.toFixed(1).replace('.', '_')}.jpg`)
+    const { args } = this.mediaFor(at, at + 1)
+    await run('ffmpeg', ['-v', 'error', '-y', ...args, '-frames:v', '1', '-q:v', '2', out], { timeout: 60_000 })
+    return out
+  }
+
+  /**
+   * Cut [from, to] into an MP4 (re-encoded for an exact cut). With `langs`,
+   * subtitle tracks for those lines are added (combined track first when more than one).
+   */
+  async clip(from: number, to: number, langs?: string[]): Promise<string> {
+    if (!(to > from)) throw new Error('end must be after start')
+    const dir = join(this.deps.dir, 'clips')
+    mkdirSync(dir, { recursive: true })
+    const name = `clip_${from.toFixed(1)}-${to.toFixed(1)}`.replace(/\./g, '_')
+    const out = join(dir, `${name}.mp4`)
+    const { args } = this.mediaFor(from, to)
+    const subArgs: string[] = []
+    const maps: string[] = []
+    if (langs?.length) {
+      const inRange = this.cues.filter(c => c.final && c.end > from && c.start < to).map(c => ({ ...c, start: Math.max(0, c.start - from), end: Math.min(to, c.end) - from }))
+      const tracks = langs.length > 1 ? [langs, ...langs.map(l => [l])] : [langs]
+      tracks.forEach((ls, i) => {
+        const f = join(dir, `.${name}.${i}.srt`)
+        writeFileSync(f, exportCues(inRange, ls, 'srt'))
+        subArgs.push('-i', f)
+        maps.push('-map', `${i + 1}:0`)
+      })
+    }
+    await run('ffmpeg', ['-v', 'error', '-y', ...args, ...subArgs, '-t', String(to - from), '-map', '0:v?', '-map', '0:a?', ...maps,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '160k', ...(maps.length ? ['-c:s', 'mov_text'] : []),
+      '-movflags', '+faststart', out], { timeout: 600_000 })
+    for (const f of readdirSync(dir)) if (f.startsWith(`.${name}.`)) rmSync(join(dir, f), { force: true })
+    return out
+  }
+
+  /** Finished lines in [from, to], optionally filtered by text. */
+  lines(from = 0, to = Infinity, query?: string): Cue[] {
+    const q = query?.toLowerCase()
+    return this.cues.filter(c => c.final && c.end >= from && c.start <= to
+      && (!q || c.src.toLowerCase().includes(q) || Object.values(c.tr ?? {}).some(v => v.toLowerCase().includes(q))))
   }
 
   /** Turn the HLS recording into one MP4. */

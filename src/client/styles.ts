@@ -312,6 +312,66 @@ const CSS = `
 .dshl-pop.usage th:first-child, .dshl-pop.usage td:first-child { text-align: left; padding-left: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshl-pop.usage p { margin: 8px 0 0; }
 .dshl-btn.icon { width: 40px; padding: 0; }
+
+/* Video page (full window) */
+.dshl-pagewrap { position: absolute; inset: 0; pointer-events: auto; background: var(--dsw-alias-bg-base, #fff); z-index: 1; }
+.dshl.page { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.dshl.page .dshl-main { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 440px); align-items: stretch; padding-bottom: 16px; }
+.dshl.page .dshl-col { overflow: auto; align-content: start; }
+.dshl.page .dshl-side { position: static; max-height: none; height: 100%; }
+.dshl.page .dshl-side > .dshl-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.dshl.page .dshl-lines { max-height: none; flex: 1; }
+.dshl.page.theater .dshl-side { display: flex; }
+.dshl-btn.icon.back { width: 40px; padding: 0; color: var(--muted); }
+.dshl-btn.icon.back svg { transform: rotate(180deg); }
+@media (max-width: 1000px) { .dshl.page { overflow: auto; } .dshl.page .dshl-main { grid-template-columns: minmax(0, 1fr); } .dshl.page .dshl-side { height: 70vh; } }
+
+/* Chat with DeepSeek inside the page */
+.dshl-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.dshl-chat .msgs { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.dshl-chat .msg { max-width: 92%; padding: 8px 11px; border-radius: 12px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.dshl-chat .msg.user { align-self: flex-end; background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
+.dshl-chat .msg.bot { align-self: flex-start; background: var(--bg); border: 1px solid var(--line-soft); }
+.dshl-chat .msg.tool { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; font-size: 12px; color: var(--muted); background: var(--l2); border-radius: 999px; }
+.dshl-chat .msg.tool svg { width: 12px; height: 12px; }
+.dshl-chat .msg.tool.on svg { animation: dshl-spin 1.4s linear infinite; }
+.dshl-chat .msg.err { align-self: stretch; color: var(--live); background: color-mix(in srgb, var(--live) 6%, var(--bg)); font-size: 12.5px; }
+.dshl-chat .quick { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; border-top: 1px solid var(--line); }
+.dshl-chat .quick button { height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--ink); font-size: 12.5px; cursor: pointer; }
+.dshl-chat .quick button:hover { border-color: var(--accent); color: var(--accent); }
+.dshl-chat .composer { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px 12px; }
+.dshl-chat .composer textarea { flex: 1; min-width: 0; resize: none; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink);
+  font: inherit; font-size: 13.5px; line-height: 1.5; max-height: 160px; }
+.dshl-chat .composer textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.dshl-chat .composer .dshl-btn { height: 36px; }
+
+
+/* Markdown in chat replies */
+.dshl-chat .msg.bot { white-space: normal; }
+.dshl-chat .md > * { margin: 0 0 6px; }
+.dshl-chat .md > *:last-child { margin-bottom: 0; }
+.dshl-chat .md p { white-space: pre-wrap; }
+.dshl-chat .md p.h { font-weight: 650; }
+.dshl-chat .md ul, .dshl-chat .md ol { padding-left: 18px; }
+.dshl-chat .md li { margin: 2px 0; }
+.dshl-chat .md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 1px 5px; border-radius: 5px; background: var(--l2); word-break: break-all; }
+.dshl-chat .md a { color: var(--accent); text-decoration: none; }
+.dshl-chat .md a code { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.dshl-chat .md pre { overflow: auto; padding: 8px 10px; border-radius: 8px; background: var(--l2); }
+.dshl-chat .md pre code { padding: 0; background: none; }
+.dshl-chat .md table { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+.dshl-chat .md th, .dshl-chat .md td { border-bottom: 1px solid var(--line-soft); padding: 4px 6px; text-align: left; vertical-align: top; }
+.dshl-chat .md th { color: var(--muted); font-weight: 550; }
+/* Sidebar button and paste prompt (outside .dshl, so host tokens directly) */
+.dshl-sidebtn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 32px; min-width: 32px; padding: 0 8px; border: 0; border-radius: 8px;
+  background: none; color: var(--dsw-alias-label-secondary, #66655f); font: inherit; font-size: 13px; cursor: pointer; }
+.dshl-sidebtn:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.05)); color: var(--dsw-alias-label-primary, #1b1b19); }
+.dshl-sidebtn svg { width: 16px; height: 16px; }
+.dshl-pastechip { display: flex; padding: 0 2px 6px; }
+.dshl-pastechip button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0; border-radius: 999px; cursor: pointer; font: inherit; font-size: 12.5px;
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #3b6ef5) 12%, transparent); color: var(--dsw-alias-state-business-primary, #3b6ef5); max-width: 100%; }
+.dshl-pastechip button svg { width: 13px; height: 13px; flex: none; }
+.dshl-pastechip .url { opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Login dialog */
 .dshl-modal { position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.36); }
 .dshl-modal .box { position: relative; width: min(400px, 100%); padding: 28px 24px 20px; border-radius: 16px; background: var(--bg); color: var(--ink);

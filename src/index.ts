@@ -3,7 +3,7 @@
  * subtitle translation through the harness model, and the HTTP surface the
  * browser half talks to (/live/api/*, /live/media/*).
  */
-import { appendFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, createReadStream, readdirSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir, networkInterfaces } from 'node:os'
 import { extname, join, normalize, resolve, sep } from 'node:path'
@@ -20,7 +20,10 @@ import { LocalProvider } from './providers/local.ts'
 import { OpenAIProvider, verifyOpenAIKey } from './providers/openai.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
 import type { JobOptions, SourceKind, SpeechProvider } from './types.ts'
+import type { JobDeps } from './job.ts'
+import { registerTools } from './tools.ts'
 import { metered, UsageMeter } from './usage.ts'
+import { EventEmitter } from 'node:events'
 import { WhisperServer } from './whisper.ts'
 
 export const name = 'dsh-live'
@@ -119,9 +122,17 @@ export function apply(ctx: Context, config: Config): void {
 
   // Page-level preferences (which browser login to use for video sites).
   const settingsFile = join(config.dataDir, 'settings.json')
-  const prefs = (): { cookies: CookieChoice } => {
+  type Prefs = { cookies: CookieChoice; last?: Pick<JobOptions, 'tgtLangs' | 'srcLang' | 'provider' | 'mode'> }
+  const prefs = (): Prefs => {
     try { return { cookies: 'auto', ...JSON.parse(readFileSync(settingsFile, 'utf8')) } } catch { return { cookies: 'auto' } }
   }
+  const savePrefs = (patch: Partial<Prefs>) => { try { writeFileSync(settingsFile, JSON.stringify({ ...prefs(), ...patch }, null, 2)) } catch {} }
+  /** Subtitle options last used on the page: tools and commands reuse them. */
+  const lastOptions = (): NonNullable<Prefs['last']> => prefs().last ?? { tgtLangs: [config.defaultTargetLang], srcLang: 'auto', provider: keys.get('openai') ? 'openai' : 'local', mode: 'realtime' }
+
+  /** Browser notifications: "show this video" for a session (tools, /video). */
+  const bus = new EventEmitter()
+  bus.setMaxListeners(100)
   const downloads = new Downloads(join(config.dataDir, 'jobs'), () => prefs().cookies, log)
 
   function makeProvider(opts: JobOptions, glossary: Glossary, usage: UsageMeter): SpeechProvider {
@@ -196,6 +207,49 @@ export function apply(ctx: Context, config: Config): void {
     return { jobId: job.id, ...job.ingest }
   }
 
+  /** Per-job services (usage meter, translator, glossary): shared by new and restored jobs. */
+  function jobDeps(dir: string, opts: JobOptions, getJob: () => LiveJob | undefined, waiting = false): JobDeps {
+    let usageTimer: ReturnType<typeof setTimeout> | undefined
+    const usage = new UsageMeter(() => { usageTimer ??= setTimeout(() => { usageTimer = undefined; const j = getJob(); j?.emit('state', j.summary()) }, 800) })
+    const jobLlm = () => (llm ? metered(llm, usage) : undefined)
+    const glossary = new Glossary(join(dir, 'glossary.json'), opts.tgtLangs, jobLlm, terms => getJob()?.emit('glossary', terms), log, config.glossary, join(config.dataDir, 'glossary.json'))
+    return {
+      dir,
+      makeProvider: () => makeProvider(getJob()!.opts, glossary, usage),
+      translator: new Translator(jobLlm),
+      usage,
+      glossary,
+      log,
+      ingest: { host: lanAddress(), rtmpPort: config.rtmpPort, srtPort: config.srtPort, key: waiting ? PUSH_KEY : undefined },
+      cookies: () => prefs().cookies,
+    }
+  }
+
+  /** The conversation's video: in memory, or the latest one on disk (after a restart). */
+  function jobForConversation(conversationId: string): LiveJob | undefined {
+    const id = byConversation.get(conversationId)
+    if (id && jobs.has(id)) return jobs.get(id)
+    const root = join(config.dataDir, 'jobs')
+    if (!existsSync(root)) return undefined
+    const dirs = readdirSync(root).filter(n => /^[\w-]+$/.test(n)).sort().reverse()
+    for (const name of dirs) {
+      const file = join(root, name, 'job.json')
+      if (!existsSync(file)) continue
+      try {
+        const j = JSON.parse(readFileSync(file, 'utf8')) as { opts?: { conversationId?: string } }
+        if (j.opts?.conversationId !== conversationId) continue
+      } catch { continue }
+      let job: LiveJob | undefined
+      const raw = JSON.parse(readFileSync(file, 'utf8'))
+      job = LiveJob.restore(join(root, name), jobDeps(join(root, name), raw.opts, () => job))
+      if (!job) return undefined
+      jobs.set(job.id, job)
+      byConversation.set(conversationId, job.id)
+      return job
+    }
+    return undefined
+  }
+
   async function startJob(opts: JobOptions, waiting = false): Promise<LiveJob> {
     const prev = waiting ? undefined : byConversation.get(opts.conversationId)
     if (prev) await jobs.get(prev)?.close('replaced')
@@ -204,21 +258,7 @@ export function apply(ctx: Context, config: Config): void {
     const dir = join(config.dataDir, 'jobs', id)
     mkdirSync(dir, { recursive: true })
     let job: LiveJob | undefined
-    // Every model call for this video is counted (shown as token usage on the page).
-    let usageTimer: ReturnType<typeof setTimeout> | undefined
-    const usage = new UsageMeter(() => { usageTimer ??= setTimeout(() => { usageTimer = undefined; job?.emit('state', job.summary()) }, 800) })
-    const jobLlm = () => (llm ? metered(llm, usage) : undefined)
-    const glossary = new Glossary(join(dir, 'glossary.json'), opts.tgtLangs, jobLlm, terms => job?.emit('glossary', terms), log, config.glossary, join(config.dataDir, 'glossary.json'))
-    job = new LiveJob(id, opts, {
-      dir,
-      makeProvider: () => makeProvider(job!.opts, glossary, usage),
-      translator: new Translator(jobLlm),
-      usage,
-      glossary,
-      log,
-      ingest: { host: lanAddress(), rtmpPort: config.rtmpPort, srtPort: config.srtPort, key: waiting ? PUSH_KEY : undefined },
-      cookies: () => prefs().cookies,
-    })
+    job = new LiveJob(id, opts, jobDeps(dir, opts, () => job, waiting))
     jobs.set(id, job)
     if (!waiting) byConversation.set(opts.conversationId, id)
     void job.start()
@@ -234,7 +274,7 @@ export function apply(ctx: Context, config: Config): void {
         const deps = await checkDeps(config.whisperModel)
         const localReady = deps.filter(d => ['ffmpeg', 'whisper-server', 'whisper model'].includes(d.name)).every(d => d.ok)
         return send(res, 200, {
-          deps, translator: translator.available, langs: LANGS, defaultTargetLang: config.defaultTargetLang,
+          deps, translator: translator.available, langs: LANGS, defaultTargetLang: config.defaultTargetLang, dataDir: config.dataDir,
           providers: [
             { id: 'openai', online: true, ready: keys.info('openai').set },
             { id: 'local', online: false, ready: localReady },
@@ -263,6 +303,7 @@ export function apply(ctx: Context, config: Config): void {
       if (route === 'start' && req.method === 'POST') {
         const b = await readJson(req)
         if (typeof b.url !== 'string' || !b.url.trim()) return send(res, 400, { error: 'url required' })
+        if (Array.isArray(b.tgtLangs)) savePrefs({ last: { tgtLangs: (b.tgtLangs as unknown[]).map(String).slice(0, 4), srcLang: typeof b.srcLang === 'string' ? b.srcLang : 'auto', provider: typeof b.provider === 'string' ? b.provider : 'local', mode: b.mode === 'polished' ? 'polished' : 'realtime' } })
         const source: SourceKind = b.source === 'push' || b.source === 'file' ? b.source : 'url'
         await disarm()
         const raw = b.url.trim()
@@ -287,6 +328,16 @@ export function apply(ctx: Context, config: Config): void {
         void job.stop()
         return send(res, 200, job.summary())
       }
+      if (route === 'bus') {
+        // One stream per browser tab: "open this video" requests from tools and commands.
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
+        res.write(': ok\n\n')
+        const onOpen = (m: unknown) => res.write(`event: show\ndata: ${JSON.stringify(m)}\n\n`)
+        bus.on('open', onOpen)
+        const ping = setInterval(() => res.write(': ping\n\n'), 25_000)
+        req.on('close', () => { bus.off('open', onOpen); clearInterval(ping) })
+        return
+      }
       if (route === 'subs' && req.method === 'POST') {
         // { jobId, action: 'start' | 'pause', from?, srcLang?, tgtLangs?, provider?, mode? }
         const b = await readJson(req)
@@ -300,6 +351,7 @@ export function apply(ctx: Context, config: Config): void {
           if (typeof b.provider === 'string') opts.provider = b.provider
           if (b.mode === 'realtime' || b.mode === 'polished') opts.mode = b.mode
           if (opts.provider === 'openai' && !keys.get('openai')) return send(res, 400, { error: 'no OpenAI key' })
+          savePrefs({ last: { ...lastOptions(), ...opts } as NonNullable<Prefs['last']> })
           void job.startSubs(typeof b.from === 'number' ? b.from : undefined, opts)
         }
         return send(res, 200, job.summary())
@@ -349,8 +401,8 @@ export function apply(ctx: Context, config: Config): void {
         }))
       }
       if (route === 'job') {
-        const id = url.searchParams.get('jobId') ?? byConversation.get(url.searchParams.get('conversationId') ?? '')
-        const job = id ? jobs.get(id) : undefined
+        const jid = url.searchParams.get('jobId')
+        const job = jid ? jobs.get(jid) : jobForConversation(url.searchParams.get('conversationId') ?? '')
         return send(res, 200, job ? { ...job.summary(), cues: job.cues, terms: job.terms } : null)
       }
       if (route === 'events') {
@@ -431,6 +483,25 @@ export function apply(ctx: Context, config: Config): void {
       if (file.endsWith('.m3u8')) res.end(readFileSync(file)); else createReadStream(file).pipe(res)
     }
   }
+
+  registerTools(ctx, {
+    dataDir: config.dataDir,
+    jobFor: sid => jobForConversation(sid),
+    open: async (sid, target) => {
+      await disarm()
+      return startJob({ ...lastOptions(), source: target.source, url: target.source === 'file' && target.url.startsWith('~') ? join(homedir(), target.url.slice(1)) : target.url, conversationId: sid })
+    },
+    show: (sid, jobId) => bus.emit('open', { sessionId: sid, jobId }),
+    downloadOriginal: (sid, job) => {
+      const s = job.summary()
+      if (s.source !== 'url') return { status: 'this video is already a local file', file: s.url }
+      const have = s.files.find(f => /^original\./.test(f))
+      if (have) return { status: 'done', file: join(s.dir, have) }
+      const task = downloads.original({ conversationId: sid, url: s.url, dirId: s.id, title: s.title, browser: s.loginBrowser })
+      return { status: task.status }
+    },
+    subsDefaults: lastOptions,
+  })
 
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/api', handler: api }), 'dsh-live: api route')
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/media', handler: media }), 'dsh-live: media route')
