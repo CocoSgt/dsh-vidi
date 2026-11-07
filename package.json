@@ -1,9 +1,12 @@
 {
-  "name": "dsh-live",
+  "name": "dsh-stream",
   "version": "0.1.0",
-  "description": "Watch live streams inside DeepSeek Harness with real-time bilingual subtitles — pull any live stream, subtitle it in real time or with a polished delay, restream and save it",
+  "description": "A video tool for DeepSeek Harness: watch live streams, videos and podcasts with real-time subtitles in any language, then clip and download",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "dsh": ">=0.2.2-rc.1"
+  },
   "main": "lib/index.mjs",
   "exports": {
     ".": {
@@ -57,12 +60,5 @@
     "tsdown": "^0.22.14",
     "typescript": "^5.9.2"
   },
-  "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "live",
-    "subtitles",
-    "translation",
-    "restream"
-  ]
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "video", "live", "stream", "subtitles", "translation", "podcast"]
 }

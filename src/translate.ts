@@ -52,7 +52,7 @@ export class Translator {
     const assembler = new BlockAssembler()
     for await (const chunk of handle.stream({
       provider, model, system, maxTokens: 300 + 300 * targets.length, purpose: 'live-subtitle-translate', signal,
-      messages: [createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-live' } })],
+      messages: [createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-stream' } })],
     })) {
       assembler.push(chunk as never)
     }
@@ -82,7 +82,7 @@ export async function translateBatch(handle: LlmHandle, targets: string[], lines
   const asm = new BlockAssembler()
   for await (const chunk of handle.stream({
     provider, model, system, maxTokens: 400 + lines.length * 90 * targets.length, purpose: 'live-translate-batch',
-    messages: [createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-live' } })],
+    messages: [createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-stream' } })],
   })) asm.push(chunk as never)
   const out = asm.blocks().filter((b: { type: string }) => b.type === 'text').map((b: { type: string; text?: string }) => b.text ?? '').join('')
   const res = new Map<number, Record<string, string>>()

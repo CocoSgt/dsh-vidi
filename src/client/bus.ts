@@ -1,5 +1,5 @@
 /**
- * Browser-side shared state for dsh-live:
+ * Browser-side shared state for dsh-stream:
  * - one EventSource to /live/api/bus ("show this video" from tools and /video);
  * - the video page: open or not, and which session it is bound to.
  */

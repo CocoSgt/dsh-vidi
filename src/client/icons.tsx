@@ -28,7 +28,7 @@ export const Icon = {
   speed: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><path d="M4.5 17a8.5 8.5 0 1 1 15 0" /><path d="M12 13l4-4" /></svg>,
   swap: () => <svg viewBox="0 0 24 24" width="14" height="14" {...P}><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4" /></svg>,
   /**
-   * dsh-live mark: a screen with play, and two caption lines beneath (video + subtitles).
+   * dsh-stream mark: a screen with play, and two caption lines beneath (video + subtitles).
    * busy: the caption lines write themselves (work going on); live: a pulsing red dot (recording).
    */
   video: ({ size = 18, busy = false, live = false }: { size?: number; busy?: boolean; live?: boolean }) => (

@@ -1,5 +1,5 @@
 /**
- * dsh-live host half: live stream jobs, local/online speech providers,
+ * dsh-stream host half: live stream jobs, local/online speech providers,
  * subtitle translation through the harness model, and the HTTP surface the
  * browser half talks to (/live/api/*, /live/media/*).
  */
@@ -27,7 +27,7 @@ import { metered, UsageMeter } from './usage.ts'
 import { EventEmitter } from 'node:events'
 import { WhisperServer } from './whisper.ts'
 
-export const name = 'dsh-live'
+export const name = 'dsh-stream'
 export const inject = ['webServer']
 
 export interface Config {
@@ -82,11 +82,11 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  const logger = (ctx as any).logger?.('dsh-live')
+  const logger = (ctx as any).logger?.('dsh-stream')
   mkdirSync(config.dataDir, { recursive: true })
   const logFile = join(config.dataDir, 'dsh-live.log')
   const log = (msg: string): void => {
-    if (logger?.info) logger.info(msg); else console.log(`[dsh-live] ${msg}`)
+    if (logger?.info) logger.info(msg); else console.log(`[dsh-stream] ${msg}`)
     try { appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`) } catch {}
   }
   const whisper = new WhisperServer(config.whisperModel, log)
@@ -103,7 +103,7 @@ export function apply(ctx: Context, config: Config): void {
   const seesCache = new Map<string, Promise<boolean>>()
   // Images for the model go through DSH's attachment store (the way the chat sends pictures).
   let attachments: any
-  ctx.inject(['attachments'], (c: any) => { c.effect(() => { attachments = c.attachments; return () => { attachments = undefined } }, 'dsh-live: frames for the subtitle model') })
+  ctx.inject(['attachments'], (c: any) => { c.effect(() => { attachments = c.attachments; return () => { attachments = undefined } }, 'dsh-stream: frames for the subtitle model') })
   ctx.inject(['llm', 'agentDefaultModel'], (c: any) => {
     c.effect(() => {
       // Subtitle work is short and literal: switch the model's thinking off where the model allows it
@@ -150,7 +150,7 @@ export function apply(ctx: Context, config: Config): void {
         if (m) deepseekDefault = { provider: ds.id, model: m.id }
       })()
       return () => { llm = undefined; llmService = undefined }
-    }, 'dsh-live: translator model')
+    }, 'dsh-stream: translator model')
   })
   const translator = new Translator(() => llm)
 
@@ -163,7 +163,7 @@ export function apply(ctx: Context, config: Config): void {
       void keys.refresh()
       const off = c.on?.('credentials/updated', () => void keys.refresh())
       return () => { off?.(); keys.creds = undefined; void keys.refresh() }
-    }, 'dsh-live: speech keys')
+    }, 'dsh-stream: speech keys')
   })
   /** Whether whisper.cpp and its model are installed (checked at start and on each deps request). */
   let localReady = false
@@ -670,10 +670,10 @@ export function apply(ctx: Context, config: Config): void {
     subsDefaults: lastOptions,
   })
 
-  ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/api', handler: api }), 'dsh-live: api route')
-  ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/media', handler: media }), 'dsh-live: media route')
+  ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/api', handler: api }), 'dsh-stream: api route')
+  ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/media', handler: media }), 'dsh-stream: media route')
   ctx.effect(() => () => {
     for (const job of jobs.values()) void job.close('plugin unloaded')
     whisper.stop()
-  }, 'dsh-live: shutdown')
+  }, 'dsh-stream: shutdown')
 }

@@ -539,7 +539,7 @@ export function LiveView(props: LiveViewInjected) {
   )
 
   return (
-    <div className={`dshl ${theater ? 'theater' : ''} ${pageMode ? 'page' : ''}`} data-dsh-own-drop="dsh-live"
+    <div className={`dshl ${theater ? 'theater' : ''} ${pageMode ? 'page' : ''}`} data-dsh-own-drop="dsh-stream"
       // Files dropped here belong to this view: keep them away from the chat composer's page-wide drop handler.
       onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) e.stopPropagation() }}
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.stopPropagation(); e.preventDefault(); if (!active) setDragging(true) } }}

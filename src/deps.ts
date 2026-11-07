@@ -29,7 +29,7 @@ async function version(bin: string, args: string[]): Promise<string | undefined>
   }
 }
 
-/** Check the external tools dsh-live relies on. */
+/** Check the external tools dsh-stream relies on. */
 export async function checkDeps(whisperModel: string): Promise<DepStatus[]> {
   const out: DepStatus[] = []
   const ytdlp = await which('yt-dlp')

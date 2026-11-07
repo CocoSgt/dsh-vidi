@@ -113,7 +113,7 @@ export class Polisher {
     const asm = new BlockAssembler()
     for await (const chunk of handle.stream({
       provider, model, system, maxTokens: 800 + batch.length * 120 * Math.max(1, targets.length + 1), purpose: 'live-polish',
-      messages: [createUserMessage({ content: [...(image ? [image as never] : []), { type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-live' } })],
+      messages: [createUserMessage({ content: [...(image ? [image as never] : []), { type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-stream' } })],
     })) asm.push(chunk as never)
     const out = asm.blocks().filter((b: { type: string }) => b.type === 'text').map((b: { type: string; text?: string }) => b.text ?? '').join('')
     const m = out.match(/\{[\s\S]*\}/)

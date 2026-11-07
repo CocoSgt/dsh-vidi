@@ -8,7 +8,7 @@ const PLATFORM_EXTERNALS = [
 
 export default defineConfig([
   {
-    name: 'dsh-live/host',
+    name: 'dsh-stream/host',
     entry: { index: 'src/index.ts' },
     outDir: 'lib',
     format: 'esm',
@@ -19,7 +19,7 @@ export default defineConfig([
     external: [/^@deepseek-ai\//, /^node:/],
   },
   {
-    name: 'dsh-live/client',
+    name: 'dsh-stream/client',
     entry: { client: 'src/client/index.ts' },
     outDir: 'lib',
     format: 'cjs',
@@ -31,7 +31,7 @@ export default defineConfig([
     external: [...PLATFORM_EXTERNALS],
     outputOptions: {
       entryFileNames: 'client.js',
-      banner: 'window.__ModuleLoader__.load({ id: "dsh-live", factory: (require) => {',
+      banner: 'window.__ModuleLoader__.load({ id: "dsh-stream", factory: (require) => {',
       footer: 'return module.exports; } });',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
     },
