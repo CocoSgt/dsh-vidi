@@ -329,6 +329,16 @@ export function apply(ctx: Context, config: Config): void {
         void job.stop()
         return send(res, 200, job.summary())
       }
+      if (route === 'activity') {
+        // What is still working (for the sidebar entry): recordings, fetches, subtitle runs, downloads.
+        const items = [...jobs.values()].map(j => j.summary()).filter(s => (s.status === 'running' && !s.message) || s.status === 'resolving' || s.subs?.state === 'running')
+          .map(s => ({
+            jobId: s.id, conversationId: s.conversationId, title: s.title,
+            recording: s.status === 'running' && !s.vod, loading: (s.status === 'running' || s.status === 'resolving') && !!s.vod,
+            subs: s.subs?.state, at: s.subs?.at ?? 0, duration: s.duration,
+          }))
+        return send(res, 200, { items, downloads: downloads.running() })
+      }
       if (route === 'bus') {
         // One stream per browser tab: "open this video" requests from tools and commands.
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })

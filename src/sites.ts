@@ -54,6 +54,8 @@ export interface Resolved {
   siteTracks: SiteTrack[]
   /** The page's own words about the video (title, channel, tags, chapters, description): background for polishing and the glossary. */
   brief: string
+  /** The video's language as the site states it (e.g. "en", "zh-Hans" → "zh"). */
+  language?: string
 }
 
 const CLK = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
@@ -145,6 +147,7 @@ async function dump(url: string, browser: string | undefined): Promise<Resolved>
     title: info.title, isLive: info.is_live === true || info.live_status === 'is_live',
     duration: typeof info.duration === 'number' ? info.duration : undefined,
     inputs, cookiesFrom: browser, siteTracks: pickTracks(info), brief: briefOf(info),
+    language: typeof info.language === 'string' && info.language ? (/^zh-(hant|tw|hk)/i.test(info.language) ? 'zh-Hant' : info.language.split('-')[0]) : undefined,
   }
 }
 

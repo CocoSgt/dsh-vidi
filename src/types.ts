@@ -79,4 +79,6 @@ export interface JobSummary extends JobOptions {
   subs?: { state: SubsState; at: number }
   usage?: import('./usage.ts').UsageSummary
   site?: import('./sitesubs.ts').SiteTrack[]
+  /** Language spoken in the video (setting, recognition, or what the site says). */
+  spoken?: string
 }

@@ -49,6 +49,11 @@ export class Downloads {
 
   constructor(private readonly jobsDir: string, private readonly cookies: () => CookieChoice, private readonly log: (m: string) => void) {}
 
+  /** How many downloads are still going (any conversation). */
+  running(): number {
+    return [...this.tasks.values()].filter(t => t.status === 'running').length
+  }
+
   list(conversationId: string): Task[] {
     return [...this.tasks.values()].filter(t => t.conversationId === conversationId).sort((a, b) => b.startedAt - a.startedAt).slice(0, 12)
   }

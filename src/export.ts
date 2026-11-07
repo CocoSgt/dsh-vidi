@@ -1,3 +1,15 @@
+/**
+ * Subtitle style: no full stop at the end of a line (。 ． . ｡), keeping
+ * ellipses, question/exclamation marks and abbreviations such as "U.S.".
+ */
+export function subtitleText(text: string): string {
+  const t = text.trim()
+  if (/(\.\.\.|…)$/.test(t)) return t
+  if (/[。．｡]$/.test(t)) return t.slice(0, -1).trimEnd()
+  if (/[^.\s]\.$/.test(t) && !/\b[A-Z]\.[A-Z]\.$|\b(?:Mr|Mrs|Ms|Dr|St|vs|etc|Inc|Ltd|Jr|Sr)\.$/.test(t)) return t.slice(0, -1)
+  return t
+}
+
 import type { Cue } from './types.ts'
 
 export type ExportFormat = 'srt' | 'vtt' | 'txt' | 'md'

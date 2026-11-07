@@ -1,5 +1,5 @@
-import { useSyncExternalStore } from 'react'
-import { pageStore, VIDEO_LINK } from './bus.ts'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { frameStore, pageStore, VIDEO_LINK } from './bus.ts'
 import type { SessionFaceLike } from './ChatPanel.tsx'
 import { Icon } from './icons.tsx'
 import type { LiveKey } from './locales.ts'
@@ -72,12 +72,38 @@ export function VideoPage(props: { sessions: SessionsLike; t: (k: LiveKey) => st
   )
 }
 
-/** Sidebar footer button. */
+interface Activity { items: { jobId: string; conversationId: string; title?: string; recording: boolean; loading: boolean; subs?: string; at: number; duration?: number }[]; downloads: number }
+
+/** Sidebar entry: opens the video page; while work goes on it shows where you left off and what is running. */
 export function SidebarButton(props: { wide?: boolean; sessions: SessionsLike; workspaces: WorkspacesLike; t: (k: LiveKey) => string }) {
   const { wide, sessions, workspaces, t } = props
+  const [act, setAct] = useState<Activity>({ items: [], downloads: 0 })
+  const frame = useSyncExternalStore(frameStore.subscribe, frameStore.get)
+  const page = useSyncExternalStore(pageStore.subscribe, pageStore.get)
+  useEffect(() => {
+    let alive = true
+    const poll = () => fetch('/live/api/activity').then(r => r.json()).then(a => { if (alive) setAct({ items: Array.isArray(a?.items) ? a.items : [], downloads: Number(a?.downloads) || 0 }) }).catch(() => {})
+    void poll()
+    const id = setInterval(poll, 3000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+  // The job the user last looked at, if still working; else any working job.
+  const item = act.items.find(i => i.jobId === frame?.jobId) ?? act.items[0]
+  const busy = !!item || act.downloads > 0
+  const live = !!item?.recording
+  const pct = item?.subs === 'running' && item.duration ? Math.min(99, Math.round((item.at / item.duration) * 100)) : undefined
+  const meta = !busy ? '' : item?.subs === 'running' ? (pct !== undefined ? t('side.subs').replace('{p}', String(pct)) : t('side.subsLive'))
+    : item?.recording ? t('side.recording') : item?.loading ? t('side.loading') : t('side.downloading')
+  const thumb = busy && frame && (!item || frame.jobId === item.jobId) ? frame.dataUrl : undefined
+  const open = () => void openPage(sessions, item ? { sessionId: item.conversationId } : { workspaces, title: t('view.live') })
+  const tip = busy ? `${t('page.open')} · ${item?.title ?? ''} · ${meta}` : t('page.open')
   return (
-    <button className={`dshl-sidebtn ${wide ? 'wide' : 'rail'}`} title={t('page.open')} onClick={() => void openPage(sessions, { workspaces, title: t('view.live') })}>
-      <Icon.video />{wide && <span className="label">{t('page.open')}</span>}
+    <button className={`dshl-sidebtn ${wide ? 'wide' : 'rail'} ${busy ? 'busy' : ''} ${page.open ? 'here' : ''}`} title={tip} onClick={open}
+      style={thumb ? { ['--thumb' as string]: `url(${thumb})` } : undefined}>
+      {thumb && <span className="bg" aria-hidden="true" />}
+      <Icon.video busy={busy} live={live} />
+      {wide && <span className="label">{t('page.open')}</span>}
+      {wide && meta && <span className="meta">{meta}</span>}
     </button>
   )
 }

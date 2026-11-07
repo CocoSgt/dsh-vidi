@@ -38,12 +38,17 @@ interface Props {
   menus?: PlayerMenu[]
   /** Save a screenshot (PNG of picture + subtitles as shown). */
   onSnapshot?: (png: Blob, at: number) => Promise<{ url?: string; path?: string }>
+  /** A small JPEG of the picture now (every few seconds while playing, and on pause). */
+  onThumb?: (dataUrl: string) => void
   /** Cut [from, to] into a clip. */
   onClip?: (from: number, to: number) => Promise<{ url?: string; path?: string }>
   t: (k: LiveKey) => string
 }
 
 interface Toast { text: string; href?: string; busy?: boolean }
+
+/** Subtitles carry no full stop at the end of a line (older lines may still have one). */
+const noStop = (x: string) => (/(\.\.\.|…)$/.test(x) ? x : x.replace(/[。．｡]$|(?<=[^.\s])\.$/, ''))
 
 const fmt = (s: number) => {
   if (!isFinite(s)) return '0:00'
@@ -57,7 +62,7 @@ const fmt = (s: number) => {
  * stage, so subtitles (sized in container units) and menus come along.
  */
 export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref) {
-  const { src, live, vod, duration, subsAt, waitingText, cues, siteCues, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], onSnapshot, onClip, t } = props
+  const { src, live, vod, duration, subsAt, waitingText, cues, siteCues, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], onSnapshot, onClip, onThumb, t } = props
   const stage = useRef<HTMLDivElement>(null)
   const video = useRef<HTMLVideoElement>(null)
   const hls = useRef<Hls | null>(null)
@@ -129,6 +134,26 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
     }, 150)
     return () => window.clearInterval(id)
   }, [onTime])
+
+  // Keep a small picture of where the user is, for the sidebar entry.
+  useEffect(() => {
+    if (!onThumb) return
+    const grab = () => {
+      const v = video.current
+      if (!v || !v.videoWidth || v.readyState < 2) return
+      // A wide strip from the middle of the picture (the sidebar row is wide and short; side bars stay out).
+      const sw = v.videoWidth * 0.62, sh = Math.min(v.videoHeight * 0.6, sw / 3.2)
+      const sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2
+      const c = document.createElement('canvas')
+      c.width = 384; c.height = Math.round((384 * sh) / sw)
+      try { c.getContext('2d')!.drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height); onThumb(c.toDataURL('image/jpeg', 0.72)) } catch {}
+    }
+    const id = window.setInterval(() => { if (video.current && !video.current.paused) grab() }, 5000)
+    const v = video.current
+    v?.addEventListener('pause', grab)
+    v?.addEventListener('loadeddata', grab)
+    return () => { window.clearInterval(id); v?.removeEventListener('pause', grab); v?.removeEventListener('loadeddata', grab) }
+  }, [onThumb, ready])
 
   useEffect(() => {
     const onFs = () => setFull(document.fullscreenElement === stage.current)
@@ -219,8 +244,8 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   const texts: LineTexts = {}
   if (ccOn) {
     if (current) {
-      texts.src = current.src
-      for (const [k, v] of Object.entries(current.tr ?? {})) if (v && v.trim() !== current.src.trim()) texts[k] = v
+      texts.src = noStop(current.src)
+      for (const [k, v] of Object.entries(current.tr ?? {})) if (v && v.trim() !== current.src.trim()) texts[k] = noStop(v)
     }
     for (const [k, list] of Object.entries(siteCues ?? {})) texts[k] = list.find(c => c.start - 0.2 <= now && now <= c.end + 0.3)?.text
   }

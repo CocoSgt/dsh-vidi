@@ -29,6 +29,21 @@ export const pageStore = {
   subscribe(l: Listener) { pageListeners.add(l); return () => { pageListeners.delete(l) } },
 }
 
+/** The last frame the user saw (small JPEG), for the sidebar entry while work goes on elsewhere. */
+export interface LastFrame { dataUrl: string; jobId: string; conversationId: string; title?: string }
+let lastFrame: LastFrame | undefined
+try { const raw = sessionStorage.getItem('dsh-live.lastFrame'); if (raw) lastFrame = JSON.parse(raw) } catch {}
+const frameListeners = new Set<Listener>()
+export const frameStore = {
+  get: () => lastFrame,
+  set(f: LastFrame) {
+    lastFrame = f
+    try { sessionStorage.setItem('dsh-live.lastFrame', JSON.stringify(f)) } catch {}
+    for (const l of frameListeners) l()
+  },
+  subscribe(l: Listener) { frameListeners.add(l); return () => { frameListeners.delete(l) } },
+}
+
 /** Subscribe to "show video" requests; the first subscriber opens the stream. */
 export function onOpenRequest(fn: (r: OpenRequest) => void): () => void {
   openListeners.add(fn)

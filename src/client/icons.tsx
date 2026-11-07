@@ -27,12 +27,18 @@ export const Icon = {
   scissors: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><path d="M8 7.5L20 18M8 16.5L20 6" /></svg>,
   speed: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><path d="M4.5 17a8.5 8.5 0 1 1 15 0" /><path d="M12 13l4-4" /></svg>,
   swap: () => <svg viewBox="0 0 24 24" width="14" height="14" {...P}><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4" /></svg>,
-  /** dsh-live mark: a screen with play, and two caption lines beneath (video + subtitles). */
-  video: ({ size = 18 }: { size?: number }) => (
-    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  /**
+   * dsh-live mark: a screen with play, and two caption lines beneath (video + subtitles).
+   * busy: the caption lines write themselves (work going on); live: a pulsing red dot (recording).
+   */
+  video: ({ size = 18, busy = false, live = false }: { size?: number; busy?: boolean; live?: boolean }) => (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      className={`dshl-mark ${busy ? 'busy' : ''}`}>
       <rect x="2.75" y="3.75" width="18.5" height="12.5" rx="3.25" />
-      <path d="M10.1 7.4v5.2l4.3-2.6z" fill="currentColor" />
-      <path d="M6.5 20h6.5M15.5 20h2" />
+      <path className="play" d="M10.1 7.4v5.2l4.3-2.6z" fill="currentColor" />
+      <path className="c1" d="M6.5 20h6.5" />
+      <path className="c2" d="M15.5 20h2" />
+      {live && <circle className="rec" cx="20.6" cy="4.2" r="2.6" fill="#e5484d" stroke="var(--dsw-alias-bg-base, #fff)" strokeWidth={1.2} />}
     </svg>
   ),
 }

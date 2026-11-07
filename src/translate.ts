@@ -33,7 +33,7 @@ export class Translator {
     const names = targets.map(t => `"${t}" (${LANGS[t] ?? t})`).join(', ')
     const system = [
       `You translate live speech subtitles. Target languages: ${names}.`,
-      'Translate only the final line. Be faithful, natural and concise, like professional subtitles.',
+      'Translate only the final line. Be faithful, natural and concise, like professional subtitles: no full stop at the end of a line (keep ? and !).',
       'Follow the glossary when it covers a term. Otherwise keep brand, product and model names in their original form, and give well-known people, places and organisations their standard name in the target language.',
       'If the line is a fragment, translate the fragment as-is; do not complete it.',
       `Reply with one JSON object mapping each language code to its translation, e.g. {${targets.map(t => `"${t}": "..."`).join(', ')}} — nothing else.`,

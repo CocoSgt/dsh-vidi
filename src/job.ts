@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
-import { defaultExports, exportCues, type ExportFormat } from './export.ts'
+import { defaultExports, exportCues, subtitleText, type ExportFormat } from './export.ts'
 import type { Glossary } from './glossary.ts'
 import { Polisher } from './polish.ts'
 import { fetchComments, ffmpegInput, LoginRequired, resolveSite, type CookieChoice } from './sites.ts'
@@ -84,6 +84,8 @@ export class LiveJob extends EventEmitter {
   private runOffset = 0
   /** What the page says about the video (title, channel, tags, chapters, description, top comments). */
   brief = ''
+  /** The video's language as the site states it (before any recognition). */
+  siteLang?: string
   private readonly polisher: Polisher
   nextId = 1
   private drafts = new Map<string, number>()
@@ -103,7 +105,8 @@ export class LiveJob extends EventEmitter {
       llm: deps.llm, glossary: deps.glossary, log: m => deps.log(`[${id}] ${m}`),
       brief: () => this.brief, siteText: (a, b) => this.siteText(a, b), targets: () => this.targets(),
       onLine: (cue, src, tr, speaker) => {
-        cue.src = src
+        cue.src = subtitleText(src)
+        for (const k of Object.keys(tr)) tr[k] = subtitleText(tr[k]!)
         if (speaker) cue.speaker = speaker
         if (Object.keys(tr).length) cue.tr = { ...cue.tr, ...tr }
         cue.polished = true
@@ -119,7 +122,7 @@ export class LiveJob extends EventEmitter {
       startedAt: this.startedAt, dir: this.deps.dir, cueCount: this.cues.length,
       files: existsSync(this.deps.dir) ? readdirSync(this.deps.dir).filter(f => /\.(mp4|m4a|srt|vtt|txt|md|json|jsonl)$/.test(f)) : [],
       ingest: this.ingest, vod: this.vod, duration: this.duration, loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
-      subs: { ...this.subs }, usage: this.deps.usage.summary(), site: this.siteTracks,
+      subs: { ...this.subs }, usage: this.deps.usage.summary(), site: this.siteTracks, spoken: this.spokenLang(),
     }
   }
 
@@ -227,6 +230,7 @@ export class LiveJob extends EventEmitter {
     })
     this.title = r.title
     this.vod = !r.isLive
+    this.siteLang = r.language
     this.setBrief(r.brief)
     void fetchComments(url, r.cookiesFrom).then(c => { if (c.length) this.setBrief(`${r.brief}\nTop comments:\n${c.map(x => `- ${x}`).join('\n')}`) })
     // The site's own subtitles, in the background (no tokens).
@@ -430,7 +434,7 @@ export class LiveJob extends EventEmitter {
   /** Provider cues: drafts are revised in place by key; finals get translated. */
   private onProviderCue(pc: ProviderCue, offset = 0): void {
     const { key, ...raw } = pc
-    const rest = { ...raw, start: raw.start + offset, end: raw.end + offset }
+    const rest = { ...raw, start: raw.start + offset, end: raw.end + offset, src: subtitleText(raw.src) }
     let cue: Cue
     const existing = key !== undefined ? this.drafts.get(key) : undefined
     if (existing !== undefined) {
@@ -460,6 +464,7 @@ export class LiveJob extends EventEmitter {
         const ref = this.siteText(cue.start, cue.end).map(x => `[${x.lang}${x.auto ? ', auto' : ''}] ${x.text}`).join('\n')
         const tr = await this.deps.translator.translate(this.targets(), cue.src, context, this.deps.glossary.forPrompt(), undefined, ref)
         if (tr) {
+          for (const k of Object.keys(tr)) tr[k] = subtitleText(tr[k]!)
           cue.tr = { ...cue.tr, ...tr }
           this.emit('cue', cue)
         }
@@ -580,7 +585,7 @@ export class LiveJob extends EventEmitter {
   /** Language actually spoken (setting, or what recognition detected). */
   private spokenLang(): string | undefined {
     if (this.opts.srcLang !== 'auto') return this.opts.srcLang
-    return this.cues.findLast(c => c.lang)?.lang
+    return this.cues.findLast(c => c.lang)?.lang ?? this.siteLang
   }
 
   /** Translation targets, minus the language already spoken (a Chinese video needs no Chinese translation). */

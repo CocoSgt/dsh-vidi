@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { onOpenRequest } from './bus.ts'
+import { frameStore, onOpenRequest } from './bus.ts'
 import { ChatPanel, type SessionFaceLike } from './ChatPanel.tsx'
 import { Icon } from './icons.tsx'
 import { langLabel } from './langs.ts'
@@ -20,6 +20,7 @@ interface Summary {
   subs?: { state: 'off' | 'running' | 'paused' | 'done'; at: number }
   usage?: Usage
   site?: { key: string; lang: string; name?: string; auto: boolean }[]
+  spoken?: string
 }
 interface Usage {
   models: { provider: string; model: string; input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; calls: number }[]
@@ -96,6 +97,13 @@ function CopyRow({ label, value, copy, copied }: { label: string; value: string;
   )
 }
 
+/** The viewer's language (browser), as a subtitle language code. */
+export function browserLang(): string {
+  const l = (typeof navigator !== 'undefined' ? navigator.language : 'en') || 'en'
+  if (/^zh-(hant|tw|hk|mo)/i.test(l)) return 'zh-Hant'
+  return l.split('-')[0]!.toLowerCase()
+}
+
 /** Translation lines (not the original, not the site's own tracks). */
 const translationsOf = (lines: string[]) => lines.filter(l => l !== 'src' && !l.startsWith('site:'))
 const siteName = (url: string) => /youtu\.?be/.test(url) ? 'YouTube' : /bilibili|b23\.tv/.test(url) ? 'B站' : /twitch/.test(url) ? 'Twitch' : ''
@@ -107,7 +115,8 @@ export function LiveView(props: LiveViewInjected) {
   const pageMode = !!onClose
   // What to watch and how
   const [input, setInput] = useState('')
-  const [lines, setLinesRaw] = useState<string[]>(() => store.get('lines', ['zh', 'src']))
+  // Default: the viewer's language + the original.
+  const [lines, setLinesRaw] = useState<string[]>(() => store.get('lines', [browserLang(), 'src']))
   const setLines = (l: string[]) => { setLinesRaw(l); store.set('lines', l) }
   const [mode, setModeRaw] = useState<'realtime' | 'polished'>(() => store.get('mode', 'realtime'))
   const setMode = (m: 'realtime' | 'polished') => { setModeRaw(m); store.set('mode', m) }
@@ -326,6 +335,9 @@ export function LiveView(props: LiveViewInjected) {
     if (!r.ok) throw new Error(j.error ?? 'snapshot failed')
     return j
   }
+  const rememberFrame = useCallback((dataUrl: string) => {
+    if (job) frameStore.set({ dataUrl, jobId: job.id, conversationId: sessionId, title: job.title })
+  }, [job?.id, job?.title, sessionId])
   const makeClip = (from: number, to: number) => post('clip', { jobId: job!.id, from, to, langs: ['src', ...translationsOf(lines)].filter(l => lines.includes(l)) })
 
   // ── Transcript ──
@@ -481,9 +493,12 @@ export function LiveView(props: LiveViewInjected) {
               live={job.status === 'running'} vod={job.vod} duration={job.duration} subsAt={subs.state === 'off' ? undefined : subs.at}
               waitingText={job.status === 'resolving' ? statusText : t('player.waiting')}
               cues={cues} siteCues={shownSite} style={subStyle} delay={job.mode === 'polished' && !job.vod ? Math.max(delay, 75) : delay} onDelay={setDelay} showDelay={job.status === 'running' && !job.vod}
-              onSnapshot={saveSnapshot} onClip={makeClip}
+              onSnapshot={saveSnapshot} onClip={makeClip} onThumb={rememberFrame}
               theater={theater} onTheater={() => setTheater(v => !v)} onTime={setNow} t={t}
-              action={<SubsButton state={subs.state} at={subs.at} duration={job.vod ? job.duration : undefined} onStart={() => startSubs(now)} onPause={pauseSubs} onResume={() => startSubs()} t={t} />}
+              action={subs.state === 'off'
+                ? <SubsStarter lines={lines} onLines={l => void changeLines(l)} spoken={job.spoken} langName={langName} options={langOptions} siteChips={siteChips}
+                    onStart={() => startSubs(now)} t={t} />
+                : <SubsButton state={subs.state} at={subs.at} duration={job.vod ? job.duration : undefined} onStart={() => startSubs(now)} onPause={pauseSubs} onResume={() => startSubs()} t={t} />}
               menus={[
                 {
                   id: 'cc', icon: <Icon.cc />, title: t('menu.cc'), content: (
@@ -619,6 +634,51 @@ function SubsButton(props: { state: 'off' | 'running' | 'paused' | 'done'; at: n
     </button>
   )
   return <button className="dshl-subsbtn" onClick={onStart} title={t('subs.start.tip')}>{t('subs.start')}</button>
+}
+
+/** "Generate subtitles": first choose which (single, bilingual, original only, more), then start. */
+function SubsStarter(props: {
+  lines: string[]; onLines: (l: string[]) => void; spoken?: string; langName: (k: string) => string
+  options: [string, string][]; siteChips: { key: string; label: string }[]; onStart: () => void; t: (k: LiveKey) => string
+}) {
+  const { lines, onLines, spoken, langName, options, siteChips, onStart, t } = props
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [open])
+  const me = browserLang()
+  const same = !!spoken && spoken === me
+  const own = lines.filter(l => !l.startsWith('site:'))
+  const presets: string[][] = same ? [['src']] : [[me, 'src'], [me], ['src']]
+  const eq = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
+  const isPreset = presets.some(p => eq(own, p))
+  return (
+    <span className="dshl-starter" ref={box}>
+      <button className="dshl-subsbtn" onClick={() => setOpen(v => !v)} title={t('subs.start.tip')}>{t('subs.start')}</button>
+      {open && (
+        <div className="dshl-startpop" onClick={e => e.stopPropagation()}>
+          <div className="head">{t('subs.pick')}</div>
+          {same && <p className="note">{t('subs.same').replace('{l}', langName(me))}</p>}
+          <div className="opts">
+            {presets.map(p => (
+              <button key={p.join('+')} className={`opt ${eq(own, p) ? 'on' : ''}`} onClick={() => onLines(p)}>
+                <b>{p.map(langName).join(' + ')}</b><span>{p.length > 1 ? t('subs.bilingual') : t('subs.single')}</span>
+              </button>
+            ))}
+          </div>
+          <details className="dshl-more" open={!isPreset}>
+            <summary>{t('subs.other')}</summary>
+            <LineChips lines={lines} onChange={onLines} options={options} site={siteChips} name={langName} t={t} />
+          </details>
+          <button className="dshl-btn primary go" onClick={() => { setOpen(false); onStart() }}>{t('subs.go')}</button>
+        </div>
+      )}
+    </span>
+  )
 }
 
 const fmtTokens = (n: number, ui: 'en' | 'zh') =>
