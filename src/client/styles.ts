@@ -474,6 +474,15 @@ const CSS = `
 .dshl-read p.src { color: var(--ink); }
 .dshl-read p.tr { color: var(--muted); }
 
+
+/* Labelled control (subtitle languages) */
+.dshl-ctrlrow .pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; max-width: 260px; padding: 0 10px 0 8px; margin: 0 4px; border: 0; border-radius: 8px;
+  background: rgba(255,255,255,.12); color: #fff; font: inherit; font-size: 12.5px; cursor: pointer; }
+.dshl-ctrlrow .pill:hover, .dshl-ctrlrow .pill.on { background: rgba(255,255,255,.22); }
+.dshl-ctrlrow .pill svg { width: 18px; height: 18px; flex: none; }
+.dshl-ctrlrow .pill .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshl-ctrlrow .pill .caret { width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(1px) rotate(-135deg); opacity: .8; flex: none; }
+@container (max-width: 640px) { .dshl-ctrlrow .pill .txt, .dshl-ctrlrow .pill .caret { display: none; } .dshl-ctrlrow .pill { padding: 0 6px; } }
 /* Generate subtitles: choose first */
 .dshl-starter { position: relative; display: inline-flex; }
 .dshl-startpop { position: absolute; right: -40px; bottom: calc(100% + 12px); z-index: 6; width: 290px; padding: 12px; display: grid; gap: 10px;

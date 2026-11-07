@@ -11,7 +11,7 @@ export interface PlayerHandle {
 }
 
 /** A control-bar menu: an icon button that opens a panel above the bar. */
-export interface PlayerMenu { id: string; icon: ReactNode; title: string; content: ReactNode; on?: boolean }
+export interface PlayerMenu { id: string; icon: ReactNode; title: string; content: ReactNode; on?: boolean; /** Shown next to the icon (e.g. the subtitle languages). */ label?: string }
 
 interface Props {
   src: string | null
@@ -351,7 +351,9 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
           {onSnapshot && <button className="ic" onClick={() => void snapshot()} title={t('player.shot')}><Icon.camera /></button>}
           {onClip && <button className={`ic ${clipIn !== null ? 'on rec' : ''}`} onClick={() => void clip()} title={clipIn === null ? t('player.clip') : t('player.clip.end')}><Icon.scissors /></button>}
           {allMenus.map(m => (
-            <button key={m.id} className={`ic dshl-menubtn ${menu === m.id || m.on ? 'on' : ''}`} title={m.title} onClick={() => setMenu(v => (v === m.id ? null : m.id))}>{m.icon}</button>
+            <button key={m.id} className={`${m.label ? 'pill' : 'ic'} dshl-menubtn ${menu === m.id || m.on ? 'on' : ''}`} title={m.title} onClick={() => setMenu(v => (v === m.id ? null : m.id))}>
+              {m.icon}{m.label && <span className="txt">{m.label}</span>}{m.label && <span className="caret" />}
+            </button>
           ))}
           {!full && !pageFull && <button className={`ic ${theater ? 'on' : ''}`} onClick={onTheater} title={`${t('player.theater')} (T)`}><Icon.theater /></button>}
           <button className="ic" onClick={toggleFull} title={`${t('player.fullscreen')} (F)`}>{full || pageFull ? <Icon.exitFull /> : <Icon.full />}</button>

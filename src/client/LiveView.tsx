@@ -501,7 +501,9 @@ export function LiveView(props: LiveViewInjected) {
                 : <SubsButton state={subs.state} at={subs.at} duration={job.vod ? job.duration : undefined} onStart={() => startSubs(now)} onPause={pauseSubs} onResume={() => startSubs()} t={t} />}
               menus={[
                 {
-                  id: 'cc', icon: <Icon.cc />, title: t('menu.cc'), content: (
+                  id: 'cc', icon: <Icon.cc />, title: t('menu.cc'),
+                  label: `${t('player.cc')} · ${lines.filter(l => !l.startsWith('site:') || siteChips.some(c => c.key === l)).map(k => siteChips.find(c => c.key === k)?.label ?? langName(k)).join(' · ')}`,
+                  content: (
                     <>
                       <LineChips lines={lines} onChange={l => void changeLines(l)} options={langOptions} site={siteChips} name={langName} t={t} />
                       <div className="dshl-seg wide">
@@ -618,7 +620,8 @@ export function LiveView(props: LiveViewInjected) {
 function SubsButton(props: { state: 'off' | 'running' | 'paused' | 'done'; at: number; duration?: number; onStart: () => void; onPause: () => void; onResume: () => void; t: (k: LiveKey) => string }) {
   const { state, at, duration, onStart, onPause, onResume, t } = props
   const pct = duration ? Math.min(100, Math.round((at / duration) * 100)) : undefined
-  if (state === 'done') return <span className="dshl-subsbtn done">✓ {t('subs.done')}</span>
+  // Done: nothing to show here; the subtitle button next to it names the languages.
+  if (state === 'done') return null
   // Running: progress fills the pill; on hover it says what a click does.
   if (state === 'running') return (
     <button className="dshl-subsbtn running" onClick={onPause} title={t('subs.pause.tip').replace('{t}', CLOCK(at))}
