@@ -113,6 +113,7 @@ export class LiveJob extends EventEmitter {
       brief: () => this.brief, siteText: (a, b) => this.siteText(a, b), targets: () => this.targets(),
       still: at => this.still(at),
       onLine: (cue, src, tr, speaker) => {
+        if (!this.cues.includes(cue)) return // replaced by a later run
         cue.src = src
         if (speaker) cue.speaker = speaker
         if (Object.keys(tr).length) cue.tr = { ...cue.tr, ...tr }
@@ -177,7 +178,7 @@ export class LiveJob extends EventEmitter {
       if (existsSync(join(dir, 'cues.jsonl'))) {
         for (const line of readFileSync(join(dir, 'cues.jsonl'), 'utf8').split('\n')) {
           if (!line.trim()) continue
-          try { const c = JSON.parse(line) as Cue; seen.set(c.id, c) } catch {}
+          try { const c = JSON.parse(line) as Cue & { dropped?: boolean }; if (c.dropped) seen.delete(c.id); else seen.set(c.id, c) } catch {}
         }
       }
       job.cues.push(...[...seen.values()].sort((a, b) => a.start - b.start))
@@ -421,6 +422,8 @@ export class LiveJob extends EventEmitter {
       return
     }
     this.provider = provider
+    // Starting again over lines already there (say, from the beginning): this run writes them anew.
+    this.dropFrom(at)
     this.runOffset = at
     this.subs = { state: 'running', at }
     this.emit('state', this.summary())
@@ -569,6 +572,17 @@ export class LiveJob extends EventEmitter {
       this.record(cue)
       this.polisher.add(cue)
     })
+  }
+
+  /** Forget the lines from media time `at` on (a new run covers them again). */
+  private dropFrom(at: number): void {
+    const gone = this.cues.filter(c => c.start >= at - 0.05)
+    if (!gone.length) return
+    const ids = new Set(gone.map(c => c.id))
+    this.cues.splice(0, this.cues.length, ...this.cues.filter(c => !ids.has(c.id)))
+    this.drafts.clear()
+    appendFileSync(join(this.deps.dir, 'cues.jsonl'), gone.map(c => JSON.stringify({ id: c.id, dropped: true })).join('\n') + '\n')
+    this.emit('cues', this.cues)
   }
 
   /** Append a finished cue (with its translation, if any) to cues.jsonl. */

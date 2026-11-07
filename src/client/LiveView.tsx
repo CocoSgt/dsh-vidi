@@ -425,6 +425,13 @@ export function LiveView(props: LiveViewInjected) {
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cues, readable.join(',')])
+  /** Reading view as plain text (speaker and time, then each chosen language), for pasting anywhere. */
+  const copyRead = () => void navigator.clipboard.writeText(paragraphs.map(p => [
+    `${p.speaker ? `${speakerName(p.speaker)} · ` : ''}${CLOCK(p.start)}`,
+    ...readLangs.filter(l => p.texts[l]).map(l => p.texts[l]!),
+  ].join('\n')).join('\n\n'))
+  const [copied, setCopied] = useState(false)
+  const copyNow = (fn: () => void) => { fn(); setCopied(true); setTimeout(() => setCopied(false), 1500) }
   const downloadMd = () => {
     const md = [`# ${job?.title ?? 'Transcript'}`, '', ...paragraphs.flatMap(p => [
       `**${p.speaker ? `${speakerName(p.speaker)} · ` : ''}${CLOCK(p.start)}**`, '',
@@ -474,9 +481,17 @@ export function LiveView(props: LiveViewInjected) {
     </div>
   )
   const trSearch = <label className="dshl-field small block"><Icon.search /><input type="text" value={query} placeholder={t('tr.search')} onChange={e => setQuery(e.target.value)} /></label>
-  const trAction = trMode === 'lines'
-    ? <button className="dshl-btn small quiet" title={t('tr.copy')} onClick={copyAll}><Icon.copy /> {t('tr.copyShort')}</button>
-    : <button className="dshl-btn small quiet" onClick={() => downloadMd()}><Icon.download /> {t('tr.md')}</button>
+  const copyButton = (
+    <button className="dshl-btn small quiet" title={t('tr.copy')} onClick={() => copyNow(trMode === 'lines' ? copyAll : copyRead)}>
+      <Icon.copy /> {copied ? t('tr.copied') : t('tr.copyShort')}
+    </button>
+  )
+  const trAction = trMode === 'lines' ? copyButton : (
+    <>
+      {copyButton}
+      <button className="dshl-btn small quiet" onClick={() => downloadMd()}><Icon.download /> {t('tr.md')}</button>
+    </>
+  )
   /** On the video page the tools share the tab row, leaving the height to the lines. */
   const inline = pageMode && tab === 'transcript' && !!job
   /** Subtitle lines and glossary: under the player on the video page, beside it in a conversation. */

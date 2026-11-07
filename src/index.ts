@@ -577,11 +577,13 @@ export function apply(ctx: Context, config: Config): void {
         const onState = (s: unknown) => write('state', s)
         const onCue = (c: unknown) => write('cue', c)
         const onTerms = (t: unknown) => write('glossary', t)
+        const onCues = (c: unknown) => write('cues', c)
         job.on('state', onState)
+        job.on('cues', onCues)
         job.on('cue', onCue)
         job.on('glossary', onTerms)
         const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
-        req.on('close', () => { clearInterval(ping); job.off('state', onState); job.off('cue', onCue); job.off('glossary', onTerms) })
+        req.on('close', () => { clearInterval(ping); job.off('state', onState); job.off('cue', onCue); job.off('glossary', onTerms); job.off('cues', onCues) })
         return
       }
       if (route === 'upload' && req.method === 'POST') {
