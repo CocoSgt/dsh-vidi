@@ -47,6 +47,8 @@ interface Input {
   audio: string
   /** Map spec for the video stream, or undefined for audio-only sources. */
   video?: string
+  /** Image shown as the picture of an audio-only source (instead of the waveform alone). */
+  cover?: string
   /** Video codec, when known; anything but H.264 is re-encoded for the browser. */
   vcodec?: string
 }
@@ -278,7 +280,19 @@ export class LiveJob extends EventEmitter {
     }
     const only = r.inputs[0]!
     const audioOnly = only.vcodec === 'none'
-    return { args, audio: '0:a:0', video: audioOnly ? undefined : '0:v:0?', vcodec: audioOnly ? undefined : only.vcodec }
+    const cover = audioOnly && r.cover ? await this.saveCover(r.cover) : undefined
+    return { args, audio: '0:a:0', video: audioOnly ? undefined : '0:v:0?', vcodec: audioOnly ? undefined : only.vcodec, cover }
+  }
+
+  /** Keep a podcast's cover next to the recording (the picture while it plays). */
+  private async saveCover(url: string): Promise<string | undefined> {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(20_000) })
+      if (!r.ok) return undefined
+      const file = join(this.deps.dir, `cover${/\.png(\?|$)/i.test(url) ? '.png' : '.jpg'}`)
+      writeFileSync(file, Buffer.from(await r.arrayBuffer()))
+      return file
+    } catch { return undefined }
   }
 
   /** Open the source: resolve it and start recording/playback. No subtitles yet. */
@@ -310,8 +324,18 @@ export class LiveJob extends EventEmitter {
     // Audio-only sources get a generated picture (waveform) so they play and export as video.
     // H.264 copies straight into HLS; other codecs (AV1, VP9, HEVC) are re-encoded so every browser can play them.
     const h264 = !input.vcodec || /^(h264|avc)/i.test(input.vcodec)
+    // A podcast cover: centred on the dark background with a slim waveform under it.
+    const coverIn = input.args.filter(a => a === '-i').length
     const picture = input.video
       ? ['-map', input.video, ...(h264 ? ['-c:v', 'copy'] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-vf', 'scale=-2:min(720\\,ih)', '-g', '50'])]
+      : input.cover ? ['-loop', '1', '-framerate', '25', '-i', input.cover, '-filter_complex', [
+          'color=c=0x0f1420:s=1280x720:r=25[bg]',
+          `[${coverIn}:v]scale=-2:460,format=rgba[c]`,
+          `[${input.audio}]aformat=channel_layouts=mono,showwaves=s=1280x120:mode=cline:rate=25:colors=white:scale=cbrt:draw=full,format=rgba,colorchannelmixer=rr=0.56:gg=0.71:bb=1:aa=0.7[w]`,
+          '[bg][c]overlay=(W-w)/2:70[b1]',
+          '[b1][w]overlay=0:570:shortest=1,format=yuv420p[wv]',
+        ].join(';'),
+         '-map', '[wv]', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'stillimage', '-g', '50']
       : ['-filter_complex', [
           'color=c=0x0f1420:s=1280x720:r=25[bg]',
           // showwaves ignores hex colours in some builds, so draw white and tint it.

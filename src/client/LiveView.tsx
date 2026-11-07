@@ -111,7 +111,7 @@ export function browserLang(): string {
 
 /** Translation lines (not the original, not the site's own tracks). */
 const translationsOf = (lines: string[]) => lines.filter(l => l !== 'src' && !l.startsWith('site:'))
-const siteName = (url: string) => /youtu\.?be/.test(url) ? 'YouTube' : /bilibili|b23\.tv/.test(url) ? 'B站' : /twitch/.test(url) ? 'Twitch' : ''
+const siteName = (url: string) => /youtu\.?be/.test(url) ? 'YouTube' : /bilibili|b23\.tv/.test(url) ? 'B站' : /twitch/.test(url) ? 'Twitch' : /xiaoyuzhoufm/.test(url) ? '小宇宙' : ''
 
 const media = (dirId: string, file: string) => `/live/media/${encodeURIComponent(dirId)}/${encodeURIComponent(file)}`
 

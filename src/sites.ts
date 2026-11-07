@@ -1,3 +1,4 @@
+import { resolveXiaoyuzhou, XIAOYUZHOU } from './xiaoyuzhou.ts'
 import { pickTracks, type SiteTrack } from './sitesubs.ts'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
@@ -59,6 +60,8 @@ export interface Resolved {
   language?: string
   /** Picture heights the site offers (for the quality choice). */
   heights: number[]
+  /** Cover image to show for audio-only sources (podcasts). */
+  cover?: string
 }
 
 const CLK = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
@@ -158,6 +161,8 @@ async function dump(url: string, browser: string | undefined, height = 720): Pro
 
 /** Resolve a page URL (YouTube, Bilibili, any yt-dlp site) into ffmpeg inputs, using a browser login when needed. */
 export async function resolveSite(url: string, choice: CookieChoice, log: (m: string) => void, onLoginRetry?: (browser: string) => void, height = 720): Promise<Resolved> {
+  // Sites yt-dlp can't read, handled here.
+  if (XIAOYUZHOU.test(url)) return resolveXiaoyuzhou(url)
   const browser = loginBrowser(choice)
   // 'auto' starts without a login; an explicit browser choice uses it straight away.
   const first = choice === 'auto' ? undefined : browser

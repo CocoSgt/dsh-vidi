@@ -62,4 +62,4 @@ export function onOpenRequest(fn: (r: OpenRequest) => void): () => void {
 }
 
 /** Video links worth offering to open in the player. */
-export const VIDEO_LINK = /\bhttps?:\/\/(?:www\.|m\.|live\.)?(?:youtube\.com\/(?:watch|live|shorts)|youtu\.be\/|bilibili\.com\/(?:video|bangumi)|b23\.tv\/|live\.bilibili\.com\/|twitch\.tv\/|vimeo\.com\/|x\.com\/\S+\/status|twitter\.com\/\S+\/status|douyin\.com\/|v\.douyin\.com\/|ixigua\.com\/|weibo\.com\/tv|tiktok\.com\/|kick\.com\/)\S*|\b\S+\.m3u8\b|\brtmps?:\/\/\S+|\bsrt:\/\/\S+/i
+export const VIDEO_LINK = /\bhttps?:\/\/(?:www\.|m\.|live\.)?(?:youtube\.com\/(?:watch|live|shorts)|youtu\.be\/|bilibili\.com\/(?:video|bangumi)|b23\.tv\/|live\.bilibili\.com\/|twitch\.tv\/|vimeo\.com\/|x\.com\/\S+\/status|twitter\.com\/\S+\/status|douyin\.com\/|v\.douyin\.com\/|ixigua\.com\/|weibo\.com\/tv|tiktok\.com\/|kick\.com\/|xiaoyuzhoufm\.com\/episode\/)\S*|\b\S+\.m3u8\b|\brtmps?:\/\/\S+|\bsrt:\/\/\S+/i
