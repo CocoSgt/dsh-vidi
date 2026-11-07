@@ -1,5 +1,6 @@
 import Hls from 'hls.js'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from './icons.tsx'
 import type { LiveKey } from './locales.ts'
 import { drawSubtitles, SubtitleOverlay, type LineTexts, type SubStyle } from './subStyle.tsx'
@@ -24,6 +25,8 @@ interface Props {
   subsAt?: number
   waitingText: string
   cues: CueLike[]
+  /** Language spoken in the video: a line in that language shows the original. */
+  spoken?: string
   /** The site's own subtitle tracks that are switched on (key 'site:<lang>'). */
   siteCues?: Record<string, { start: number; end: number; text: string }[]>
   style: SubStyle
@@ -38,6 +41,8 @@ interface Props {
   menus?: PlayerMenu[]
   /** Save a screenshot (PNG of picture + subtitles as shown). */
   onSnapshot?: (png: Blob, at: number) => Promise<{ url?: string; path?: string }>
+  /** Picture quality: heights on offer, the current one, and how to switch. */
+  quality?: { heights: number[]; current: number; onChange: (h: number) => void }
   /** A small JPEG of the picture now (every few seconds while playing, and on pause). */
   onThumb?: (dataUrl: string) => void
   /** Cut [from, to] into a clip. */
@@ -49,6 +54,8 @@ interface Toast { text: string; href?: string; busy?: boolean }
 
 /** Subtitles carry no full stop at the end of a line (older lines may still have one). */
 const noStop = (x: string) => (/(\.\.\.|…)$/.test(x) ? x : x.replace(/[。．｡]$|(?<=[^.\s])\.$/, ''))
+
+const qLabel = (h: number) => (h >= 2160 ? '4K' : h >= 1440 ? '2K' : `${h}p`)
 
 const fmt = (s: number) => {
   if (!isFinite(s)) return '0:00'
@@ -62,7 +69,7 @@ const fmt = (s: number) => {
  * stage, so subtitles (sized in container units) and menus come along.
  */
 export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref) {
-  const { src, live, vod, duration, subsAt, waitingText, cues, siteCues, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], onSnapshot, onClip, onThumb, t } = props
+  const { src, live, vod, duration, subsAt, waitingText, cues, siteCues, spoken, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], onSnapshot, onClip, onThumb, quality, t } = props
   const stage = useRef<HTMLDivElement>(null)
   const video = useRef<HTMLVideoElement>(null)
   const hls = useRef<Hls | null>(null)
@@ -78,6 +85,15 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   const [pageFull, setPageFull] = useState(false)
   const [idle, setIdle] = useState(false)
   const [menu, setMenu] = useState<string | null>(null)
+  /** Small player (phones, narrow windows): menus open as a sheet from the bottom of the screen. */
+  const [narrow, setNarrow] = useState(false)
+  useEffect(() => {
+    const el = stage.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(([e]) => setNarrow((e?.contentRect.width ?? 999) < 560))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const [speed, setSpeed] = useState(1)
   const [toast, setToastRaw] = useState<Toast | null>(null)
   const toastTimer = useRef<number>()
@@ -89,6 +105,8 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   /** Clip start while the user picks the end. */
   const [clipIn, setClipIn] = useState<number | null>(null)
   const idleTimer = useRef<number>()
+  /** Where playback was, so a new source (quality switch) continues from there. */
+  const lastTime = useRef(0)
 
   useImperativeHandle(ref, () => ({ seek: (time: number) => { if (video.current) video.current.currentTime = Math.max(0, time) } }), [])
 
@@ -106,11 +124,11 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
       if (cancelled) return
       if (Hls.isSupported()) {
         // Videos start at 0 and never jump ahead; live streams sit `delay` seconds behind the edge.
-        const h = new Hls(vod ? { startPosition: 0, backBufferLength: Infinity } : { liveSyncDuration: delay, liveMaxLatencyDuration: delay + 60, backBufferLength: 1800 })
+        const h = new Hls(vod ? { startPosition: lastTime.current, backBufferLength: Infinity } : { liveSyncDuration: delay, liveMaxLatencyDuration: delay + 60, backBufferLength: 1800 })
         hls.current = h
         h.loadSource(src)
         h.attachMedia(el)
-        h.on(Hls.Events.MANIFEST_PARSED, () => { setReady(true); el.play().catch(() => { el.muted = true; setMuted(true); el.play().catch(() => {}) }) })
+        h.on(Hls.Events.MANIFEST_PARSED, () => { setReady(true); setToastRaw(x => (x?.busy && !clipIn ? null : x)); el.play().catch(() => { el.muted = true; setMuted(true); el.play().catch(() => {}) }) })
       } else {
         el.src = src
         el.addEventListener('loadedmetadata', () => { setReady(true); el.play().catch(() => {}) }, { once: true })
@@ -127,6 +145,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
       const el = video.current
       if (!el) return
       setNow(el.currentTime)
+      if (el.currentTime > 0) lastTime.current = el.currentTime
       setPlaying(!el.paused)
       const end = el.seekable.length ? el.seekable.end(el.seekable.length - 1) : el.duration
       setEdge(isFinite(end) ? end : 0)
@@ -246,6 +265,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
     if (current) {
       texts.src = noStop(current.src)
       for (const [k, v] of Object.entries(current.tr ?? {})) if (v && v.trim() !== current.src.trim()) texts[k] = noStop(v)
+      if (spoken) texts[spoken] = texts.src
     }
     for (const [k, list] of Object.entries(siteCues ?? {})) texts[k] = list.find(c => c.start - 0.2 <= now && now <= c.end + 0.3)?.text
   }
@@ -284,6 +304,13 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   const playMenu: PlayerMenu = {
     id: 'play', icon: <Icon.speed />, title: t('player.settings'), on: speed !== 1, content: (
       <>
+        {quality && quality.heights.length > 1 && (
+          <div className="opt"><span>{t('player.quality')}</span>
+            <span className="dshl-seg">{quality.heights.map(h => (
+              <button key={h} className={quality.current === h ? 'on' : ''} onClick={() => { if (h !== quality.current) { quality.onChange(h); setToast({ text: t('player.quality.switching').replace('{q}', qLabel(h)), busy: true }) } }}>{qLabel(h)}</button>
+            ))}</span>
+          </div>
+        )}
         <div className="opt"><span>{t('player.speed')}</span>
           <span className="dshl-seg">{[0.5, 0.75, 1, 1.25, 1.5, 2].map(v => <button key={v} className={speed === v ? 'on' : ''} onClick={() => applySpeed(v)}>{v}×</button>)}</span>
         </div>
@@ -320,19 +347,25 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
           <Icon.live /> {atLive ? t('player.live') : t('player.behind').replace('{s}', fmt(behind))}
         </button>
       )}
-      {openMenu && (
-        <div className="dshl-menu" role="dialog" aria-label={openMenu.title}>
-          <div className="head">
-            <span>{openMenu.title}</span>
-            <span className="grow" />
-            {openMenu.id === 'cc' && (
-              <button className={`dshl-switch ${ccOn ? 'on' : ''}`} role="switch" aria-checked={ccOn} title={`${t('player.cc')} (C)`} onClick={() => setCcOn(v => !v)}><i /></button>
-            )}
-            <button className="ghost" onClick={() => setMenu(null)}><Icon.close /></button>
+      {openMenu && (() => {
+        const panel = (
+          <div className={`dshl-menu ${narrow ? 'sheet' : ''}`} role="dialog" aria-label={openMenu.title}>
+            <div className="head">
+              <span>{openMenu.title}</span>
+              <span className="grow" />
+              {openMenu.id === 'cc' && (
+                <button className={`dshl-switch ${ccOn ? 'on' : ''}`} role="switch" aria-checked={ccOn} title={`${t('player.cc')} (C)`} onClick={() => setCcOn(v => !v)}><i /></button>
+              )}
+              <button className="ghost" onClick={() => setMenu(null)}><Icon.close /></button>
+            </div>
+            <div className="body">{openMenu.content}</div>
           </div>
-          <div className="body">{openMenu.content}</div>
-        </div>
-      )}
+        )
+        // In full screen the sheet must stay inside the stage; otherwise it goes to the page so it can use the whole width.
+        return narrow && !full && !pageFull
+          ? createPortal(<div className="dshl-sheetwrap" onMouseDown={e => { if (e.target === e.currentTarget) setMenu(null) }}>{panel}</div>, document.body)
+          : panel
+      })()}
       <div className="dshl-controls" onClick={e => e.stopPropagation()}>
         <div className="dshl-progress" style={{ ['--pos' as string]: pct(now), ['--done' as string]: vod ? pct(edge) : '100%', ['--subs' as string]: subsAt !== undefined ? pct(subsAt) : '0%' }}>
           {subsAt !== undefined && subsAt > 0 && <i className="subs" title={t('player.subsAt').replace('{t}', fmt(subsAt))} />}

@@ -28,11 +28,12 @@ export function installedBrowsers(): { id: string; label: string }[] {
   return BROWSERS.filter(b => existsSync(join(homedir(), b.dir))).map(({ id, label }) => ({ id, label }))
 }
 
-/** Prefer H.264 (plays in every browser and copies into HLS without re-encoding), 720p is plenty for watching. */
-export const WATCH_FORMAT = [
-  'bv*[height<=720][vcodec^=avc1]+ba[acodec^=mp4a]', 'bv*[height<=720][vcodec^=avc1]+ba', 'b[height<=720][vcodec^=avc1]',
-  'b[height<=720]', 'bv*[height<=720]+ba', 'b', 'ba',
+/** Picture for watching at up to `h` lines; prefer H.264 (plays everywhere, copies into HLS without re-encoding). */
+export const watchFormat = (h = 720) => [
+  `bv*[height<=${h}][vcodec^=avc1]+ba[acodec^=mp4a]`, `bv*[height<=${h}][vcodec^=avc1]+ba`, `b[height<=${h}][vcodec^=avc1]`,
+  `b[height<=${h}]`, `bv*[height<=${h}]+ba`, 'b', 'ba',
 ].join('/')
+export const WATCH_FORMAT = watchFormat(720)
 
 /** Best quality for keeping. */
 export const ORIGINAL_FORMAT = 'bv*+ba/b'
@@ -56,6 +57,8 @@ export interface Resolved {
   brief: string
   /** The video's language as the site states it (e.g. "en", "zh-Hans" → "zh"). */
   language?: string
+  /** Picture heights the site offers (for the quality choice). */
+  heights: number[]
 }
 
 const CLK = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
@@ -120,13 +123,13 @@ function cookieHeader(raw: unknown): string | undefined {
   return pairs.length ? pairs.map(([k, ...v]) => `${k!.trim()}=${v.join('=')}`).join('; ') : undefined
 }
 
-async function dump(url: string, browser: string | undefined): Promise<Resolved> {
+async function dump(url: string, browser: string | undefined, height = 720): Promise<Resolved> {
   let stdout = ''
   // A logged-in request can still get 412/429 when the site is rate-limiting: wait and retry.
   for (const wait of browser ? [0, 3000, 8000] : [0]) {
     if (wait) await new Promise(r => setTimeout(r, wait))
     try {
-      stdout = (await run('yt-dlp', ['--no-warnings', '--no-playlist', ...cookieArgs(browser), '-J', '-f', WATCH_FORMAT, url],
+      stdout = (await run('yt-dlp', ['--no-warnings', '--no-playlist', ...cookieArgs(browser), '-J', '-f', watchFormat(height), url],
         { timeout: 120_000, maxBuffer: 64 * 1024 * 1024 })).stdout
       break
     } catch (err) {
@@ -147,25 +150,27 @@ async function dump(url: string, browser: string | undefined): Promise<Resolved>
     title: info.title, isLive: info.is_live === true || info.live_status === 'is_live',
     duration: typeof info.duration === 'number' ? info.duration : undefined,
     inputs, cookiesFrom: browser, siteTracks: pickTracks(info), brief: briefOf(info),
+    heights: [...new Set(((info.formats ?? []) as { height?: number; vcodec?: string }[]).filter(f => f.height && f.vcodec !== 'none').map(f => f.height!))]
+      .filter(h => h >= 360).map(h => [360, 480, 720, 1080, 1440, 2160].find(s => h <= s) ?? h).filter((h, i, a) => a.indexOf(h) === i).sort((a, b) => a - b),
     language: typeof info.language === 'string' && info.language ? (/^zh-(hant|tw|hk)/i.test(info.language) ? 'zh-Hant' : info.language.split('-')[0]) : undefined,
   }
 }
 
 /** Resolve a page URL (YouTube, Bilibili, any yt-dlp site) into ffmpeg inputs, using a browser login when needed. */
-export async function resolveSite(url: string, choice: CookieChoice, log: (m: string) => void, onLoginRetry?: (browser: string) => void): Promise<Resolved> {
+export async function resolveSite(url: string, choice: CookieChoice, log: (m: string) => void, onLoginRetry?: (browser: string) => void, height = 720): Promise<Resolved> {
   const browser = loginBrowser(choice)
   // 'auto' starts without a login; an explicit browser choice uses it straight away.
   const first = choice === 'auto' ? undefined : browser
   if (first) onLoginRetry?.(first)
   try {
-    return await dump(url, first)
+    return await dump(url, first, height)
   } catch (err) {
     const msg = String((err as { stderr?: string }).stderr || (err as Error).message)
     if (!NEEDS_LOGIN.test(msg)) throw new Error(ytdlpError(err))
     if (first === undefined && browser) {
       log(`site asked for a login, retrying with ${browser}'s saved login`)
       onLoginRetry?.(browser)
-      try { return await dump(url, browser) } catch (err2) {
+      try { return await dump(url, browser, height) } catch (err2) {
         const msg2 = String((err2 as { stderr?: string }).stderr || (err2 as Error).message)
         if (NEEDS_LOGIN.test(msg2)) throw new LoginRequired(siteOf(url), browser, ytdlpError(err2))
         throw new Error(ytdlpError(err2))

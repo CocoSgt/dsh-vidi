@@ -79,6 +79,10 @@ export interface JobSummary extends JobOptions {
   subs?: { state: SubsState; at: number }
   usage?: import('./usage.ts').UsageSummary
   site?: import('./sitesubs.ts').SiteTrack[]
+  /** HLS folder being watched, its picture height, and the heights the site offers. */
+  hls?: string
+  height?: number
+  heights?: number[]
   /** Language spoken in the video (setting, recognition, or what the site says). */
   spoken?: string
 }

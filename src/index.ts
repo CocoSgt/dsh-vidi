@@ -329,6 +329,25 @@ export function apply(ctx: Context, config: Config): void {
         void job.stop()
         return send(res, 200, job.summary())
       }
+      if (route === 'targets' && req.method === 'POST') {
+        // { jobId, tgtLangs }: change subtitle languages; existing lines get the new ones filled in.
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        const langs = Array.isArray(b.tgtLangs) ? (b.tgtLangs as unknown[]).map(String).filter(l => l in LANGS).slice(0, 4) : []
+        void job.setTargets(langs)
+        savePrefs({ last: { ...lastOptions(), tgtLangs: langs } })
+        return send(res, 200, job.summary())
+      }
+      if (route === 'quality' && req.method === 'POST') {
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        const h = Number(b.height)
+        if (![360, 480, 720, 1080, 1440, 2160].includes(h)) return send(res, 400, { error: 'bad height' })
+        void job.setQuality(h)
+        return send(res, 200, job.summary())
+      }
       if (route === 'activity') {
         // What is still working (for the sidebar entry): recordings, fetches, subtitle runs, downloads.
         const items = [...jobs.values()].map(j => j.summary()).filter(s => (s.status === 'running' && !s.message) || s.status === 'resolving' || s.subs?.state === 'running')

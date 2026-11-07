@@ -7,7 +7,7 @@ import { defaultExports, exportCues, subtitleText, type ExportFormat } from './e
 import type { Glossary } from './glossary.ts'
 import { Polisher } from './polish.ts'
 import { fetchComments, ffmpegInput, LoginRequired, resolveSite, type CookieChoice } from './sites.ts'
-import type { LlmHandle } from './translate.ts'
+import { translateBatch, type LlmHandle } from './translate.ts'
 import { fetchSiteSubs, loadSiteSubs, type SiteCue, type SiteTrack } from './sitesubs.ts'
 import type { Translator } from './translate.ts'
 import type { Cue, JobOptions, JobStatus, JobSummary, ProviderCue, SpeechProvider, SubsState } from './types.ts'
@@ -77,6 +77,11 @@ export class LiveJob extends EventEmitter {
   /** Subtitles: off until asked; `at` = media time processed so far. */
   subs: { state: SubsState; at: number } = { state: 'off', at: 0 }
   private captureDone = false
+  /** Picture height for watching, and the HLS folder that holds it. */
+  height = 720
+  private hlsName = 'hls'
+  /** Heights the site offers. */
+  heights: number[] = []
   /** Subtitles the site itself offers: shown on request, used as a reference for recognition and translation. */
   siteTracks: SiteTrack[] = []
   readonly siteCues = new Map<string, SiteCue[]>()
@@ -122,6 +127,7 @@ export class LiveJob extends EventEmitter {
       startedAt: this.startedAt, dir: this.deps.dir, cueCount: this.cues.length,
       files: existsSync(this.deps.dir) ? readdirSync(this.deps.dir).filter(f => /\.(mp4|m4a|srt|vtt|txt|md|json|jsonl)$/.test(f)) : [],
       ingest: this.ingest, vod: this.vod, duration: this.duration, loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
+      hls: this.hlsName, height: this.height, heights: this.heights,
       subs: { ...this.subs }, usage: this.deps.usage.summary(), site: this.siteTracks, spoken: this.spokenLang(),
     }
   }
@@ -140,6 +146,7 @@ export class LiveJob extends EventEmitter {
     try {
       writeFileSync(join(this.deps.dir, 'job.json'), JSON.stringify({
         id: this.id, opts: this.opts, title: this.title, vod: this.vod, duration: this.duration, siteLang: this.siteLang,
+        height: this.height, hlsName: this.hlsName, heights: this.heights,
         startedAt: this.startedAt, subs: this.subs, status: this.status,
       }, null, 2))
     } catch {}
@@ -167,11 +174,15 @@ export class LiveJob extends EventEmitter {
       job.nextId = Math.max(0, ...job.cues.map(c => c.id)) + 1
       if (existsSync(join(dir, 'brief.txt'))) job.brief = readFileSync(join(dir, 'brief.txt'), 'utf8')
       job.siteLang = (j as { siteLang?: string }).siteLang
+      const q = j as { height?: number; hlsName?: string; heights?: number[] }
+      if (q.height) job.height = q.height
+      if (q.hlsName) job.hlsName = q.hlsName
+      if (q.heights) job.heights = q.heights
       const site = loadSiteSubs(dir)
       // Older jobs kept every "-orig" auto track (YouTube's auto-dubs): keep only the spoken language's.
       const spoken = (job.siteLang ?? job.cues.find(c => c.lang)?.lang ?? '').split('-')[0]
       const autos = site.tracks.filter(t => t.auto)
-      site.tracks = site.tracks.filter(t => !t.auto || autos.length === 1 || (spoken && t.lang.split('-')[0] === spoken))
+      site.tracks = site.tracks.filter(t => !t.auto || (spoken ? t.lang.split('-')[0] === spoken : autos.length === 1))
       job.siteTracks = site.tracks
       for (const [k, v] of site.cues) job.siteCues.set(k, v)
       const at = j.subs?.at ?? job.cues.at(-1)?.end ?? 0
@@ -232,7 +243,8 @@ export class LiveJob extends EventEmitter {
     const r = await resolveSite(url, this.deps.cookies(), this.deps.log, browser => {
       this.loginBrowser = browser
       this.emit('state', this.summary())
-    })
+    }, this.height)
+    this.heights = r.heights
     this.title = r.title
     this.vod = !r.isLive
     this.siteLang = r.language
@@ -285,7 +297,8 @@ export class LiveJob extends EventEmitter {
   }
 
   private spawnFfmpeg(input: Input): void {
-    const hls = join(this.deps.dir, 'hls')
+    const hls = join(this.deps.dir, this.hlsName)
+    mkdirSync(hls, { recursive: true })
     // Audio-only sources get a generated picture (waveform) so they play and export as video.
     // H.264 copies straight into HLS; other codecs (AV1, VP9, HEVC) are re-encoded so every browser can play them.
     const h264 = !input.vcodec || /^(h264|avc)/i.test(input.vcodec)
@@ -316,6 +329,8 @@ export class LiveJob extends EventEmitter {
     }
     ff.stderr!.on('data', (d: Buffer) => appendFileSync(join(this.deps.dir, 'ffmpeg.log'), d))
     ff.on('exit', code => {
+      // Replaced (quality switch) or stopped on purpose: the caller handles what comes next.
+      if (this.ffmpeg !== ff) return
       this.ffmpeg = undefined
       if (this.status !== 'running') return
       void this.finishCapture(code === 0 ? 'ended' : this.ffmpegError(code), code === 0 || this.segments().length > 0)
@@ -323,7 +338,7 @@ export class LiveJob extends EventEmitter {
   }
 
   private get m3u8(): string {
-    return join(this.deps.dir, 'hls', 'index.m3u8')
+    return join(this.deps.dir, this.hlsName, 'index.m3u8')
   }
 
   /** Recorded segments so far: start time on the playback timeline and duration. */
@@ -409,6 +424,45 @@ export class LiveJob extends EventEmitter {
     })
   }
 
+  /**
+   * Change which languages subtitles have. Lines from now on use them; lines
+   * already there get the new languages filled in, in batches (tokens only for what is missing).
+   */
+  async setTargets(tgtLangs: string[]): Promise<void> {
+    this.opts.tgtLangs = tgtLangs
+    this.deps.glossary.setTargets(tgtLangs)
+    this.persist()
+    this.emit('state', this.summary())
+    if (this.filling) return
+    this.filling = true
+    try {
+      for (;;) {
+        const targets = this.targets()
+        const handle = this.deps.llm()
+        if (!handle || !targets.length) break
+        const todo = this.cues.filter(c => c.final && c.src && targets.some(t => !c.tr?.[t])).slice(0, 15)
+        if (!todo.length) break
+        const missing = targets.filter(t => todo.some(c => !c.tr?.[t]))
+        const got = await translateBatch(handle, missing, todo.map(c => ({ id: c.id, src: c.src })), this.deps.glossary.forPrompt())
+        if (!got.size) break
+        for (const c of todo) {
+          const tr = got.get(c.id)
+          if (!tr) continue
+          for (const k of Object.keys(tr)) tr[k] = subtitleText(tr[k]!)
+          c.tr = { ...c.tr, ...tr }
+          this.emit('cue', c)
+          this.record(c)
+        }
+      }
+    } catch (err) {
+      this.deps.log(`[${this.id}] fill translations: ${(err as Error).message}`)
+    } finally {
+      this.filling = false
+      this.save()
+    }
+  }
+  private filling = false
+
   /** Pause subtitles; the next start resumes from here. */
   async pauseSubs(): Promise<void> {
     const rd = this.reader
@@ -487,6 +541,31 @@ export class LiveJob extends EventEmitter {
     appendFileSync(join(this.deps.dir, 'cues.jsonl'), JSON.stringify(cue) + '\n')
   }
 
+  /**
+   * Watch at another picture height: fetch the source again into its own HLS
+   * folder (kept, so switching back is instant). Timeline and subtitles stay.
+   */
+  async setQuality(height: number): Promise<void> {
+    if (this.opts.source !== 'url' || height === this.height) return
+    this.height = height
+    this.hlsName = height === 720 ? 'hls' : `hls-${height}`
+    const done = existsSync(this.m3u8) && readFileSync(this.m3u8, 'utf8').includes('#EXT-X-ENDLIST')
+    if (done) { this.persist(); this.emit('state', this.summary()); return }
+    rmSync(join(this.deps.dir, this.hlsName), { recursive: true, force: true })
+    const old = this.ffmpeg
+    this.ffmpeg = undefined
+    old?.kill('SIGKILL')
+    this.captureDone = false
+    this.setStatus('resolving')
+    try {
+      const input = await this.resolve()
+      this.spawnFfmpeg(input)
+      this.setStatus('running')
+    } catch (err) {
+      this.setStatus('error', (err as Error).message)
+    }
+  }
+
   /** Stop recording (live) or fetching (video). Subtitles already running finish what was recorded. */
   async stop(reason = 'stopped by user'): Promise<void> {
     if (this.status !== 'running' && this.status !== 'resolving') return
@@ -543,7 +622,7 @@ export class LiveJob extends EventEmitter {
     let last = segs.findIndex(sg => sg.start + sg.dur >= to)
     if (last < 0) last = segs.length - 1
     if (!segs.length || first > last) throw new Error('that part has not been recorded yet')
-    const list = files.slice(first, last + 1).map(f => join(this.deps.dir, 'hls', f)).join('|')
+    const list = files.slice(first, last + 1).map(f => join(this.deps.dir, this.hlsName, f)).join('|')
     return { args: ['-ss', String(from - segs[first]!.start), '-i', `concat:${list}`], offset: 0 }
   }
 

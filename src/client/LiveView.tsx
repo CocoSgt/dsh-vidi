@@ -22,6 +22,7 @@ interface Summary {
   usage?: Usage
   site?: { key: string; lang: string; name?: string; auto: boolean }[]
   spoken?: string
+  hls?: string; height?: number; heights?: number[]
 }
 interface Usage {
   models: { provider: string; model: string; input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; calls: number }[]
@@ -150,7 +151,8 @@ export function LiveView(props: LiveViewInjected) {
   const [tab, setTab] = useState<Tab>(onClose ? 'chat' : 'transcript')
   const [query, setQuery] = useState('')
   const [trMode, setTrMode] = useState<'lines' | 'read'>('lines')
-  const [readLang, setReadLang] = useState<'src' | 'tr' | 'both'>('both')
+  /** Reading view: which languages to show ('src' = original); empty = follow the subtitle lines. */
+  const [readPick, setReadPick] = useState<string[]>([])
   const [now, setNow] = useState(0)
   const [tick, setTick] = useState(Date.now())
   const player = useRef<PlayerHandle>(null)
@@ -280,13 +282,12 @@ export function LiveView(props: LiveViewInjected) {
     try { setJob(await post('subs', { ...options(), jobId: job.id, action: 'start', from })) } catch (e) { setError((e as Error).message) }
   }
   const pauseSubs = async () => { if (job) setJob(await post('subs', { jobId: job.id, action: 'pause' }).catch(() => job)) }
-  // Picking a new translation language while subtitles run: pause and resume with it.
+  // New subtitle languages: from now on, and filled in for lines already there (no pause needed).
   const changeLines = async (next: string[]) => {
     const before = translationsOf(lines).join(','), after = translationsOf(next).join(',')
     setLines(next)
-    if (job && subs.state === 'running' && before !== after) {
-      await pauseSubs()
-      try { setJob(await post('subs', { ...options(), tgtLangs: translationsOf(next), jobId: job.id, action: 'start' })) } catch {}
+    if (job && subs.state !== 'off' && before !== after) {
+      try { setJob(await post('targets', { jobId: job.id, tgtLangs: translationsOf(next) })) } catch {}
     }
   }
   const stop = async () => { if (job) await post('stop', { jobId: job.id }).catch(() => {}) }
@@ -311,6 +312,11 @@ export function LiveView(props: LiveViewInjected) {
     if (url) setLoginFor({ need: failedTask.needsLogin, retry: () => void post('download', { conversationId: sessionId, url, jobId: failedTask.dirId }).then(refreshTasks) })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [failedTask?.id])
+
+  /** The video's own language (base code): no translation into it, and its line shows the original. */
+  const spokenBase = job?.spoken ? (/^zh-(hant|tw|hk)/i.test(job.spoken) ? 'zh-Hant' : job.spoken.split('-')[0]) : undefined
+  const translatable = langOptions.filter(([k]) => k !== spokenBase)
+  const nameWithSpoken = (k: string) => (k === 'src' && spokenBase ? `${t('sub.source')} · ${langName(spokenBase)}` : langName(k))
 
   // ── The site's own subtitle tracks that are switched on ──
   const [siteCues, setSiteCues] = useState<Record<string, { start: number; end: number; text: string }[]>>({})
@@ -359,21 +365,28 @@ export function LiveView(props: LiveViewInjected) {
     const top = el.offsetTop - box.offsetTop, bottom = top + el.offsetHeight
     if (top < box.scrollTop || bottom > box.scrollTop + box.clientHeight) box.scrollTo({ top: Math.max(0, top - box.clientHeight / 3), behavior: 'smooth' })
   }, [activeId, query, tab])
-  const lineText = (c: CueLike, k: string) => (k === 'src' ? c.src : k.startsWith('site:') ? undefined : c.tr?.[k] && c.tr[k]!.trim() !== c.src.trim() ? c.tr[k] : undefined)
+  const lineText = (c: CueLike, k: string) => (k === 'src' || k === spokenBase ? (k === 'src' || !lines.includes('src') ? c.src : undefined) : k.startsWith('site:') ? undefined : c.tr?.[k] && c.tr[k]!.trim() !== c.src.trim() ? c.tr[k] : undefined)
   const copyAll = () => void navigator.clipboard.writeText(shown.map(c => `[${CLOCK(c.start)}] ${shownLines.map(k => lineText(c, k)).filter(Boolean).join('\n')}`).join('\n\n'))
 
-  // Reading view: consecutive lines of one speaker become a paragraph (new paragraph on a long pause or when it gets long).
-  const firstTr = translationsOf(lines)[0]
+  // Reading view: languages to show — the original plus translations (the video's own language counts as the original).
+  const readable = ['src', ...translationsOf(lines).filter(l => l !== spokenBase)]
+  const readLangs = (readPick.length ? readPick : readable).filter(l => readable.includes(l))
+  const toggleRead = (k: string) => {
+    const cur = readLangs
+    const next = cur.includes(k) ? cur.filter(x => x !== k) : readable.filter(x => cur.includes(x) || x === k)
+    if (next.length) setReadPick(next)
+  }
+  const speakerName = (sp?: string) => sp?.replace(/^Speaker\s*(\d+)$/i, (_, n) => t('tr.speaker').replace('{n}', n))
   const joinText = (parts: string[]) => parts.reduce((acc, p) => (!acc ? p : /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]$/.test(acc) && /^[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(p) ? acc + p : `${acc} ${p}`), '')
+  // Consecutive lines of one speaker become a paragraph (new paragraph on a long pause or when it gets long).
   const paragraphs = useMemo(() => {
-    const out: { speaker?: string; start: number; cues: CueLike[]; src: string; tr?: string }[] = []
+    const out: { speaker?: string; start: number; cues: CueLike[]; texts: Record<string, string> }[] = []
     let cur: CueLike[] = []
     const flush = () => {
       if (!cur.length) return
-      const tr = firstTr ? cur.map(c => c.tr?.[firstTr]).filter((x): x is string => !!x) : []
-      const src = joinText(cur.map(c => c.src))
-      const trText = joinText(tr)
-      out.push({ speaker: cur[0]!.speaker, start: cur[0]!.start, cues: cur, src, tr: trText && trText !== src ? trText : undefined })
+      const texts: Record<string, string> = { src: joinText(cur.map(c => c.src)) }
+      for (const l of readable) if (l !== 'src') { const x = joinText(cur.map(c => c.tr?.[l]).filter((v): v is string => !!v)); if (x && x !== texts.src) texts[l] = x }
+      out.push({ speaker: cur[0]!.speaker, start: cur[0]!.start, cues: cur, texts })
       cur = []
     }
     for (const c of cues.filter(x => x.final && x.src)) {
@@ -384,12 +397,11 @@ export function LiveView(props: LiveViewInjected) {
     flush()
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cues, firstTr])
+  }, [cues, readable.join(',')])
   const downloadMd = () => {
     const md = [`# ${job?.title ?? 'Transcript'}`, '', ...paragraphs.flatMap(p => [
-      `**${p.speaker ? `${p.speaker} · ` : ''}${CLOCK(p.start)}**`, '',
-      ...(readLang !== 'tr' ? [p.src, ''] : []),
-      ...(readLang !== 'src' && p.tr ? [readLang === 'both' ? `> ${p.tr}` : p.tr, ''] : []),
+      `**${p.speaker ? `${speakerName(p.speaker)} · ` : ''}${CLOCK(p.start)}**`, '',
+      ...readLangs.filter(l => p.texts[l]).flatMap((l, i) => [i === 0 ? p.texts[l]! : `> ${p.texts[l]}`, '']),
     ])].join('\n')
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }))
@@ -490,14 +502,15 @@ export function LiveView(props: LiveViewInjected) {
           <div className="dshl-col">
             {!hasMain || !job ? emptyBox : <>
             <Player ref={player}
-              src={job.status === 'resolving' || job.status === 'error' ? null : `/live/media/${encodeURIComponent(job.id)}/hls/index.m3u8`}
+              src={job.status === 'resolving' || job.status === 'error' ? null : `/live/media/${encodeURIComponent(job.id)}/${job.hls ?? 'hls'}/index.m3u8`}
+              quality={job.source === 'url' && job.heights?.length ? { heights: job.heights.filter(h => h <= 2160), current: job.height ?? 720, onChange: h => void post('quality', { jobId: job.id, height: h }).then(setJob).catch(() => {}) } : undefined}
               live={job.status === 'running'} vod={job.vod} duration={job.duration} subsAt={subs.state === 'off' ? undefined : subs.at}
               waitingText={job.status === 'resolving' ? statusText : t('player.waiting')}
-              cues={cues} siteCues={shownSite} style={subStyle} delay={job.mode === 'polished' && !job.vod ? Math.max(delay, 75) : delay} onDelay={setDelay} showDelay={job.status === 'running' && !job.vod}
+              cues={cues} siteCues={shownSite} spoken={spokenBase} style={subStyle} delay={job.mode === 'polished' && !job.vod ? Math.max(delay, 75) : delay} onDelay={setDelay} showDelay={job.status === 'running' && !job.vod}
               onSnapshot={saveSnapshot} onClip={makeClip} onThumb={rememberFrame}
               theater={theater} onTheater={() => setTheater(v => !v)} onTime={setNow} t={t}
               action={subs.state === 'off'
-                ? <SubsStarter lines={lines} onLines={l => void changeLines(l)} spoken={job.spoken} langName={langName} options={langOptions} siteChips={siteChips}
+                ? <SubsStarter lines={lines} onLines={l => void changeLines(l)} spoken={spokenBase} langName={nameWithSpoken} options={translatable} siteChips={siteChips}
                     onStart={() => startSubs(now)} t={t} />
                 : <SubsButton state={subs.state} at={subs.at} duration={job.vod ? job.duration : undefined} onStart={() => startSubs(now)} onPause={pauseSubs} onResume={() => startSubs()} t={t} />}
               menus={[
@@ -506,7 +519,7 @@ export function LiveView(props: LiveViewInjected) {
                   label: `${t('player.cc')} · ${lines.filter(l => !l.startsWith('site:') || siteChips.some(c => c.key === l)).map(k => siteChips.find(c => c.key === k)?.label ?? langName(k)).join(' · ')}`,
                   content: (
                     <>
-                      <SubtitleMenu lines={lines} onLines={l => void changeLines(l)} options={langOptions} site={siteChips} name={langName}
+                      <SubtitleMenu lines={lines} onLines={l => void changeLines(l)} options={translatable} site={siteChips} name={nameWithSpoken}
                         style={subStyle} onStyle={setSubStyle} t={t} />
                     </>
                   ),
@@ -553,9 +566,9 @@ export function LiveView(props: LiveViewInjected) {
                     </>
                   ) : (
                     <>
-                      {translationsOf(lines).length > 0 && (
-                        <div className="dshl-seg">
-                          {(['src', 'tr', 'both'] as const).map(k => <button key={k} className={readLang === k ? 'on' : ''} onClick={() => setReadLang(k)}>{t(`tr.lang.${k}` as LiveKey)}</button>)}
+                      {readable.length > 1 && (
+                        <div className="dshl-seg multi">
+                          {readable.map(k => <button key={k} className={readLangs.includes(k) ? 'on' : ''} onClick={() => toggleRead(k)}>{k === 'src' ? nameWithSpoken('src') : langName(k)}</button>)}
                         </div>
                       )}
                       <span className="grow" />
@@ -582,11 +595,10 @@ export function LiveView(props: LiveViewInjected) {
                     {paragraphs.map((p, i) => (
                       <section key={i} className={p.cues.some(c => c.id === activeId) ? 'active' : ''}>
                         <header>
-                          {p.speaker && <b>{p.speaker}</b>}
+                          {p.speaker && <b>{speakerName(p.speaker)}</b>}
                           <button className="ts" onClick={() => player.current?.seek(p.start)}>{CLOCK(p.start)}</button>
                         </header>
-                        {readLang !== 'tr' && <p className={readLang === 'both' && p.tr ? 'src' : ''}>{p.src}</p>}
-                        {readLang !== 'src' && p.tr && <p className="tr">{p.tr}</p>}
+                        {readLangs.filter(l => p.texts[l]).map((l, k) => <p key={l} className={k === 0 ? 'src' : 'tr'}>{p.texts[l]}</p>)}
                       </section>
                     ))}
                   </div>

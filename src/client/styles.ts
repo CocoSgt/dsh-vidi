@@ -148,8 +148,7 @@ const CSS = `
 .dshl-col { min-width: 0; display: grid; gap: 12px; }
 
 /* ── Player ── */
-.dshl-stage { container-type: inline-size; position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 16 / 9; outline: none;
-  box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 28px rgba(0,0,0,.10); }
+.dshl-stage { container-type: inline-size; position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 16 / 9; outline: none; }
 .dshl-stage.full { border-radius: 0; aspect-ratio: auto; width: 100vw; height: 100vh; }
 .dshl-stage.pagefull { position: fixed; inset: 0; z-index: 2147483000; border-radius: 0; aspect-ratio: auto; width: 100vw; height: 100vh; box-shadow: none; }
 .dshl-stage video { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
@@ -265,14 +264,16 @@ const CSS = `
 
 
 /* Player menus: dark and translucent like the control bar; inner parts use the same tokens */
-.dshl-menu { position: absolute; right: 10px; bottom: 60px; z-index: 5; width: min(320px, calc(100% - 20px)); max-height: calc(100% - 72px); display: flex; flex-direction: column;
+.dshl-menu { position: absolute; right: 10px; bottom: 60px; z-index: 5; width: min(360px, calc(100% - 20px)); max-height: calc(100% - 72px); display: flex; flex-direction: column;
   --bg: #1f1f22; --ink: #f2f2f3; --muted: #b4b4ba; --faint: #8b8b92; --line: rgba(255,255,255,.14); --line-soft: rgba(255,255,255,.08);
   --l1: rgba(255,255,255,.06); --l2: rgba(255,255,255,.1); --hover: rgba(255,255,255,.08); --accent: #7aa2ff;
   background: rgba(28,28,31,.94); color: var(--ink); border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
   box-shadow: 0 16px 40px rgba(0,0,0,.45); backdrop-filter: blur(16px); font-size: 13px; }
 .dshl-menu .head { display: flex; align-items: center; gap: 10px; padding: 10px 8px 6px 14px; font-weight: 600; font-size: 13.5px; }
 .dshl-menu .head .grow { flex: 1; }
-.dshl-menu .head .ghost { color: var(--muted); }
+.dshl-menu .head .ghost, .dshl-menu button.ghost { border: 0; background: none; color: var(--muted); cursor: pointer; width: 30px; height: 30px; padding: 0; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center; flex: none; font: inherit; }
+.dshl-menu button.ghost:hover { background: var(--hover); color: var(--ink); }
 .dshl-menu .body { overflow: auto; padding: 2px 8px 10px; display: grid; gap: 10px; min-height: 0; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.25) transparent; }
 .dshl-menu .body::-webkit-scrollbar { width: 6px; }
 .dshl-menu .body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 3px; }
@@ -281,25 +282,20 @@ const CSS = `
 .dshl-menu .opt input[type=range] { accent-color: var(--accent); }
 .dshl-menu .dshl-seg { height: 28px; background: var(--l2); }
 .dshl-menu .dshl-seg button.on { background: rgba(255,255,255,.92); color: #111; }
-.dshl-menu .dshl-seg button { padding: 0 10px; font-size: 12.5px; }
+.dshl-menu .dshl-seg button { padding: 0 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.dshl-menu .opt .dshl-seg { justify-self: end; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 
-/* Subtitle menu: a list, then three short options */
+/* Subtitle menu: main and second line as dropdowns, then three short options */
 .dshl-submenu { display: grid; gap: 4px; }
-.dshl-submenu .list { display: grid; }
-.dshl-submenu .row { display: flex; align-items: center; gap: 4px; height: 30px; padding: 0 6px 0 0; border-radius: 7px; }
-.dshl-submenu .row:hover { background: var(--hover); }
-.dshl-submenu .pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 6px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
-.dshl-submenu .row.on .pick { color: var(--ink); }
-.dshl-submenu .check { width: 16px; text-align: center; color: var(--accent); font-weight: 700; flex: none; }
-.dshl-submenu .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dshl-submenu .up { width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: 0; }
-.dshl-submenu .row:hover .up { opacity: 1; }
-.dshl-submenu .up:hover { background: var(--l2); color: var(--ink); }
-.dshl-submenu .n { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600;
-  background: var(--l2); color: var(--muted); flex: none; }
-.dshl-submenu .row.add { padding-left: 6px; gap: 8px; color: var(--muted); cursor: pointer; }
-.dshl-submenu .row.add select { flex: 1; height: 100%; border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; padding: 0; appearance: none; -webkit-appearance: none; }
-.dshl-submenu .row.add select option { color: #111; }
+.dshl-submenu .slots { display: grid; gap: 8px; padding: 4px 6px 10px; }
+.dshl-submenu .slot { display: grid; grid-template-columns: 56px 1fr; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+.dshl-submenu .slot select { width: 100%; min-width: 0; height: 34px; padding: 0 30px 0 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  background: var(--l1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23b4b4ba' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center; }
+.dshl-submenu .slot select:hover { border-color: rgba(255,255,255,.28); }
+.dshl-submenu .slot select option, .dshl-submenu .slot select optgroup { color: #111; background: #fff; }
+.dshl-submenu .swap { justify-self: start; margin-left: 66px; height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: var(--l2); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.dshl-submenu .swap:hover { color: var(--ink); }
 .dshl-submenu .opts { position: sticky; bottom: -10px; display: grid; gap: 2px; margin: 0 -8px -10px; padding: 6px 8px 10px; background: rgb(28,28,31); border-top: 1px solid var(--line-soft); }
 .dshl-menu .dshl-submenu .opt { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 32px; padding: 0 6px; color: var(--muted); }
 .dshl-menu .dshl-submenu .opt .seg { justify-self: end; flex: none; }
@@ -370,8 +366,7 @@ const CSS = `
 .dshl-col { min-width: 0; display: grid; gap: 12px; }
 
 /* ── Player ── */
-.dshl-stage { container-type: inline-size; position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 16 / 9; outline: none;
-  box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 28px rgba(0,0,0,.10); }
+.dshl-stage { container-type: inline-size; position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 16 / 9; outline: none; }
 .dshl-stage.full { border-radius: 0; aspect-ratio: auto; width: 100vw; height: 100vh; }
 .dshl-stage.pagefull { position: fixed; inset: 0; z-index: 2147483000; border-radius: 0; aspect-ratio: auto; width: 100vw; height: 100vh; box-shadow: none; }
 .dshl-stage video { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
@@ -684,6 +679,8 @@ const CSS = `
 /* Transcript: lines vs reading */
 .dshl-line.raw .main, .dshl-line.raw .sub { opacity: .62; }
 .dshl-tools .dshl-seg { height: 30px; }
+.dshl-tools .dshl-seg.multi { flex: 0 1 auto; min-width: 0; overflow-x: auto; }
+.dshl-tools .dshl-seg.multi button { flex: none; }
 .dshl-tools .grow { flex: 1; }
 .dshl-read { overflow: auto; flex: 1; min-height: 0; display: grid; gap: 14px; align-content: start; padding: 2px 2px 12px; max-height: calc(100vh - 290px); }
 .dshl.page .dshl-read { max-height: none; }
@@ -719,6 +716,22 @@ const CSS = `
 .dshl-startpop .opt:hover { border-color: var(--accent); }
 .dshl-startpop .opt.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--bg)); }
 .dshl-startpop .go { width: 100%; height: 36px; }
+/* Menus as a bottom sheet on small players (phones) */
+.dshl-sheetwrap { position: fixed; inset: 0; z-index: 2147483002; background: rgba(0,0,0,.4); display: flex; align-items: flex-end; }
+.dshl-menu.sheet { position: relative; right: auto; bottom: auto; width: 100%; max-height: 78vh; border-radius: 16px 16px 0 0; border: 0; padding-bottom: env(safe-area-inset-bottom);
+  font-size: 15px; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; }
+.dshl-menu.sheet .head { padding: 14px 12px 8px 18px; font-size: 16px; }
+.dshl-menu.sheet .body { padding: 4px 14px 16px; }
+.dshl-menu.sheet .dshl-submenu .slot { grid-template-columns: 64px 1fr; font-size: 15px; }
+.dshl-menu.sheet .dshl-submenu .slot select { height: 44px; font-size: 15px; }
+.dshl-menu.sheet .dshl-submenu .swap { margin-left: 74px; height: 34px; font-size: 14px; }
+.dshl-menu.sheet .dshl-submenu .opt { height: 44px; font-size: 15px; }
+.dshl-menu.sheet .dshl-submenu .seg button, .dshl-menu.sheet .dshl-seg button { height: 34px; min-width: 52px; font-size: 14px; }
+.dshl-menu.sheet .dshl-seg { height: 40px; }
+.dshl-menu.sheet .opt { grid-template-columns: 72px 1fr; font-size: 15px; }
+.dshl-menu.sheet .dshl-switch { width: 44px; height: 26px; }
+.dshl-menu.sheet .dshl-switch i { width: 22px; height: 22px; }
+.dshl-menu.sheet .dshl-switch.on i { left: 20px; }
 /* Login dialog */
 .dshl-modal { position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.36); }
 .dshl-modal .box { position: relative; width: min(400px, 100%); padding: 28px 24px 20px; border-radius: 16px; background: var(--bg); color: var(--ink);
@@ -742,3 +755,4 @@ export function ensureStyles(): void {
   el.textContent = CSS
   document.head.append(el)
 }
+

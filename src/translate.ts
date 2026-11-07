@@ -63,6 +63,39 @@ export class Translator {
 }
 
 /** Pull the JSON object out of the reply; fall back to plain text for a single target. */
+/**
+ * Translate many finished lines at once (adding a language to a video that
+ * already has subtitles). Returns id → { lang: text }.
+ */
+export async function translateBatch(handle: LlmHandle, targets: string[], lines: { id: number; src: string }[], glossary = ''): Promise<Map<number, Record<string, string>>> {
+  const names = targets.map(t => `"${t}" (${LANGS[t] ?? t})`).join(', ')
+  const system = [
+    `You translate subtitles into: ${names}. Keep each line separate (same ids), faithful, natural and concise; no full stop at the end of a line.`,
+    'Use the earlier and later lines as context. Keep brand, product and model names as they are; follow the glossary.',
+    `Reply with JSON only: [{"id":1,${targets.map(t => `"${t}":"…"`).join(',')}}]`,
+  ].join(' ')
+  const text = [glossary ? `Glossary:\n${glossary}\n` : '', 'Lines:', JSON.stringify(lines.map(l => ({ id: l.id, src: l.src })))].filter(Boolean).join('\n')
+  const { provider, model } = handle.selection()
+  const asm = new BlockAssembler()
+  for await (const chunk of handle.stream({
+    provider, model, system, maxTokens: 400 + lines.length * 90 * targets.length, purpose: 'live-translate-batch',
+    messages: [createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-live' } })],
+  })) asm.push(chunk as never)
+  const out = asm.blocks().filter((b: { type: string }) => b.type === 'text').map((b: { type: string; text?: string }) => b.text ?? '').join('')
+  const res = new Map<number, Record<string, string>>()
+  const m = out.match(/\[[\s\S]*\]/)
+  if (!m) return res
+  try {
+    for (const row of JSON.parse(m[0]) as Record<string, unknown>[]) {
+      const id = Number(row.id)
+      const tr: Record<string, string> = {}
+      for (const t of targets) if (typeof row[t] === 'string' && (row[t] as string).trim()) tr[t] = (row[t] as string).trim()
+      if (Object.keys(tr).length) res.set(id, tr)
+    }
+  } catch {}
+  return res
+}
+
 export function parseTranslations(out: string, targets: string[]): Record<string, string> | undefined {
   const m = out.match(/\{[\s\S]*\}/)
   if (m) {

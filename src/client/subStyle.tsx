@@ -49,8 +49,19 @@ export function saveStyle(style: SubStyle): void {
 export type LineTexts = Record<string, string | undefined>
 
 /** The subtitle block drawn over the video. `draft` marks the original line while it is still being revised. */
+/** Lines to draw: shown, with text, and not repeating a line above (the original and its own language). */
+function visibleRows(texts: LineTexts, style: SubStyle) {
+  const seen = new Set<string>()
+  return style.lines.filter(l => {
+    const x = texts[l.key]?.trim()
+    if (!l.show || !x || seen.has(x)) return false
+    seen.add(x)
+    return true
+  })
+}
+
 export function SubtitleOverlay({ texts, style, draft }: { texts: LineTexts; style: SubStyle; draft?: boolean }) {
-  const rows = style.lines.filter(l => l.show && texts[l.key])
+  const rows = visibleRows(texts, style)
   if (!rows.length) return null
   const edge = style.position === 'top' ? { top: `${style.offset}%` } : { bottom: `${style.offset}%` }
   return (
@@ -69,7 +80,7 @@ export function SubtitleOverlay({ texts, style, draft }: { texts: LineTexts; sty
  * picture width, like the overlay's container units; lines wrap at 92% width.
  */
 export function drawSubtitles(g: CanvasRenderingContext2D, W: number, H: number, texts: LineTexts, style: SubStyle): void {
-  const rows = style.lines.filter(l => l.show && texts[l.key])
+  const rows = visibleRows(texts, style)
   if (!rows.length) return
   const family = 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif'
   const blocks = rows.map((l, i) => {
