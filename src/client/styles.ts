@@ -447,6 +447,7 @@ const CSS = `
 .dshl-chat .md table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .dshl-chat .md th, .dshl-chat .md td { padding: 4px 6px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: top; }
 .dshl-chat .md th { color: var(--muted); font-weight: 550; }
+.dshl-chat .md th:first-child, .dshl-chat .md td:first-child { white-space: nowrap; }
 
 /* ── Popovers (settings, usage) ── */
 .dshl-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 260px; max-width: min(340px, calc(100vw - 32px)); padding: 8px;
