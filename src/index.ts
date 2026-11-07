@@ -3,17 +3,19 @@
  * subtitle translation through the harness model, and the HTTP surface the
  * browser half talks to (/live/api/*, /live/media/*).
  */
-import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
+import { appendFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { homedir } from 'node:os'
+import { homedir, networkInterfaces } from 'node:os'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { checkDeps } from './deps.ts'
+import type { ExportFormat } from './export.ts'
+import { Glossary } from './glossary.ts'
 import { LiveJob } from './job.ts'
 import { LocalProvider } from './providers/local.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
-import type { JobOptions, SpeechProvider } from './types.ts'
+import type { JobOptions, SourceKind, SpeechProvider } from './types.ts'
 import { WhisperServer } from './whisper.ts'
 
 export const name = 'dsh-live'
@@ -26,6 +28,8 @@ export interface Config {
   minChunkSec: number
   maxChunkSec: number
   glossary: string
+  rtmpPort: number
+  srtPort: number
 }
 
 export const Config: z<Config> = z.object({
@@ -34,13 +38,15 @@ export const Config: z<Config> = z.object({
   defaultTargetLang: z.string().default('zh').description('Default subtitle translation language.'),
   minChunkSec: z.number().default(1.6).description('Local provider: shortest chunk (s).'),
   maxChunkSec: z.number().default(5).description('Local provider: longest chunk before a forced cut (s).'),
-  glossary: z.string().role('textarea').default('').description('Terms to keep consistent, one per line (e.g. "Dots = Dots").'),
+  glossary: z.string().role('textarea').default('').description('Terms to keep consistent, one per line (e.g. "Dots = Dots"). Each stream also builds its own glossary automatically.'),
+  rtmpPort: z.number().default(1935).description('Port for incoming RTMP pushes (OBS → rtmp://<this machine>/live).'),
+  srtPort: z.number().default(9000).description('Port for incoming SRT pushes.'),
 }) as never
 
 const MIME: Record<string, string> = {
   '.m3u8': 'application/vnd.apple.mpegurl', '.ts': 'video/mp2t', '.mp4': 'video/mp4', '.m4s': 'video/iso.segment',
   '.vtt': 'text/vtt; charset=utf-8', '.srt': 'text/plain; charset=utf-8', '.jsonl': 'text/plain; charset=utf-8',
-  '.json': 'application/json', '.jpg': 'image/jpeg', '.png': 'image/png',
+  '.json': 'application/json', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.m4a': 'audio/mp4', '.jpg': 'image/jpeg', '.png': 'image/png',
 }
 
 /** Only answer loopback hosts: these routes have no auth of their own. */
@@ -62,7 +68,12 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 
 export function apply(ctx: Context, config: Config): void {
   const logger = (ctx as any).logger?.('dsh-live')
-  const log = (msg: string): void => { if (logger?.info) logger.info(msg); else console.log(`[dsh-live] ${msg}`) }
+  mkdirSync(config.dataDir, { recursive: true })
+  const logFile = join(config.dataDir, 'dsh-live.log')
+  const log = (msg: string): void => {
+    if (logger?.info) logger.info(msg); else console.log(`[dsh-live] ${msg}`)
+    try { appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`) } catch {}
+  }
   const whisper = new WhisperServer(config.whisperModel, log)
   const jobs = new Map<string, LiveJob>()
   const byConversation = new Map<string, string>()
@@ -80,12 +91,23 @@ export function apply(ctx: Context, config: Config): void {
   })
   const translator = new Translator(() => llm)
 
-  function makeProvider(opts: JobOptions): SpeechProvider {
+  function makeProvider(opts: JobOptions, glossary: Glossary): SpeechProvider {
     switch (opts.provider) {
       case 'local':
       default:
-        return new LocalProvider({ whisper, lang: opts.srcLang === 'auto' ? 'auto' : opts.srcLang, minSec: config.minChunkSec, maxSec: config.maxChunkSec })
+        return new LocalProvider({
+          whisper, lang: opts.srcLang === 'auto' ? 'auto' : opts.srcLang,
+          minSec: config.minChunkSec, maxSec: config.maxChunkSec, prompt: () => glossary.forAsr(),
+        })
     }
+  }
+
+  /** First non-internal IPv4 address, for push instructions shown to the user. */
+  function lanAddress(): string {
+    for (const list of Object.values(networkInterfaces())) {
+      for (const a of list ?? []) if (a.family === 'IPv4' && !a.internal) return a.address
+    }
+    return '127.0.0.1'
   }
 
   async function startJob(opts: JobOptions): Promise<LiveJob> {
@@ -93,12 +115,17 @@ export function apply(ctx: Context, config: Config): void {
     if (prev) await jobs.get(prev)?.stop('replaced by a new stream')
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const id = `${stamp}-${Math.random().toString(36).slice(2, 6)}`
-    const job = new LiveJob(id, opts, {
-      dir: join(config.dataDir, 'jobs', id),
-      provider: makeProvider(opts),
+    const dir = join(config.dataDir, 'jobs', id)
+    mkdirSync(dir, { recursive: true })
+    let job: LiveJob | undefined
+    const glossary = new Glossary(join(dir, 'glossary.json'), opts.tgtLangs, () => llm, terms => job?.emit('glossary', terms), log, config.glossary, join(config.dataDir, 'glossary.json'))
+    job = new LiveJob(id, opts, {
+      dir,
+      provider: makeProvider(opts, glossary),
       translator,
-      glossary: () => config.glossary,
+      glossary,
       log,
+      ingest: { host: lanAddress(), rtmpPort: config.rtmpPort, srtPort: config.srtPort },
     })
     jobs.set(id, job)
     byConversation.set(opts.conversationId, id)
@@ -117,11 +144,15 @@ export function apply(ctx: Context, config: Config): void {
       if (route === 'start' && req.method === 'POST') {
         const b = await readJson(req)
         if (typeof b.url !== 'string' || !b.url.trim()) return send(res, 400, { error: 'url required' })
+        const source: SourceKind = b.source === 'push' || b.source === 'file' ? b.source : 'url'
         const job = await startJob({
+          source,
           url: b.url.trim(),
           mode: b.mode === 'polished' ? 'polished' : 'realtime',
           srcLang: typeof b.srcLang === 'string' ? b.srcLang : 'auto',
-          tgtLang: typeof b.tgtLang === 'string' ? b.tgtLang : config.defaultTargetLang,
+          tgtLangs: Array.isArray(b.tgtLangs) && b.tgtLangs.length
+            ? (b.tgtLangs as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 4)
+            : [typeof b.tgtLang === 'string' ? b.tgtLang : config.defaultTargetLang],
           provider: typeof b.provider === 'string' ? b.provider : 'local',
           conversationId: String(b.conversationId ?? 'default'),
         })
@@ -137,7 +168,7 @@ export function apply(ctx: Context, config: Config): void {
       if (route === 'job') {
         const id = url.searchParams.get('jobId') ?? byConversation.get(url.searchParams.get('conversationId') ?? '')
         const job = id ? jobs.get(id) : undefined
-        return send(res, 200, job ? { ...job.summary(), cues: job.cues } : null)
+        return send(res, 200, job ? { ...job.summary(), cues: job.cues, terms: job.terms } : null)
       }
       if (route === 'events') {
         const job = jobs.get(url.searchParams.get('jobId') ?? '')
@@ -146,13 +177,44 @@ export function apply(ctx: Context, config: Config): void {
         const write = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
         write('state', job.summary())
         write('cues', job.cues)
+        write('glossary', job.terms)
         const onState = (s: unknown) => write('state', s)
         const onCue = (c: unknown) => write('cue', c)
+        const onTerms = (t: unknown) => write('glossary', t)
         job.on('state', onState)
         job.on('cue', onCue)
+        job.on('glossary', onTerms)
         const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
-        req.on('close', () => { clearInterval(ping); job.off('state', onState); job.off('cue', onCue) })
+        req.on('close', () => { clearInterval(ping); job.off('state', onState); job.off('cue', onCue); job.off('glossary', onTerms) })
         return
+      }
+      if (route === 'upload' && req.method === 'POST') {
+        // Raw body upload (drag-and-drop): stream to disk, return the absolute path to start a 'file' job with.
+        const name = (url.searchParams.get('name') ?? 'upload').replace(/[^\w.\-\u4e00-\u9fff ]+/g, '_').slice(-120)
+        const dir = join(config.dataDir, 'uploads')
+        mkdirSync(dir, { recursive: true })
+        const path = join(dir, `${Date.now()}-${name}`)
+        await new Promise<void>((ok, fail) => { const w = createWriteStream(path); req.pipe(w); w.on('finish', ok); w.on('error', fail); req.on('error', fail) })
+        return send(res, 200, { path, bytes: statSync(path).size })
+      }
+      if (route === 'export') {
+        const job = jobs.get(url.searchParams.get('jobId') ?? '')
+        if (!job) return send(res, 404, { error: 'no such job' })
+        const langs = (url.searchParams.get('langs') ?? 'src').split(',').filter(Boolean)
+        const format = (['srt', 'vtt', 'txt', 'md'].includes(url.searchParams.get('format') ?? '') ? url.searchParams.get('format') : 'srt') as ExportFormat
+        const body = job.exportText(langs, format)
+        const fname = `${job.id}.${langs.join('+')}.${format}`
+        res.writeHead(200, { 'content-type': `${MIME['.' + format] ?? 'text/plain; charset=utf-8'}`, 'content-disposition': `attachment; filename="${fname}"`, 'cache-control': 'no-store' })
+        res.end(body)
+        return
+      }
+      if (route === 'glossary' && req.method === 'POST') {
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job || typeof b.src !== 'string') return send(res, 400, { error: 'jobId and src required' })
+        const g = (job as unknown as { deps: { glossary: Glossary } }).deps.glossary
+        if (b.op === 'remove') g.remove(b.src); else g.upsert({ src: b.src, tr: (b.tr ?? {}) as Record<string, string> })
+        return send(res, 200, job.terms)
       }
       return send(res, 404, { error: 'unknown route' })
     } catch (err) {
@@ -185,8 +247,8 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
 
-  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: '/live/api', handler: api }), 'dsh-live: api route')
-  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: '/live/media', handler: media }), 'dsh-live: media route')
+  ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/api', handler: api }), 'dsh-live: api route')
+  ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/media', handler: media }), 'dsh-live: media route')
   ctx.effect(() => () => {
     for (const job of jobs.values()) void job.stop('plugin unloaded')
     whisper.stop()

@@ -5,8 +5,8 @@ export interface Cue {
   end: number
   /** Source-language text. */
   src: string
-  /** Translation into the target language (absent until translated). */
-  tgt?: string
+  /** Translations keyed by target language code (filled in as they arrive). */
+  tr?: Record<string, string>
   /** Detected source language code, when the provider reports it. */
   lang?: string
   /** false = still being revised by the provider (draft). */
@@ -30,13 +30,18 @@ export type Mode = 'realtime' | 'polished'
 
 export type JobStatus = 'resolving' | 'running' | 'stopping' | 'stopped' | 'error'
 
+/** Where the media comes from. */
+export type SourceKind = 'url' | 'push' | 'file'
+
 export interface JobOptions {
+  source: SourceKind
+  /** url: page or stream URL. file: absolute path on this machine. push: 'rtmp' | 'srt'. */
   url: string
   mode: Mode
   /** Source language code or 'auto'. */
   srcLang: string
-  /** Target language code. */
-  tgtLang: string
+  /** Target language codes (one or more). */
+  tgtLangs: string[]
   /** Speech provider id. */
   provider: string
   /** Conversation (session) the job belongs to. */
@@ -52,4 +57,6 @@ export interface JobSummary extends JobOptions {
   dir: string
   cueCount: number
   files: string[]
+  /** For push sources: where to send the stream. */
+  ingest?: { rtmp?: string; srt?: string; key?: string }
 }

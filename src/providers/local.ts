@@ -13,6 +13,8 @@ export interface LocalOptions {
   minSec: number
   /** Longest chunk before a forced cut (seconds). */
   maxSec: number
+  /** Extra recogniser prompt (glossary terms), read per chunk. */
+  prompt?: () => string
 }
 
 /** RMS of a s16le buffer, 0..1. */
@@ -87,8 +89,11 @@ export class LocalProvider implements SpeechProvider {
     this.queue = this.queue.then(async () => {
       if (this.stopped) return
       try {
-        const { text, lang } = await this.opts.whisper.transcribe(wav, this.opts.lang, this.lastText.slice(-200))
-        if (!text || /^\[.*\]$|^\(.*\)$/.test(text)) return
+        const terms = this.opts.prompt?.() ?? ''
+        const prompt = [terms && `Glossary: ${terms}.`, this.lastText.slice(-200)].filter(Boolean).join(' ')
+        const { text, lang } = await this.opts.whisper.transcribe(wav, this.opts.lang, prompt)
+        // Drop empty, bracketed noise tags ([Music], (applause)) and punctuation-only lines.
+        if (!text || /^\[.*\]$|^\(.*\)$/.test(text) || !/[\p{L}\p{N}]/u.test(text)) return
         this.lastText = text
         this.emit?.({ start, end, src: text, lang, final: true })
       } catch (err) {
