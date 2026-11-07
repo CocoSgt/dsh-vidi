@@ -130,15 +130,15 @@ const CSS = `
 .dshl-drop { border: 1.5px dashed var(--line); border-radius: 16px; padding: 56px 24px 48px; text-align: center; max-width: 760px; margin: 0 auto; }
 .dshl-drop h2 { margin: 0 0 8px; font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
 .dshl-drop p { margin: 0; color: var(--muted); }
-.dshl-pushinfo { display: inline-flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px 12px; margin-top: 28px; padding: 10px 14px;
-  border-radius: 12px; background: var(--l1); font-size: 12.5px; color: var(--muted); max-width: 100%; }
-.dshl-pushinfo svg { color: var(--faint); }
-.dshl-pushinfo .kv { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.dshl-pushinfo em { font-style: normal; color: var(--faint); }
-.dshl-copy { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg);
-  color: var(--muted); cursor: pointer; max-width: 100%; min-width: 0; }
-.dshl-copy:hover { border-color: var(--accent); color: var(--accent); }
-.dshl-copy code { font-size: 12px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshl-pushinfo { display: inline-grid; gap: 10px; margin-top: 32px; padding: 14px 18px; border-radius: 12px; background: var(--l1); text-align: left; font-size: 13px; color: var(--muted); max-width: 100%; }
+.dshl-pushinfo .title { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 550; }
+.dshl-pushinfo .title svg { color: var(--muted); }
+.dshl-pushinfo .title span { color: var(--faint); font-weight: 400; font-size: 12px; }
+.dshl-pushinfo dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; align-items: center; }
+.dshl-pushinfo dt { color: var(--faint); font-size: 12px; }
+.dshl-pushinfo dd { margin: 0; display: flex; align-items: center; gap: 14px; min-width: 0; }
+.dshl-pushinfo .val { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--ink); user-select: all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshl-pushinfo .dshl-link { font-size: 12.5px; flex: none; }
 
 /* ── Main layout ── */
 .dshl-main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 28vw, 400px); gap: 18px; padding: 18px 20px 28px; align-items: start; }
@@ -207,8 +207,6 @@ const CSS = `
 .dshl-card h3, .dshl-panel h3 { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
 .dshl-card.push .kv { display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center; padding: 4px 0; }
 .dshl-card.push p { margin: 8px 0 0; font-size: 12px; }
-.dshl-copyable { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
-.dshl-copyable code { font-size: 12.5px; padding: 3px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Side panel ── */
 .dshl-side { position: sticky; top: 112px; min-width: 0; display: flex; flex-direction: column; max-height: calc(100vh - 150px);

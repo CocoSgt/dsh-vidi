@@ -71,7 +71,10 @@ export const en = {
   'note.install': 'Install first:',
 
   // Push card
-  'push.title': 'In OBS, set Service to Custom and enter:',
+  'push.title': 'Stream here from OBS',
+  'push.hint': 'Service: Custom',
+  'push.copy': 'Copy',
+  'push.copied': 'Copied',
   'push.server': 'Server',
   'push.key': 'Stream key',
   'push.srt': 'SRT',
@@ -301,7 +304,10 @@ export const zh: Record<keyof typeof en, string> = {
   'note.noModel': '还没配置模型，字幕只显示原文',
   'note.install': '需要先安装：',
 
-  'push.title': 'OBS 里把服务选成「自定义」，填入：',
+  'push.title': '用 OBS 推流到这里',
+  'push.hint': '服务选「自定义」',
+  'push.copy': '复制',
+  'push.copied': '已复制',
   'push.server': '服务器',
   'push.key': '串流密钥',
   'push.srt': 'SRT 地址',

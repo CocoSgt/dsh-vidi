@@ -82,12 +82,17 @@ function upload(file: File, onProgress: (p: number) => void): Promise<string> {
   })
 }
 
-function Copyable({ value }: { value: string }) {
+/** A value to copy: plain text (not an input look-alike) and a text button. */
+function CopyRow({ label, value, copy, copied }: { label: string; value: string; copy: string; copied: string }) {
   const [done, setDone] = useState(false)
   return (
-    <button className="dshl-copy" onClick={() => { void navigator.clipboard.writeText(value); setDone(true); setTimeout(() => setDone(false), 1200) }}>
-      <code>{value}</code>{done ? '✓' : <Icon.copy />}
-    </button>
+    <>
+      <dt>{label}</dt>
+      <dd>
+        <span className="val">{value}</span>
+        <button className="dshl-link" onClick={() => { void navigator.clipboard.writeText(value); setDone(true); setTimeout(() => setDone(false), 1500) }}>{done ? copied : copy}</button>
+      </dd>
+    </>
   )
 }
 
@@ -399,11 +404,12 @@ export function LiveView(props: LiveViewInjected) {
             <h2>{t('empty.title')}</h2>
             <p>{t('empty.body')}</p>
             {armed?.rtmp && (
-              <div className="dshl-pushinfo" title={t('in.push.tip')}>
-                <Icon.push />
-                <span>{t('push.title')}</span>
-                <span className="kv"><em>{t('push.server')}</em><Copyable value={armed.rtmp} /></span>
-                {armed.key && <span className="kv"><em>{t('push.key')}</em><Copyable value={armed.key} /></span>}
+              <div className="dshl-pushinfo">
+                <div className="title"><Icon.push /> {t('push.title')} <span>{t('push.hint')}</span></div>
+                <dl>
+                  <CopyRow label={t('push.server')} value={armed.rtmp} copy={t('push.copy')} copied={t('push.copied')} />
+                  {armed.key && <CopyRow label={t('push.key')} value={armed.key} copy={t('push.copy')} copied={t('push.copied')} />}
+                </dl>
               </div>
             )}
           </div>
@@ -456,11 +462,12 @@ export function LiveView(props: LiveViewInjected) {
             <h2>{t('empty.title')}</h2>
             <p>{t('empty.body')}</p>
             {armed?.rtmp && (
-              <div className="dshl-pushinfo" title={t('in.push.tip')}>
-                <Icon.push />
-                <span>{t('push.title')}</span>
-                <span className="kv"><em>{t('push.server')}</em><Copyable value={armed.rtmp} /></span>
-                {armed.key && <span className="kv"><em>{t('push.key')}</em><Copyable value={armed.key} /></span>}
+              <div className="dshl-pushinfo">
+                <div className="title"><Icon.push /> {t('push.title')} <span>{t('push.hint')}</span></div>
+                <dl>
+                  <CopyRow label={t('push.server')} value={armed.rtmp} copy={t('push.copy')} copied={t('push.copied')} />
+                  {armed.key && <CopyRow label={t('push.key')} value={armed.key} copy={t('push.copy')} copied={t('push.copied')} />}
+                </dl>
               </div>
             )}
           </div>
