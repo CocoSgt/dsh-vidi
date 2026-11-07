@@ -27,7 +27,7 @@ export class Translator {
     return this.llm() !== undefined
   }
 
-  async translate(targets: string[], line: string, context: ContextLine[], glossary = '', signal?: AbortSignal): Promise<Record<string, string> | undefined> {
+  async translate(targets: string[], line: string, context: ContextLine[], glossary = '', signal?: AbortSignal, reference = ''): Promise<Record<string, string> | undefined> {
     const handle = this.llm()
     if (!handle || !line.trim() || targets.length === 0) return undefined
     const names = targets.map(t => `"${t}" (${LANGS[t] ?? t})`).join(', ')
@@ -42,6 +42,7 @@ export class Translator {
     const text = [
       glossary ? `Glossary:\n${glossary}\n` : '',
       ctx ? `Earlier lines (context, already translated):\n${ctx}\n` : '',
+      reference ? `The video's own subtitles around this moment (from the site; may be inaccurate or misaligned — use them to fix names, terms and misheard words, not as the answer):\n${reference}\n` : '',
       `Line to translate:\n${line}`,
     ].join('\n')
     const { provider, model } = handle.selection()

@@ -23,4 +23,16 @@ export const Icon = {
   plus: () => <svg viewBox="0 0 24 24" width="14" height="14" {...P}><path d="M12 5v14M5 12h14" /></svg>,
   close: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><path d="M6 6l12 12M18 6L6 18" /></svg>,
   lock: () => <svg viewBox="0 0 24 24" width="22" height="22" {...P}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>,
+  camera: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></svg>,
+  scissors: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><path d="M8 7.5L20 18M8 16.5L20 6" /></svg>,
+  speed: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><path d="M4.5 17a8.5 8.5 0 1 1 15 0" /><path d="M12 13l4-4" /></svg>,
+  swap: () => <svg viewBox="0 0 24 24" width="14" height="14" {...P}><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4" /></svg>,
+  /** dsh-live mark: a screen with play, and two caption lines beneath (video + subtitles). */
+  video: ({ size = 18 }: { size?: number }) => (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.75" y="3.75" width="18.5" height="12.5" rx="3.25" />
+      <path d="M10.1 7.4v5.2l4.3-2.6z" fill="currentColor" />
+      <path d="M6.5 20h6.5M15.5 20h2" />
+    </svg>
+  ),
 }

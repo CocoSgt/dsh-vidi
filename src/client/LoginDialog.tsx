@@ -20,12 +20,12 @@ export function LoginDialog(props: {
         <div className="ico"><Icon.lock /></div>
         <h3>{t('login.title').replace('{site}', site)}</h3>
         <p>{t('login.body')}</p>
-        <label className="srow">
+        <div className="srow">
           <span>{t('login.from')}</span>
           <select value={browser} onChange={e => onBrowser(e.target.value)}>
             {browsers.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
           </select>
-        </label>
+        </div>
         <div className="acts">
           <a className="dshl-btn" href={`https://${site}`} target="_blank" rel="noreferrer">{t('login.open')} ↗</a>
           <button className="dshl-btn primary" onClick={onRetry}>{t('st.retry')}</button>

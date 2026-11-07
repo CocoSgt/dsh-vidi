@@ -11,6 +11,8 @@ export interface Cue {
   lang?: string
   /** false = still being revised by the provider (draft). */
   final: boolean
+  /** Re-read with context (fixed words, better translation). */
+  polished?: boolean
 }
 
 /** What a speech provider hands back: cue text without an id yet. */
@@ -74,4 +76,5 @@ export interface JobSummary extends JobOptions {
   needsLogin?: { site: string; browser?: string; detail: string }
   subs?: { state: SubsState; at: number }
   usage?: import('./usage.ts').UsageSummary
+  site?: import('./sitesubs.ts').SiteTrack[]
 }

@@ -5,7 +5,10 @@ import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { defaultExports, exportCues, type ExportFormat } from './export.ts'
 import type { Glossary } from './glossary.ts'
-import { ffmpegInput, LoginRequired, resolveSite, type CookieChoice } from './sites.ts'
+import { Polisher } from './polish.ts'
+import { fetchComments, ffmpegInput, LoginRequired, resolveSite, type CookieChoice } from './sites.ts'
+import type { LlmHandle } from './translate.ts'
+import { fetchSiteSubs, loadSiteSubs, type SiteCue, type SiteTrack } from './sitesubs.ts'
 import type { Translator } from './translate.ts'
 import type { Cue, JobOptions, JobStatus, JobSummary, ProviderCue, SpeechProvider, SubsState } from './types.ts'
 import type { UsageMeter } from './usage.ts'
@@ -26,6 +29,8 @@ export interface JobDeps {
   /** A fresh speech provider for each subtitle run (uses the job's current options). */
   makeProvider: () => SpeechProvider
   translator: Translator
+  /** The harness model, metered for this video (polishing). */
+  llm: () => LlmHandle | undefined
   usage: UsageMeter
   glossary: Glossary
   log: (msg: string) => void
@@ -72,6 +77,14 @@ export class LiveJob extends EventEmitter {
   /** Subtitles: off until asked; `at` = media time processed so far. */
   subs: { state: SubsState; at: number } = { state: 'off', at: 0 }
   private captureDone = false
+  /** Subtitles the site itself offers: shown on request, used as a reference for recognition and translation. */
+  siteTracks: SiteTrack[] = []
+  readonly siteCues = new Map<string, SiteCue[]>()
+  /** Media time where the current subtitle run started (provider times are relative to it). */
+  private runOffset = 0
+  /** What the page says about the video (title, channel, tags, chapters, description, top comments). */
+  brief = ''
+  private readonly polisher: Polisher
   nextId = 1
   private drafts = new Map<string, number>()
   ingest?: { rtmp?: string; srt?: string; key?: string }
@@ -86,6 +99,17 @@ export class LiveJob extends EventEmitter {
     super()
     this.id = id
     mkdirSync(join(deps.dir, 'hls'), { recursive: true })
+    this.polisher = new Polisher({
+      llm: deps.llm, glossary: deps.glossary, log: m => deps.log(`[${id}] ${m}`),
+      brief: () => this.brief, siteText: (a, b) => this.siteText(a, b), targets: () => this.opts.tgtLangs,
+      onLine: (cue, src, tr) => {
+        cue.src = src
+        if (Object.keys(tr).length) cue.tr = { ...cue.tr, ...tr }
+        cue.polished = true
+        this.emit('cue', cue)
+        this.record(cue)
+      },
+    })
   }
 
   summary(): JobSummary {
@@ -94,7 +118,7 @@ export class LiveJob extends EventEmitter {
       startedAt: this.startedAt, dir: this.deps.dir, cueCount: this.cues.length,
       files: existsSync(this.deps.dir) ? readdirSync(this.deps.dir).filter(f => /\.(mp4|m4a|srt|vtt|txt|md|json|jsonl)$/.test(f)) : [],
       ingest: this.ingest, vod: this.vod, duration: this.duration, loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
-      subs: { ...this.subs }, usage: this.deps.usage.summary(),
+      subs: { ...this.subs }, usage: this.deps.usage.summary(), site: this.siteTracks,
     }
   }
 
@@ -137,6 +161,10 @@ export class LiveJob extends EventEmitter {
       }
       job.cues.push(...[...seen.values()].sort((a, b) => a.start - b.start))
       job.nextId = Math.max(0, ...job.cues.map(c => c.id)) + 1
+      if (existsSync(join(dir, 'brief.txt'))) job.brief = readFileSync(join(dir, 'brief.txt'), 'utf8')
+      const site = loadSiteSubs(dir)
+      job.siteTracks = site.tracks
+      for (const [k, v] of site.cues) job.siteCues.set(k, v)
       const at = j.subs?.at ?? job.cues.at(-1)?.end ?? 0
       job.subs = { state: j.subs?.state === 'done' ? 'done' : at > 0 ? 'paused' : 'off', at }
       // A recording cut short by a restart still needs its MP4.
@@ -198,6 +226,18 @@ export class LiveJob extends EventEmitter {
     })
     this.title = r.title
     this.vod = !r.isLive
+    this.setBrief(r.brief)
+    void fetchComments(url, r.cookiesFrom).then(c => { if (c.length) this.setBrief(`${r.brief}\nTop comments:\n${c.map(x => `- ${x}`).join('\n')}`) })
+    // The site's own subtitles, in the background (no tokens).
+    if (r.siteTracks.length) {
+      void fetchSiteSubs(url, this.deps.dir, r.siteTracks, r.cookiesFrom).then(got => {
+        const loaded = loadSiteSubs(this.deps.dir)
+        this.siteTracks = got
+        for (const [k, v] of loaded.cues) this.siteCues.set(k, v)
+        if (got.length) this.deps.log(`[${this.id}] site subtitles: ${got.map(g => g.lang + (g.auto ? ' (auto)' : '')).join(', ')}`)
+        this.emit('state', this.summary())
+      }).catch(err => this.deps.log(`[${this.id}] site subtitles: ${(err as Error).message}`))
+    }
     this.duration = r.duration
     this.loginBrowser = r.cookiesFrom
     const args = r.inputs.flatMap(ffmpegInput)
@@ -319,6 +359,7 @@ export class LiveJob extends EventEmitter {
     }
     const provider = this.deps.makeProvider()
     this.provider = provider
+    this.runOffset = at
     this.subs = { state: 'running', at }
     this.emit('state', this.summary())
     try {
@@ -372,6 +413,7 @@ export class LiveJob extends EventEmitter {
     this.provider = undefined
     await p?.stop().catch(() => {})
     await this.translating
+    await this.polisher.flush()
     this.subs = { state, at: this.subs.at }
     this.save()
     this.persist()
@@ -381,7 +423,7 @@ export class LiveJob extends EventEmitter {
   /** Is recognition or translation too far behind the media read so far? (`slack` < 1 waits until it is well caught up.) */
   private behind(slack = 1): boolean {
     const asr = this.provider?.backlog?.() ?? 0
-    return asr > AHEAD_MAX_SEC * slack || this.pendingTranslations > AHEAD_MAX_LINES * slack
+    return asr > AHEAD_MAX_SEC * slack || this.pendingTranslations > AHEAD_MAX_LINES * slack || this.polisher.backlog > 3 * AHEAD_MAX_LINES * slack
   }
 
   /** Provider cues: drafts are revised in place by key; finals get translated. */
@@ -401,8 +443,10 @@ export class LiveJob extends EventEmitter {
     if (cue.final && key !== undefined) this.drafts.delete(key)
     this.emit('cue', cue)
     if (cue.final) {
-      if (!this.provider?.translates && cue.tr === undefined && this.opts.tgtLangs.length) this.translate(cue)
-      else this.record(cue)
+      // Real-time: a quick per-line translation now, polished a few lines later.
+      // Polished mode: no quick pass; the polishing batch fixes and translates.
+      if (this.opts.mode === 'realtime' && !this.provider?.translates && cue.tr === undefined && this.opts.tgtLangs.length) this.translate(cue)
+      else { this.record(cue); this.polisher.add(cue) }
     }
   }
 
@@ -412,7 +456,8 @@ export class LiveJob extends EventEmitter {
     this.pendingTranslations++
     this.translating = this.translating.then(async () => {
       try {
-        const tr = await this.deps.translator.translate(this.opts.tgtLangs, cue.src, context, this.deps.glossary.forPrompt())
+        const ref = this.siteText(cue.start, cue.end).map(x => `[${x.lang}${x.auto ? ', auto' : ''}] ${x.text}`).join('\n')
+        const tr = await this.deps.translator.translate(this.opts.tgtLangs, cue.src, context, this.deps.glossary.forPrompt(), undefined, ref)
         if (tr) {
           cue.tr = { ...cue.tr, ...tr }
           this.emit('cue', cue)
@@ -422,7 +467,7 @@ export class LiveJob extends EventEmitter {
       }
       this.pendingTranslations--
       this.record(cue)
-      this.deps.glossary.noteFinished(this.cues.filter(c => c.final))
+      this.polisher.add(cue)
     })
   }
 
@@ -529,6 +574,25 @@ export class LiveJob extends EventEmitter {
       '-movflags', '+faststart', out], { timeout: 600_000 })
     for (const f of readdirSync(dir)) if (f.startsWith(`.${name}.`)) rmSync(join(dir, f), { force: true })
     return out
+  }
+
+  private setBrief(text: string): void {
+    this.brief = text.slice(0, 4000)
+    try { writeFileSync(join(this.deps.dir, 'brief.txt'), this.brief) } catch {}
+  }
+
+  /** The site's subtitle text around [from, to] (media seconds), per track — a reference, not ground truth. */
+  siteText(from: number, to: number): { lang: string; auto: boolean; text: string }[] {
+    return this.siteTracks.map(tr => ({
+      lang: tr.lang, auto: tr.auto,
+      text: (this.siteCues.get(tr.key) ?? []).filter(c => c.end > from - 1 && c.start < to + 1).map(c => c.text).join(' '),
+    })).filter(x => x.text)
+  }
+
+  /** Recognition hint for a chunk of the current run (times relative to the run): glossary + site subtitles there. */
+  asrHint(start: number, end: number, terms: string): string {
+    const site = this.siteText(this.runOffset + start, this.runOffset + end).find(x => !x.auto) ?? this.siteText(this.runOffset + start, this.runOffset + end)[0]
+    return [terms && `Glossary: ${terms}.`, site?.text].filter(Boolean).join(' ')
   }
 
   /** Finished lines in [from, to], optionally filtered by text. */

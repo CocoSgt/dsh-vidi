@@ -73,7 +73,7 @@ const CSS = `
 .dshl-link:hover { text-decoration: underline; }
 .dshl .small { font-size: 12px; }
 
-.dshl-seg { display: inline-flex; height: var(--h); padding: 3px; gap: 2px; border-radius: 9px; background: var(--l2); flex: none; }
+.dshl-seg { display: inline-flex; height: var(--h); padding: 3px; gap: 2px; border-radius: 9px; background: color-mix(in srgb, var(--ink) 7%, transparent); flex: none; }
 .dshl-seg button { border: 0; background: none; height: 100%; padding: 0 12px; border-radius: 7px; color: var(--muted); cursor: pointer; font-size: 13px; white-space: nowrap; }
 .dshl-seg button:hover:not(.on):not(:disabled) { color: var(--ink); }
 .dshl-seg button.on { background: var(--bg); color: var(--ink); font-weight: 550; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
@@ -97,7 +97,8 @@ const CSS = `
 .dshl .srow { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; font-size: 13.5px; }
 .dshl-pop.settings .srow + .srow { border-top: 1px solid var(--line-soft); }
 .dshl .srow.col { display: grid; gap: 8px; padding: 10px 0; justify-content: stretch; }
-.dshl .srow > select { width: 120px; }
+.dshl-pop.settings .srow > select, .dshl-pop.settings .srow > .dshl-seg { width: 148px; }
+.dshl-pop.settings .srow > .dshl-seg button { flex: 1; padding: 0 6px; }
 .dshl .srow .keyline { display: flex; gap: 6px; align-items: center; }
 .dshl .srow .keyline code { font-size: 12.5px; color: var(--muted); }
 .dshl .srow .keyline input { flex: 1; min-width: 0; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink);
@@ -363,10 +364,13 @@ const CSS = `
 .dshl-chat .md th, .dshl-chat .md td { border-bottom: 1px solid var(--line-soft); padding: 4px 6px; text-align: left; vertical-align: top; }
 .dshl-chat .md th { color: var(--muted); font-weight: 550; }
 /* Sidebar button and paste prompt (outside .dshl, so host tokens directly) */
-.dshl-sidebtn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 32px; min-width: 32px; padding: 0 8px; border: 0; border-radius: 8px;
-  background: none; color: var(--dsw-alias-label-secondary, #66655f); font: inherit; font-size: 13px; cursor: pointer; }
-.dshl-sidebtn:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.05)); color: var(--dsw-alias-label-primary, #1b1b19); }
-.dshl-sidebtn svg { width: 16px; height: 16px; }
+.dshl-sidebtn { box-sizing: border-box; display: flex; align-items: center; gap: 8px; flex: 0 0 auto; border: 0; background: none; cursor: pointer; overflow: hidden;
+  color: var(--dsw-alias-label-primary, #1b1b19); font-family: inherit; font-size: 14px; line-height: 22px; }
+.dshl-sidebtn.wide { width: calc(100% + 4px); height: 42px; margin: 4px -2px 0; padding: 0 10px 0 8px; border-radius: 12px; }
+.dshl-sidebtn.rail { width: 36px; height: 36px; margin: 8px 0 0; padding: 0; border-radius: 50%; justify-content: center; }
+.dshl-sidebtn:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.05)); }
+.dshl-sidebtn svg { flex: none; }
+.dshl-sidebtn .label { white-space: nowrap; overflow: hidden; }
 .dshl-pastechip { display: flex; padding: 0 2px 6px; }
 .dshl-pastechip button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0; border-radius: 999px; cursor: pointer; font: inherit; font-size: 12.5px;
   background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #3b6ef5) 12%, transparent); color: var(--dsw-alias-state-business-primary, #3b6ef5); max-width: 100%; }

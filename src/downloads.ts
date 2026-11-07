@@ -11,7 +11,11 @@ const run = promisify(execFile)
 
 export interface Task {
   id: string
-  kind: 'original' | 'subtitled'
+  kind: 'original' | 'subtitled' | 'video'
+  /** What is happening now, for multi-step tasks: 'download' (original) / 'mux' (adding subtitle tracks). */
+  stage?: 'download' | 'mux'
+  /** File name to save as (says which version it is). */
+  saveAs?: string
   conversationId: string
   /** Page URL, for originals (to retry). */
   url?: string
@@ -103,39 +107,72 @@ export class Downloads {
    * one is chosen, a combined track (shown by default). The picture comes from
    * the downloaded original, else the recording, else the source file.
    */
-  subtitled(opts: { conversationId: string; dirId: string; title?: string; cues: Cue[]; langs: string[]; fallbackVideo?: string }): Task {
-    const dir = join(this.jobsDir, opts.dirId)
-    const task = this.add({ kind: 'subtitled', conversationId: opts.conversationId, dirId: opts.dirId, title: opts.title })
-    const video = findOriginal(dir) ?? (existsSync(join(dir, 'recording.mp4')) ? join(dir, 'recording.mp4') : opts.fallbackVideo)
-    void (async () => {
-      if (!video || !existsSync(video)) throw new Error('no video yet: download the original, or wait until this video has finished')
-      const tracks: { langs: string[]; name: string; code: string }[] = opts.langs.map(l => ({
-        langs: [l], name: l === 'src' ? 'Original' : (LANGS[l] ?? l), code: l === 'src' ? (opts.cues.find(c => c.lang)?.lang ?? 'und') : l,
-      }))
-      if (opts.langs.length > 1) tracks.unshift({ langs: opts.langs, name: opts.langs.map(l => (l === 'src' ? 'Original' : LANGS[l] ?? l)).join(' + '), code: opts.langs.find(l => l !== 'src') ?? 'und' })
-      const tmp = join(dir, '.tracks')
-      mkdirSync(tmp, { recursive: true })
-      const inputs: string[] = []
-      const meta: string[] = []
-      tracks.forEach((t, i) => {
-        const file = join(tmp, `${i}.srt`)
-        writeFileSync(file, exportCues(opts.cues, t.langs, 'srt', opts.title))
-        inputs.push('-i', file)
-        meta.push(`-metadata:s:s:${i}`, `language=${ISO3[t.code] ?? ISO3[t.code.slice(0, 2)] ?? 'und'}`, `-metadata:s:s:${i}`, `title=${t.name}`,
-          `-disposition:s:${i}`, i === 0 ? 'default' : '0')
-      })
-      task.pct = 30
-      const out = join(dir, 'subtitled.mp4')
+  /** Write an MP4 of `video` with subtitle tracks for `langs` (combined track first when more than one). */
+  private async mux(dir: string, video: string, cues: Cue[], langs: string[], title: string | undefined, out: string): Promise<void> {
+    const name = (l: string) => (l === 'src' ? 'Original' : (LANGS[l] ?? l))
+    const tracks = langs.map(l => ({ langs: [l], name: name(l), code: l === 'src' ? (cues.find(c => c.lang)?.lang ?? 'und') : l }))
+    if (langs.length > 1) tracks.unshift({ langs, name: langs.map(name).join(' + '), code: langs.find(l => l !== 'src') ?? 'und' })
+    const tmp = join(dir, '.tracks')
+    mkdirSync(tmp, { recursive: true })
+    const inputs: string[] = []
+    const meta: string[] = []
+    tracks.forEach((t, i) => {
+      const file = join(tmp, `${i}.srt`)
+      writeFileSync(file, exportCues(cues, t.langs, 'srt', title))
+      inputs.push('-i', file)
+      meta.push(`-metadata:s:s:${i}`, `language=${ISO3[t.code] ?? ISO3[t.code.slice(0, 2)] ?? 'und'}`, `-metadata:s:s:${i}`, `title=${t.name}`,
+        `-disposition:s:${i}`, i === 0 ? 'default' : '0')
+    })
+    try {
       await run('ffmpeg', [
         '-v', 'error', '-y', '-i', video, ...inputs,
         '-map', '0:v?', '-map', '0:a?', ...tracks.flatMap((_, i) => ['-map', `${i + 1}:0`]),
         '-c', 'copy', '-c:s', 'mov_text', ...meta, '-movflags', '+faststart', out,
       ], { timeout: 900_000 })
+    } finally {
       rmSync(tmp, { recursive: true, force: true })
+    }
+  }
+
+  /**
+   * One button, one result: the chosen picture ('original' = best quality from
+   * the site, fetched first if needed; 'recording' = what was recorded here),
+   * with or without subtitle tracks. `saveAs` names the file by version.
+   */
+  video(opts: {
+    conversationId: string; dirId: string; title?: string; url?: string; browser?: string
+    quality: 'original' | 'recording'; langs: string[]; cues: Cue[]; localFile?: string; saveAs: string
+  }): Task {
+    const dir = join(this.jobsDir, opts.dirId)
+    const task = this.add({ kind: 'video', conversationId: opts.conversationId, url: opts.url, dirId: opts.dirId, title: opts.title, saveAs: opts.saveAs })
+    void (async () => {
+      let source: string | undefined
+      if (opts.localFile) source = opts.localFile
+      else if (opts.quality === 'original') {
+        source = findOriginal(dir)
+        if (!source) {
+          if (!opts.url) throw new Error('no link to download from')
+          task.stage = 'download'
+          source = await downloadOriginal(opts.url, dir, opts.browser, pct => { task.pct = Math.round(pct * (opts.langs.length ? 0.9 : 1)) })
+        }
+      } else {
+        source = existsSync(join(dir, 'recording.mp4')) ? join(dir, 'recording.mp4') : undefined
+        if (!source) throw new Error('the recording is not finished yet')
+      }
+      if (!opts.langs.length) { task.file = basename(source); return }
+      task.stage = 'mux'
+      task.pct = Math.max(task.pct, 90)
+      const out = join(dir, `subtitled.${opts.quality}.${opts.langs.join('+').replace(/[^\w+-]/g, '_')}.mp4`)
+      await this.mux(dir, source, opts.cues, opts.langs, opts.title, out)
       task.file = basename(out)
     })()
-      .then(() => { task.status = 'done'; task.pct = 100 })
-      .catch(err => { task.status = 'error'; task.error = String((err as { stderr?: string }).stderr || (err as Error).message).slice(-300); this.log(`subtitled video failed: ${task.error}`) })
+      .then(() => { task.status = 'done'; task.pct = 100; task.stage = undefined })
+      .catch(err => {
+        const msg = String((err as { stderr?: string }).stderr || (err as Error).message)
+        task.status = 'error'
+        task.error = /HTTP Error (412|429)/.test(msg) ? 'The site is refusing requests for now (rate limit). Try again in a minute.' : msg.slice(-300)
+        this.log(`video download failed: ${task.error}`)
+      })
     return task
   }
 }

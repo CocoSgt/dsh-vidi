@@ -76,8 +76,8 @@ export function VideoPage(props: { sessions: SessionsLike; t: (k: LiveKey) => st
 export function SidebarButton(props: { wide?: boolean; sessions: SessionsLike; workspaces: WorkspacesLike; t: (k: LiveKey) => string }) {
   const { wide, sessions, workspaces, t } = props
   return (
-    <button className={`dshl-sidebtn ${wide ? 'wide' : ''}`} title={t('page.open')} onClick={() => void openPage(sessions, { workspaces, title: t('view.live') })}>
-      <Icon.play />{wide && <span>{t('page.open')}</span>}
+    <button className={`dshl-sidebtn ${wide ? 'wide' : 'rail'}`} title={t('page.open')} onClick={() => void openPage(sessions, { workspaces, title: t('view.live') })}>
+      <Icon.video />{wide && <span className="label">{t('page.open')}</span>}
     </button>
   )
 }

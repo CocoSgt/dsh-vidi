@@ -10,8 +10,8 @@ export interface LocalOptions {
   minSec: number
   /** Longest chunk before a forced cut (seconds). */
   maxSec: number
-  /** Extra recogniser prompt (glossary terms), read per chunk. */
-  prompt?: () => string
+  /** Recogniser hint for a chunk (glossary terms, the site's own subtitles there); times are seconds within this run. */
+  prompt?: (start: number, end: number) => string
 }
 
 /** Drop empty lines, bracketed noise tags ([Music], (applause)) and punctuation-only lines. */
@@ -73,8 +73,8 @@ export class LocalProvider implements SpeechProvider {
     this.queue = this.queue.then(async () => {
       if (this.stopped) return
       try {
-        const terms = this.opts.prompt?.() ?? ''
-        const prompt = [terms && `Glossary: ${terms}.`, this.lastText.slice(-200)].filter(Boolean).join(' ')
+        const hint = (this.opts.prompt?.(start, end) ?? '').slice(-400)
+        const prompt = [hint, this.lastText.slice(-160)].filter(Boolean).join(' ')
         const lang0 = this.opts.lang === 'auto' ? (this.locked ?? 'auto') : this.opts.lang
         const { text, lang, langProb, logprob } = await this.opts.whisper.transcribe(wav, lang0, prompt)
         if (!meaningful(text) || HALLUCINATION.test(text.trim())) return

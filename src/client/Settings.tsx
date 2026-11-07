@@ -58,13 +58,13 @@ export function Settings(props: {
       <button className={`dshl-ctl icon ${open ? 'on' : ''}`} onClick={() => onOpen(!open)} title={t('in.settings')} aria-expanded={open}><Icon.gear /></button>
       {open && (
         <div className="dshl-pop settings right">
-          <label className="srow">
+          <div className="srow">
             <span>{t('set.engine')}</span>
             <span className="dshl-seg">
               <button className={engine === 'openai' ? 'on' : ''} disabled={disabled} onClick={() => onEngine('openai')}>{t('set.engine.openai')}</button>
               <button className={engine === 'local' ? 'on' : ''} disabled={disabled} onClick={() => onEngine('local')}>{t('set.engine.local')}</button>
             </span>
-          </label>
+          </div>
           {engine === 'openai' && (
             <div className="srow col">
               <span title={t('set.key.tip')}>{t('set.key')}</span>
@@ -80,28 +80,28 @@ export function Settings(props: {
               {!openai.set && <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">{t('set.key.get')} ↗</a>}
             </div>
           )}
-          <label className="srow">
+          <div className="srow">
             <span>{t('set.mode')}</span>
             <span className="dshl-seg">
               <button className={mode === 'realtime' ? 'on' : ''} title={t('mode.realtime.tip')} onClick={() => onMode('realtime')}>{t('mode.realtime')}</button>
               <button className={mode === 'polished' ? 'on' : ''} title={t('mode.polished.tip')} onClick={() => onMode('polished')}>{t('mode.polished')}</button>
             </span>
-          </label>
-          <label className="srow">
+          </div>
+          <div className="srow">
             <span>{t('set.spoken')}</span>
             <select value={spoken} disabled={disabled} onChange={e => onSpoken(e.target.value)}>
               <option value="auto">{t('set.auto')}</option>
               {langOptions.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
-          </label>
-          <label className="srow" title={t('set.login.tip')}>
+          </div>
+          <div className="srow" title={t('set.login.tip')}>
             <span>{t('set.login')}</span>
             <select value={login} onChange={e => onLogin(e.target.value)}>
               <option value="auto">{t('set.auto')}</option>
               {browsers.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
               <option value="none">{t('set.login.none')}</option>
             </select>
-          </label>
+          </div>
         </div>
       )}
     </div>

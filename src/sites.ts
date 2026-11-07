@@ -1,3 +1,4 @@
+import { pickTracks, type SiteTrack } from './sitesubs.ts'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -49,6 +50,39 @@ export interface Resolved {
   inputs: MediaInput[]
   /** Browser whose login was used, if any. */
   cookiesFrom?: string
+  /** Subtitle tracks the site offers (fetched separately, as a reference). */
+  siteTracks: SiteTrack[]
+  /** The page's own words about the video (title, channel, tags, chapters, description): background for polishing and the glossary. */
+  brief: string
+}
+
+const CLK = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
+
+/** Page metadata as a short text block. */
+export function briefOf(info: Record<string, any>): string {
+  const tags = [...new Set([...(info.tags ?? []), ...(info.categories ?? [])])].slice(0, 25)
+  const chapters = (info.chapters ?? []).slice(0, 40).map((c: { start_time: number; title: string }) => `${CLK(c.start_time)} ${c.title}`)
+  return [
+    info.title && `Title: ${info.title}`,
+    (info.uploader || info.channel) && `Channel: ${info.uploader || info.channel}`,
+    tags.length && `Tags: ${tags.join(', ')}`,
+    chapters.length && `Chapters: ${chapters.join('; ')}`,
+    info.description && `Description: ${String(info.description).replace(/\s+\n/g, '\n').slice(0, 1800)}`,
+  ].filter(Boolean).join('\n')
+}
+
+/** Top comments under the video (names fans spell right; jokes and context). Best effort, background only. */
+export async function fetchComments(url: string, browser?: string): Promise<string[]> {
+  try {
+    const { stdout } = await run('yt-dlp', ['--no-warnings', '--no-playlist', ...cookieArgs(browser), '-J', '--skip-download', '--write-comments',
+      '--extractor-args', 'youtube:max_comments=60,all,0,0;comment_sort=top', url], { timeout: 120_000, maxBuffer: 128 * 1024 * 1024 })
+    const info = JSON.parse(stdout) as { comments?: { text?: string; like_count?: number; parent?: string }[] }
+    return (info.comments ?? []).filter(c => c.text && (!c.parent || c.parent === 'root'))
+      .sort((a, b) => (b.like_count ?? 0) - (a.like_count ?? 0)).slice(0, 30)
+      .map(c => String(c.text).replace(/\s+/g, ' ').slice(0, 120))
+  } catch {
+    return []
+  }
 }
 
 /** Thrown when the site wants a login that no available browser session provides. */
@@ -110,7 +144,7 @@ async function dump(url: string, browser: string | undefined): Promise<Resolved>
   return {
     title: info.title, isLive: info.is_live === true || info.live_status === 'is_live',
     duration: typeof info.duration === 'number' ? info.duration : undefined,
-    inputs, cookiesFrom: browser,
+    inputs, cookiesFrom: browser, siteTracks: pickTracks(info), brief: briefOf(info),
   }
 }
 

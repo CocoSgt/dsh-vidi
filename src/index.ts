@@ -135,7 +135,7 @@ export function apply(ctx: Context, config: Config): void {
   bus.setMaxListeners(100)
   const downloads = new Downloads(join(config.dataDir, 'jobs'), () => prefs().cookies, log)
 
-  function makeProvider(opts: JobOptions, glossary: Glossary, usage: UsageMeter): SpeechProvider {
+  function makeProvider(opts: JobOptions, glossary: Glossary, usage: UsageMeter, job?: LiveJob): SpeechProvider {
     switch (opts.provider) {
       case 'openai': {
         const apiKey = keys.get('openai')
@@ -152,7 +152,7 @@ export function apply(ctx: Context, config: Config): void {
       default:
         return new LocalProvider({
           whisper, lang: opts.srcLang === 'auto' ? 'auto' : opts.srcLang,
-          minSec: config.minChunkSec, maxSec: config.maxChunkSec, prompt: () => glossary.forAsr(),
+          minSec: config.minChunkSec, maxSec: config.maxChunkSec, prompt: (start, end) => job ? job.asrHint(start, end, glossary.forAsr()) : (glossary.forAsr() ? `Glossary: ${glossary.forAsr()}.` : ''),
         })
     }
   }
@@ -212,11 +212,12 @@ export function apply(ctx: Context, config: Config): void {
     let usageTimer: ReturnType<typeof setTimeout> | undefined
     const usage = new UsageMeter(() => { usageTimer ??= setTimeout(() => { usageTimer = undefined; const j = getJob(); j?.emit('state', j.summary()) }, 800) })
     const jobLlm = () => (llm ? metered(llm, usage) : undefined)
-    const glossary = new Glossary(join(dir, 'glossary.json'), opts.tgtLangs, jobLlm, terms => getJob()?.emit('glossary', terms), log, config.glossary, join(config.dataDir, 'glossary.json'))
+    const glossary = new Glossary(join(dir, 'glossary.json'), opts.tgtLangs, terms => getJob()?.emit('glossary', terms), log, config.glossary, join(config.dataDir, 'glossary.json'))
     return {
       dir,
-      makeProvider: () => makeProvider(getJob()!.opts, glossary, usage),
+      makeProvider: () => makeProvider(getJob()!.opts, glossary, usage, getJob()),
       translator: new Translator(jobLlm),
+      llm: jobLlm,
       usage,
       glossary,
       log,
@@ -389,15 +390,53 @@ export function apply(ctx: Context, config: Config): void {
         if (typeof b.url !== 'string' || !/^https?:\/\//.test(b.url.trim())) return send(res, 400, { error: 'url required' })
         return send(res, 200, downloads.original({ conversationId, url: b.url.trim() }))
       }
-      if (route === 'subtitled' && req.method === 'POST') {
+      if (route === 'site') {
+        // The site's own subtitle track: [{start,end,text}].
+        const job = jobs.get(url.searchParams.get('jobId') ?? '')
+        if (!job) return send(res, 404, { error: 'no such job' })
+        return send(res, 200, job.siteCues.get(url.searchParams.get('key') ?? '') ?? [])
+      }
+      if (route === 'snapshot' && req.method === 'POST') {
+        // Raw PNG of what the player shows (picture + subtitles), saved into the video folder.
+        const job = jobs.get(url.searchParams.get('jobId') ?? '')
+        if (!job) return send(res, 404, { error: 'no such job' })
+        const at = Number(url.searchParams.get('at') ?? 0)
+        const dir = join(job.summary().dir, 'frames')
+        mkdirSync(dir, { recursive: true })
+        const name = `shot_${Math.floor(at / 60)}m${String(Math.floor(at % 60)).padStart(2, '0')}s_${Date.now().toString(36).slice(-4)}.png`
+        const chunks: Buffer[] = []
+        let size = 0
+        for await (const c of req) { size += (c as Buffer).length; if (size > 30 * 1024 * 1024) return send(res, 413, { error: 'too large' }); chunks.push(c as Buffer) }
+        writeFileSync(join(dir, name), Buffer.concat(chunks))
+        return send(res, 200, { path: join(dir, name), url: `/live/media/${encodeURIComponent(job.id)}/frames/${encodeURIComponent(name)}` })
+      }
+      if (route === 'clip' && req.method === 'POST') {
+        // { jobId, from, to, langs? } → MP4 in clips/ (exact cut, optional subtitle tracks).
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        const from = Number(b.from), to = Number(b.to)
+        if (!(to > from)) return send(res, 400, { error: 'end must be after start' })
+        try {
+          const path = await job.clip(from, to, Array.isArray(b.langs) ? (b.langs as unknown[]).map(String) : undefined)
+          const rel = path.slice(job.summary().dir.length + 1)
+          return send(res, 200, { path, url: `/live/media/${encodeURIComponent(job.id)}/${rel.split('/').map(encodeURIComponent).join('/')}` })
+        } catch (err) {
+          return send(res, 500, { error: String((err as { stderr?: string }).stderr || (err as Error).message).slice(-300) })
+        }
+      }
+      if (route === 'video' && req.method === 'POST') {
+        // { jobId, quality: 'original'|'recording', langs: [] (no subtitles) | ['zh','src',…], saveAs }
         const b = await readJson(req)
         const job = jobs.get(String(b.jobId))
         if (!job) return send(res, 404, { error: 'no such job' })
         const s = job.summary()
-        const langs = Array.isArray(b.langs) && b.langs.length ? (b.langs as unknown[]).map(String) : [...s.tgtLangs, 'src']
-        return send(res, 200, downloads.subtitled({
-          conversationId: String(b.conversationId ?? s.conversationId), dirId: s.id, title: s.title,
-          cues: job.cues.filter(c => c.final), langs, fallbackVideo: s.source === 'file' ? s.url : undefined,
+        const langs = Array.isArray(b.langs) ? (b.langs as unknown[]).map(String).filter(l => l === 'src' || s.tgtLangs.includes(l)) : []
+        return send(res, 200, downloads.video({
+          conversationId: String(b.conversationId ?? s.conversationId), dirId: s.id, title: s.title, url: s.source === 'url' ? s.url : undefined,
+          browser: s.loginBrowser, quality: b.quality === 'recording' ? 'recording' : 'original', langs,
+          cues: job.cues.filter(c => c.final), localFile: s.source === 'file' ? s.url : undefined,
+          saveAs: typeof b.saveAs === 'string' ? b.saveAs.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 150) : 'video.mp4',
         }))
       }
       if (route === 'job') {
@@ -448,7 +487,13 @@ export function apply(ctx: Context, config: Config): void {
         const job = jobs.get(String(b.jobId))
         if (!job || typeof b.src !== 'string') return send(res, 400, { error: 'jobId and src required' })
         const g = (job as unknown as { deps: { glossary: Glossary } }).deps.glossary
-        if (b.op === 'remove') g.remove(b.src); else g.upsert({ src: b.src, tr: (b.tr ?? {}) as Record<string, string> })
+        if (b.op === 'remove') g.remove(String(b.src))
+        else g.upsert({
+          src: String(b.src), tr: (b.tr ?? {}) as Record<string, string>,
+          was: typeof b.was === 'string' ? b.was : undefined,
+          aliases: Array.isArray(b.aliases) ? (b.aliases as unknown[]).map(String) : undefined,
+          note: typeof b.note === 'string' ? b.note : undefined,
+        })
         return send(res, 200, job.terms)
       }
       return send(res, 404, { error: 'unknown route' })
