@@ -109,6 +109,7 @@ export class LiveJob extends EventEmitter {
     this.polisher = new Polisher({
       llm: deps.llm, glossary: deps.glossary, log: m => deps.log(`[${id}] ${m}`),
       brief: () => this.brief, siteText: (a, b) => this.siteText(a, b), targets: () => this.targets(),
+      still: at => this.still(at),
       onLine: (cue, src, tr, speaker) => {
         cue.src = src
         if (speaker) cue.speaker = speaker
@@ -634,6 +635,16 @@ export class LiveJob extends EventEmitter {
     if (!segs.length || first > last) throw new Error('that part has not been recorded yet')
     const list = files.slice(first, last + 1).map(f => join(this.deps.dir, this.hlsName, f)).join('|')
     return { args: ['-ss', String(from - segs[first]!.start), '-i', `concat:${list}`], offset: 0 }
+  }
+
+  /** One small JPEG of the picture at media time `at`, for the model to look at (undefined for audio-only or on failure). */
+  async still(at: number): Promise<Buffer | undefined> {
+    try {
+      const { args } = this.mediaFor(at, at + 1)
+      const { stdout } = await run('ffmpeg', ['-v', 'error', ...args, '-frames:v', '1', '-vf', 'scale=768:-2', '-q:v', '5', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'],
+        { timeout: 30_000, encoding: 'buffer', maxBuffer: 8 << 20 })
+      return stdout.length > 1000 ? stdout : undefined
+    } catch { return undefined }
   }
 
   /** Save one frame at media time `at` (seconds) as JPEG; returns the file path. */

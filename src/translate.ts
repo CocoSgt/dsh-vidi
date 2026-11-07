@@ -9,7 +9,10 @@ export const LANGS: Record<string, string> = {
 
 export interface LlmHandle {
   stream(options: Record<string, unknown>): AsyncIterable<unknown>
+  /** The subtitle model: translation, polishing, glossary. */
   selection(): { provider: string; model: string }
+  /** A JPEG as a message image block, when the subtitle model can read images (else undefined). */
+  image?(jpeg: Buffer): Promise<unknown | undefined>
 }
 
 export interface ContextLine { src: string; tr?: Record<string, string> }

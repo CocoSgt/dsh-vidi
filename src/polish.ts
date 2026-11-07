@@ -12,6 +12,8 @@ export interface PolishDeps {
   /** The site's own subtitles around a time range (may be wrong or misaligned). */
   siteText: (from: number, to: number) => { lang: string; auto: boolean; text: string }[]
   targets: () => string[]
+  /** A still of the picture at a media time (for models that read images). */
+  still?: (at: number) => Promise<Buffer | undefined>
   /** A line came back polished. */
   onLine: (cue: Cue, src: string, tr: Record<string, string>, speaker?: string) => void
 }
@@ -34,6 +36,8 @@ export class Polisher {
   private busy: Promise<void> | undefined
   private firstWaitAt = 0
   private timer: ReturnType<typeof setTimeout> | undefined
+  /** No picture to show (audio, or frames failed once): stop trying. */
+  private audioOnly = false
 
   constructor(private readonly deps: PolishDeps) {}
 
@@ -83,6 +87,7 @@ export class Polisher {
     const names = targets.map(t => `"${t}" (${LANGS[t] ?? t})`).join(', ')
     const system = [
       'You polish live speech-recognition subtitles and maintain the glossary for this video.',
+      'A frame from the video in this stretch may be attached: use what is on screen (names, titles, slides, captions, products) to fix words and to confirm glossary entries.',
       'Fix misheard words (names, terms, homophones) using the video background, the glossary, the site\'s own subtitles and the surrounding lines. Otherwise keep the speaker\'s words: do not rewrite, summarise, merge or split lines; keep every id.',
       targets.length ? `Translate each fixed line into: ${names}, as natural, concise subtitles.` : 'No translation is needed.',
       'Speaker: say who says each line — a name when the background or context makes it clear (host, guest, a named person), otherwise "Speaker 1", "Speaker 2"… consistent with the earlier lines; if only one person talks, use the same label throughout.',
@@ -100,11 +105,15 @@ export class Polisher {
       'Lines to polish:',
       JSON.stringify(batch.map(c => ({ id: c.id, t: CLOCK(c.start), src: c.src, ...(c.tr && targets.length ? { tr: c.tr } : {}) }))),
     ].filter(Boolean).join('\n')
+    // The picture in the middle of the stretch, when the model can read images (on-screen names, slides).
+    const jpeg = handle.image && this.deps.still && !this.audioOnly ? await this.deps.still((from + to) / 2) : undefined
+    if (handle.image && this.deps.still && !jpeg) { this.audioOnly = true; this.deps.log('polish: no picture to show the model') }
+    const image = jpeg ? await handle.image!(jpeg).catch(() => undefined) : undefined
     const { provider, model } = handle.selection()
     const asm = new BlockAssembler()
     for await (const chunk of handle.stream({
       provider, model, system, maxTokens: 800 + batch.length * 120 * Math.max(1, targets.length + 1), purpose: 'live-polish',
-      messages: [createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-live' } })],
+      messages: [createUserMessage({ content: [...(image ? [image as never] : []), { type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-live' } })],
     })) asm.push(chunk as never)
     const out = asm.blocks().filter((b: { type: string }) => b.type === 'text').map((b: { type: string; text?: string }) => b.text ?? '').join('')
     const m = out.match(/\{[\s\S]*\}/)

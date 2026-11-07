@@ -485,6 +485,8 @@ const CSS = `
 .dshl .srow .keyline .dshl-link { margin-left: auto; }
 .dshl .srow .keyfoot { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: var(--faint); font-size: 12px; line-height: 1.5; }
 .dshl .srow .hint { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+.dshl .srow .pair { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dshl .srow .pair > select { width: 168px; }
 .dshl-pop.usage { min-width: 320px; padding: 12px 14px; }
 .dshl-pop.usage h3 { margin: 0 0 8px; color: var(--muted); font-size: 12.5px; font-weight: 600; }
 .dshl-pop.usage table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }

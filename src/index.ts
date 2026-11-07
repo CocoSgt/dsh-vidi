@@ -95,6 +95,15 @@ export function apply(ctx: Context, config: Config): void {
 
   // The model is optional: subtitles still work (source only) without one.
   let llm: LlmHandle | undefined
+  /** DSH's model service, for listing models in the subtitle-model picker. */
+  let llmService: any
+  /** The default subtitle model: DeepSeek (Flash) when DSH has it, else DSH's own default model. */
+  let deepseekDefault: { provider: string; model: string } | undefined
+  /** Whether a model reads images (asked once per model). */
+  const seesCache = new Map<string, Promise<boolean>>()
+  // Images for the model go through DSH's attachment store (the way the chat sends pictures).
+  let attachments: any
+  ctx.inject(['attachments'], (c: any) => { c.effect(() => { attachments = c.attachments; return () => { attachments = undefined } }, 'dsh-live: frames for the subtitle model') })
   ctx.inject(['llm', 'agentDefaultModel'], (c: any) => {
     c.effect(() => {
       // Subtitle work is short and literal: switch the model's thinking off where the model allows it
@@ -114,9 +123,33 @@ export function apply(ctx: Context, config: Config): void {
           const off = await canTurnOff(String(opts.provider), String(opts.model))
           yield* c.llm.stream(off ? { ...opts, reasoningEffort: 'off' } : opts)
         },
-        selection: () => c.agentDefaultModel.currentSelection(),
+        selection: () => {
+          const p = prefs().subsModel
+          return p?.provider && p?.model ? p : (deepseekDefault ?? c.agentDefaultModel.currentSelection())
+        },
+        async image(jpeg: Buffer) {
+          const { provider, model } = llm!.selection()
+          const k = `${provider}/${model}`
+          if (!seesCache.has(k)) {
+            seesCache.set(k, Promise.resolve(c.llm.listModels?.(provider)).then((ms: any[] | undefined) =>
+              !!ms?.find(m => m.id === model)?.inputModalities?.includes('image'), () => false))
+          }
+          if (!await seesCache.get(k)) { log(`frames: ${k} reads text only`); return undefined }
+          if (!attachments) { log('frames: DSH attachment store unavailable, polishing from text only'); return undefined }
+          const [ref] = await attachments.saveImages([{ data: new Uint8Array(jpeg), mediaType: 'image/jpeg', name: 'frame.jpg' }])
+          if (ref) log(`frames: ${model} sees a ${ref.width}×${ref.height} frame`)
+          return ref ? { type: 'image', attachment: ref } : undefined
+        },
       }
-      return () => { llm = undefined }
+      llmService = c.llm
+      void (async () => {
+        const ds = (c.llm.listProviders?.() ?? []).find((p: { id: string }) => /deepseek/i.test(p.id))
+        if (!ds) return
+        const models: { id: string }[] = await Promise.resolve(c.llm.listModels(ds.id)).catch(() => [])
+        const m = models.find(x => /flash/i.test(x.id)) ?? models[0]
+        if (m) deepseekDefault = { provider: ds.id, model: m.id }
+      })()
+      return () => { llm = undefined; llmService = undefined }
     }, 'dsh-live: translator model')
   })
   const translator = new Translator(() => llm)
@@ -140,7 +173,12 @@ export function apply(ctx: Context, config: Config): void {
 
   // Page-level preferences (which browser login to use for video sites).
   const settingsFile = join(config.dataDir, 'settings.json')
-  type Prefs = { cookies: CookieChoice; last?: Pick<JobOptions, 'tgtLangs' | 'srcLang' | 'provider' | 'mode'> }
+  type Prefs = {
+    cookies: CookieChoice
+    last?: Pick<JobOptions, 'tgtLangs' | 'srcLang' | 'provider' | 'mode'>
+    /** Subtitle model (translation, polishing, glossary); unset = DeepSeek, else DSH's default. */
+    subsModel?: { provider: string; model: string }
+  }
   const prefs = (): Prefs => {
     try { return { cookies: 'auto', ...JSON.parse(readFileSync(settingsFile, 'utf8')) } } catch { return { cookies: 'auto' } }
   }
@@ -425,9 +463,26 @@ export function apply(ctx: Context, config: Config): void {
           provider: typeof b.provider === 'string' ? b.provider : 'local', conversationId: String(b.conversationId ?? 'default'),
         }))
       }
+      if (route === 'models') {
+        // The models DSH has, for the subtitle-model picker; image = it can look at frames.
+        const out: { provider: string; providerName: string; model: string; name: string; image: boolean }[] = []
+        for (const p of (llmService?.listProviders?.() ?? []) as { id: string; name?: string }[]) {
+          const ms = await Promise.race([
+            Promise.resolve(llmService.listModels(p.id)).catch(() => []),
+            new Promise<never[]>(r => setTimeout(() => r([]), 4000)),
+          ]) as { id: string; name?: string; inputModalities?: string[] }[]
+          for (const m of ms) out.push({ provider: p.id, providerName: p.name ?? p.id, model: m.id, name: m.name ?? m.id, image: !!m.inputModalities?.includes('image') })
+        }
+        return send(res, 200, { models: out, current: llm?.selection(), chosen: prefs().subsModel ?? null, fallback: deepseekDefault ?? null })
+      }
       if (route === 'settings') {
         if (req.method === 'POST') {
           const b = await readJson(req)
+          if (b.subsModel === null) savePrefs({ subsModel: undefined })
+          else if (b.subsModel && typeof b.subsModel === 'object') {
+            const m = b.subsModel as { provider?: unknown; model?: unknown }
+            if (typeof m.provider === 'string' && typeof m.model === 'string') savePrefs({ subsModel: { provider: m.provider, model: m.model } })
+          }
           const ok = ['auto', 'none', ...installedBrowsers().map(x => x.id)]
           if (typeof b.cookies === 'string' && ok.includes(b.cookies)) writeFileSync(settingsFile, JSON.stringify({ ...prefs(), cookies: b.cookies }, null, 2))
         }

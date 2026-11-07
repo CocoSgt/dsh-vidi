@@ -52,6 +52,7 @@ export class UsageMeter {
 export function metered(llm: LlmHandle, meter: UsageMeter): LlmHandle {
   return {
     selection: () => llm.selection(),
+    image: llm.image ? (jpeg: Buffer) => llm.image!(jpeg) : undefined,
     async *stream(options: Record<string, unknown>) {
       for await (const chunk of llm.stream(options)) {
         const c = chunk as { type?: string; usage?: Record<string, number> }

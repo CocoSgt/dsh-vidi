@@ -57,6 +57,28 @@ export function Settings(props: {
   }, [open, onOpen])
   useEffect(() => { setDraft(''); setMsg(null) }, [engine])
 
+  // Subtitle model (translation, polishing, glossary): the models DSH has, loaded when the panel opens.
+  type ModelRow = { provider: string; providerName: string; model: string; name: string; image: boolean }
+  const [models, setModels] = useState<{ models: ModelRow[]; chosen: { provider: string; model: string } | null; fallback: { provider: string; model: string } | null } | null>(null)
+  useEffect(() => {
+    if (!open || models) return
+    fetch('/live/api/models').then(r => r.json()).then(setModels).catch(() => {})
+  }, [open, models])
+  const modelKey = (m?: { provider: string; model: string } | null) => (m ? `${m.provider}/${m.model}` : '')
+  const modelName = (m?: { provider: string; model: string } | null) => {
+    const row = models?.models.find(x => modelKey(x) === modelKey(m))
+    return row?.name ?? m?.model ?? ''
+  }
+  const chooseModel = (key: string) => {
+    const row = models?.models.find(x => modelKey(x) === key)
+    const subsModel = row ? { provider: row.provider, model: row.model } : null
+    setModels(v => v && { ...v, chosen: subsModel })
+    void post('settings', { subsModel })
+  }
+  const providersOf = [...new Set((models?.models ?? []).map(m => m.providerName))]
+  const current = models?.chosen ?? models?.fallback
+  const sees = !!models?.models.find(x => modelKey(x) === modelKey(current))?.image
+
   const saveKey = async (value: string) => {
     if (!cur) return
     setBusy(true); setMsg(null)
@@ -74,7 +96,7 @@ export function Settings(props: {
       {open && (
         <div className="dshl-pop settings right">
           <div className="srow">
-            <span>{t('set.engine')}</span>
+            <span title={t('set.engine.tip')}>{t('set.engine')}</span>
             <select value={engine} disabled={disabled} onChange={e => onEngine(e.target.value)}>
               {providers.map(p => <option key={p.id} value={p.id}>{name(p.id)}{p.ready ? '' : ` · ${t(p.online ? 'set.engine.noKey' : 'set.engine.notInstalled')}`}</option>)}
             </select>
@@ -101,6 +123,20 @@ export function Settings(props: {
             </div>
           )}
           {cur && !cur.online && !cur.ready && <div className="srow col"><span className="hint">{t('set.local.missing')}</span></div>}
+          <div className="srow col">
+            <span className="pair">
+              <span title={t('set.model.tip')}>{t('set.model')}</span>
+              <select value={models?.chosen ? modelKey(models.chosen) : ''} onChange={e => chooseModel(e.target.value)}>
+                <option value="">{models?.fallback ? t('set.model.default').replace('{m}', modelName(models.fallback)) : t('set.model.dsh')}</option>
+                {providersOf.map(pn => (
+                  <optgroup key={pn} label={pn}>
+                    {models!.models.filter(m => m.providerName === pn).map(m => <option key={modelKey(m)} value={modelKey(m)}>{m.name}{m.image ? ` · ${t('set.model.image')}` : ''}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </span>
+            <span className="hint">{t(sees ? 'set.model.sees' : 'set.model.text')}</span>
+          </div>
           <div className="srow">
             <span>{t('set.mode')}</span>
             <span className="dshl-seg">
