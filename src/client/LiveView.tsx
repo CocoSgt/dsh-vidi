@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from './icons.tsx'
+import { KeysPanel, type KeyInfo } from './KeysPanel.tsx'
 import { langLabel } from './langs.ts'
 import type { LiveKey } from './locales.ts'
 import { Player, type CueLike, type PlayerHandle } from './Player.tsx'
@@ -69,7 +70,11 @@ export function LiveView(props: LiveViewInjected) {
   const [mode, setMode] = useState<'realtime' | 'polished'>('realtime')
   const [srcLang, setSrcLang] = useState('auto')
   const [tgtLangs, setTgtLangs] = useState<string[]>(['zh'])
-  const [provider, setProvider] = useState('local')
+  const [provider, setProviderRaw] = useState('local')
+  const setProvider = (p: string) => { setProviderRaw(p); try { localStorage.setItem('dsh-live.provider', p) } catch {} }
+  const [providers, setProviders] = useState<{ id: string; online: boolean; ready: boolean }[]>([])
+  const [openaiKey, setOpenaiKey] = useState<KeyInfo>({ set: false })
+  const [showKeys, setShowKeys] = useState(false)
   const [recent, setRecent] = useState<string[]>(loadRecent)
   const [uploading, setUploading] = useState<number | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -97,6 +102,14 @@ export function LiveView(props: LiveViewInjected) {
   useEffect(() => {
     fetch('/live/api/deps').then(r => r.json()).then(d => {
       setDeps(d.deps ?? []); setLangs(d.langs ?? {}); setHasTranslator(!!d.translator)
+      const list = (d.providers ?? []) as { id: string; online: boolean; ready: boolean }[]
+      setProviders(list)
+      if (d.keys?.openai) setOpenaiKey(d.keys.openai)
+      // Last choice wins; otherwise the online engine when it has a key, else local.
+      let saved: string | null = null
+      try { saved = localStorage.getItem('dsh-live.provider') } catch {}
+      const pick = saved && list.some(p => p.id === saved) ? saved : list.find(p => p.id === 'openai' && p.ready) ? 'openai' : 'local'
+      setProviderRaw(pick)
       if (d.defaultTargetLang) setTgtLangs(prev => (prev.length === 1 && prev[0] === 'zh' ? [d.defaultTargetLang] : prev))
     }).catch(() => {})
     fetch(`/live/api/job?conversationId=${encodeURIComponent(sessionId)}`).then(r => r.json()).then(j => {
@@ -132,6 +145,7 @@ export function LiveView(props: LiveViewInjected) {
     const src = override?.source ?? source
     const target = override?.url ?? (src === 'push' ? pushProto : src === 'file' ? filePath.trim() : url.trim())
     if (!target) return
+    if (provider === 'openai' && !openaiKey.set) { setShowKeys(true); setError(t('keys.needed')); return }
     try {
       const j = await post('start', { source: src, url: target, mode, srcLang, tgtLangs, provider, conversationId: sessionId })
       if (src === 'url') { pushRecent(target); setRecent(loadRecent()) }
@@ -150,7 +164,8 @@ export function LiveView(props: LiveViewInjected) {
   }
 
   const running = !!job && (job.status === 'resolving' || job.status === 'running')
-  const missing = deps.filter(d => !d.ok && d.name !== 'mediamtx').map(d => `${d.name} (${d.hint})`)
+  // whisper is only needed for the local engine; restreaming tools are reported where they are used.
+  const missing = deps.filter(d => !d.ok && d.name !== 'mediamtx' && (provider === 'local' || !d.name.startsWith('whisper'))).map(d => `${d.name} (${d.hint})`)
   const ui: 'en' | 'zh' = t('view.live') === 'Live' ? 'en' : 'zh'
   const langOptions = Object.entries(langs).filter(([k]) => k !== 'auto').map(([k, v]) => [k, langLabel(k, ui, v)] as [string, string])
   const langName = useCallback((k: string) => (k === 'src' ? t('sub.source') : langLabel(k, ui, langs[k])), [langs, t, ui])
@@ -251,12 +266,24 @@ export function LiveView(props: LiveViewInjected) {
             </select>
           )}
           <select value={provider} onChange={e => setProvider(e.target.value)} disabled={running} title={t('form.provider')}>
-            <option value="local">{t('provider.local')}</option>
+            <option value="openai">{t('provider.openai')} {openaiKey.set ? '' : t('provider.needsKey')}</option>
+            <option value="local">{t('provider.local')} {providers.find(p => p.id === 'local')?.ready === false ? t('provider.offline') : ''}</option>
           </select>
+          <button className={`dshl-btn small ghost ${showKeys ? 'on' : ''}`} onClick={() => setShowKeys(v => !v)} title={t('keys.open')}>
+            <Icon.gear /> {t('keys.open')}
+          </button>
           <span className="dshl-hint">{t(mode === 'realtime' ? 'mode.realtime.hint' : 'mode.polished.hint')}</span>
         </div>
       </header>
 
+      {showKeys && (
+        <KeysPanel openai={openaiKey} t={t} onClose={() => setShowKeys(false)}
+          onChange={info => {
+            setOpenaiKey(info)
+            setProviders(list => list.map(p => (p.id === 'openai' ? { ...p, ready: info.set } : p)))
+            if (info.set) { setProvider('openai'); setError('') }
+          }} />
+      )}
       {missing.length > 0 && <div className="dshl-note warn">{t('deps.missing')} {missing.join(' · ')}</div>}
       {!hasTranslator && <div className="dshl-note">{t('translator.none')}</div>}
       {(error || job?.status === 'error') && (

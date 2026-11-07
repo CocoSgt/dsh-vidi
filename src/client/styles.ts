@@ -200,6 +200,28 @@ const CSS = `
 .dshl-dropzone { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 24px;
   background: color-mix(in srgb, var(--accent) 10%, color-mix(in srgb, var(--bg) 85%, transparent)); }
 .dshl-dropzone div { padding: 40px 56px; border: 2px dashed var(--accent); border-radius: 18px; color: var(--accent); font-size: 17px; font-weight: 600; background: var(--bg); }
+
+/* Services & keys */
+.dshl-keys { margin: 0 20px 4px; max-width: 560px; box-shadow: 0 8px 28px rgba(0,0,0,.08); }
+.dshl-keys .head { display: flex; align-items: center; justify-content: space-between; }
+.dshl-keys .head h3 { margin: 0; }
+.dshl-keys .mini { width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; }
+.dshl-keys .mini:hover { background: var(--hover); color: var(--ink); }
+.dshl-keys .svc { margin-top: 10px; display: grid; gap: 8px; }
+.dshl-keys .svc-head { display: flex; align-items: center; gap: 10px; }
+.dshl-keys .svc p { margin: 0; font-size: 12.5px; line-height: 1.55; }
+.dshl-keys .row { display: flex; gap: 8px; align-items: center; }
+.dshl-keys .row input { flex: 1; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); color: var(--ink); font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.dshl-keys .row input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.dshl-keys .row.actions { gap: 10px; font-size: 13px; }
+.dshl-keys .row.actions a { color: var(--accent); text-decoration: none; margin-left: auto; }
+.dshl-keys .dshl-note { margin: 0; }
+.dshl-keys p.small { margin: 12px 0 0; font-size: 11.5px; }
+.dshl-tag { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--l2); color: var(--muted); }
+.dshl-tag.ok { background: color-mix(in srgb, #1a9d5a 13%, transparent); color: #168a4f; }
+.dshl-btn.small.ghost { background: none; border-color: transparent; color: var(--muted); padding: 0 8px; }
+.dshl-btn.small.ghost:hover, .dshl-btn.small.ghost.on { background: var(--hover); color: var(--ink); }
+.dshl-btn.small.ghost svg { width: 15px; height: 15px; }
 `
 
 let done = false

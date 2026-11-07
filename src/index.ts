@@ -13,7 +13,9 @@ import { checkDeps } from './deps.ts'
 import type { ExportFormat } from './export.ts'
 import { Glossary } from './glossary.ts'
 import { LiveJob } from './job.ts'
+import { KeyStore } from './keys.ts'
 import { LocalProvider } from './providers/local.ts'
+import { OpenAIProvider, verifyOpenAIKey } from './providers/openai.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
 import type { JobOptions, SourceKind, SpeechProvider } from './types.ts'
 import { WhisperServer } from './whisper.ts'
@@ -30,6 +32,8 @@ export interface Config {
   glossary: string
   rtmpPort: number
   srtPort: number
+  openaiApiKey: string
+  openaiModel: string
 }
 
 export const Config: z<Config> = z.object({
@@ -41,6 +45,8 @@ export const Config: z<Config> = z.object({
   glossary: z.string().role('textarea').default('').description('Terms to keep consistent, one per line (e.g. "Dots = Dots"). Each stream also builds its own glossary automatically.'),
   rtmpPort: z.number().default(1935).description('Port for incoming RTMP pushes (OBS → rtmp://<this machine>/live).'),
   srtPort: z.number().default(9000).description('Port for incoming SRT pushes.'),
+  openaiApiKey: z.string().role('secret').default('').description('OpenAI API key for online subtitles (can also be entered on the Live page, or set OPENAI_API_KEY).'),
+  openaiModel: z.string().default('gpt-live-transcribe').description('OpenAI realtime transcription model.'),
 }) as never
 
 const MIME: Record<string, string> = {
@@ -91,8 +97,20 @@ export function apply(ctx: Context, config: Config): void {
   })
   const translator = new Translator(() => llm)
 
+  const keys = new KeyStore(join(config.dataDir, 'keys.json'), () => ({ openai: config.openaiApiKey }))
+
   function makeProvider(opts: JobOptions, glossary: Glossary): SpeechProvider {
     switch (opts.provider) {
+      case 'openai': {
+        const apiKey = keys.get('openai')
+        if (!apiKey) throw new Error('no OpenAI API key yet: add one under “Services & keys”')
+        return new OpenAIProvider({
+          apiKey, model: config.openaiModel, lang: opts.srcLang,
+          delay: opts.mode === 'polished' ? 'high' : 'low',
+          minSec: Math.max(config.minChunkSec, 2), maxSec: Math.max(config.maxChunkSec, 8),
+          keywords: () => glossary.terms.map(t => t.src), log,
+        })
+      }
       case 'local':
       default:
         return new LocalProvider({
@@ -139,7 +157,34 @@ export function apply(ctx: Context, config: Config): void {
     const route = url.pathname.replace(/^\/live\/api\/?/, '')
     try {
       if (route === 'deps') {
-        return send(res, 200, { deps: await checkDeps(config.whisperModel), translator: translator.available, langs: LANGS, defaultTargetLang: config.defaultTargetLang })
+        const deps = await checkDeps(config.whisperModel)
+        const localReady = deps.filter(d => ['ffmpeg', 'whisper-server', 'whisper model'].includes(d.name)).every(d => d.ok)
+        return send(res, 200, {
+          deps, translator: translator.available, langs: LANGS, defaultTargetLang: config.defaultTargetLang,
+          providers: [
+            { id: 'openai', online: true, ready: keys.info('openai').set },
+            { id: 'local', online: false, ready: localReady },
+          ],
+          keys: { openai: keys.info('openai') },
+        })
+      }
+      if (route === 'keys' && req.method === 'POST') {
+        // { name: 'openai', key: '...' } saves (empty key removes); { name, test: true } checks the stored key.
+        const b = await readJson(req)
+        if (b.name !== 'openai') return send(res, 400, { error: 'unknown service' })
+        if (typeof b.key === 'string') {
+          const key = b.key.trim()
+          if (key) {
+            const check = await verifyOpenAIKey(key)
+            if (!check.ok) return send(res, 400, { error: check.message ?? 'key rejected' })
+          }
+          keys.save('openai', key)
+          return send(res, 200, { openai: keys.info('openai') })
+        }
+        const key = keys.get('openai')
+        if (!key) return send(res, 400, { error: 'no key' })
+        const check = await verifyOpenAIKey(key)
+        return send(res, check.ok ? 200 : 400, check.ok ? { ok: true } : { error: check.message })
       }
       if (route === 'start' && req.method === 'POST') {
         const b = await readJson(req)
