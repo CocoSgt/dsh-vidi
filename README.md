@@ -1,4 +1,4 @@
-# dsh-stream
+# dsh-vidi
 
 English | [中文](README.zh-CN.md)
 
@@ -16,7 +16,7 @@ A video tool for DeepSeek Harness: watch live streams, videos and podcasts with 
 
 ## Install
 
-In DSH, open **Plugins → Install third-party plugin** and enter `dsh-stream`. A **Video** button appears in the sidebar; pasting a video link in a chat also offers to open it.
+In DSH, open **Plugins → Install third-party plugin** and enter `dsh-vidi`. A **Video** button appears in the sidebar; pasting a video link in a chat also offers to open it.
 
 Needs DSH 0.2.2 or later.
 

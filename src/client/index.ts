@@ -1,5 +1,5 @@
 /**
- * dsh-stream browser half:
+ * dsh-vidi browser half:
  * - a "Video" tab beside Chat in every conversation (conversation.view);
  * - a "Watch video" button in the sidebar footer that opens the full video page (shell.overlay);
  * - a prompt above the composer when a video link is pasted (conversation.input.dock);
@@ -39,12 +39,12 @@ function sessionsOf(ctx: any, extra: { uiWorkspace?: any; uiConversation?: any }
 
 export function apply(ctx: any): void {
   ensureStyles()
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-stream: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-vidi: dictionaries')
   const t = ctx.locale.bind(NS) as (key: LiveKey) => string
   // Newer DS-Harness services, picked up when present (older versions have neither).
   const extra: { uiWorkspace?: any; uiConversation?: any } = {}
-  ctx.inject(['uiWorkspace'], (c: any) => { c.effect(() => { extra.uiWorkspace = c.uiWorkspace; return () => { extra.uiWorkspace = undefined } }, 'dsh-stream: workspace navigation') })
-  ctx.inject(['uiConversation'], (c: any) => { c.effect(() => { extra.uiConversation = c.uiConversation; return () => { extra.uiConversation = undefined } }, 'dsh-stream: conversation view') })
+  ctx.inject(['uiWorkspace'], (c: any) => { c.effect(() => { extra.uiWorkspace = c.uiWorkspace; return () => { extra.uiWorkspace = undefined } }, 'dsh-vidi: workspace navigation') })
+  ctx.inject(['uiConversation'], (c: any) => { c.effect(() => { extra.uiConversation = c.uiConversation; return () => { extra.uiConversation = undefined } }, 'dsh-vidi: conversation view') })
   let adapter: SessionsLike | undefined
   const sessions = (): SessionsLike => (adapter ??= sessionsOf(ctx, extra))
 
@@ -59,7 +59,7 @@ export function apply(ctx: any): void {
 
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
-    id: 'dsh-stream',
+    id: 'dsh-vidi',
     order: 50,
     label: () => t('page.open'),
     inject: () => ({ sessions: sessions(), workspaces: ctx.workspaces, t }),
@@ -67,7 +67,7 @@ export function apply(ctx: any): void {
 
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',
-    id: 'dsh-stream.page',
+    id: 'dsh-vidi.page',
     order: 50,
     label: () => t('page.open'),
     inject: () => ({ sessions: sessions(), t }),
@@ -75,7 +75,7 @@ export function apply(ctx: any): void {
 
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
-    id: 'dsh-stream.paste',
+    id: 'dsh-vidi.paste',
     order: 40,
     inject: (sessionId: string) => ({ sessionId, sessions: sessions(), t }),
   }, PasteChip))
@@ -89,5 +89,5 @@ export function apply(ctx: any): void {
     if (page.open && page.sessionId === r.sessionId) return
     if (s.current() !== r.sessionId) return
     void openPage(s, { sessionId: r.sessionId })
-  }), 'dsh-stream: open requests')
+  }), 'dsh-vidi: open requests')
 }

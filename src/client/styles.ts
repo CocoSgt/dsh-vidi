@@ -1,5 +1,5 @@
 /**
- * dsh-stream styles, one rule per component, grouped top to bottom as the page
+ * dsh-vidi styles, one rule per component, grouped top to bottom as the page
  * reads. Colours ride on DS-Harness's tokens (--dsw-alias-*), so light/dark
  * themes follow the host; menus inside the player use a dark set. Sizes:
  * controls 40 (top bar) / 32 / 28 px, radii 10 / 8 / 6, text 14 / 13 / 12.

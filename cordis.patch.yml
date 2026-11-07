@@ -1,4 +1,4 @@
-# dsh-stream bundle patch: insert the host plugin (and the web client declared in package.json) into the profile.
+# dsh-vidi bundle patch: insert the host plugin (and the web client declared in package.json) into the profile.
 - insert:
     - id: stream
-      name: 'dsh-stream'
+      name: 'dsh-vidi'

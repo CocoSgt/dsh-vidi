@@ -187,7 +187,7 @@ export function registerTools(ctx: Context, host: ToolHost): void {
   ]
 
   ctx.inject(['tools'], (c: any) => {
-    for (const tool of tools) c.effect(() => c.tools.register(tool), `dsh-stream: tool ${tool.name}`)
+    for (const tool of tools) c.effect(() => c.tools.register(tool), `dsh-vidi: tool ${tool.name}`)
   })
 
   // Each conversation knows what is open in its player (empty when nothing is).
@@ -207,7 +207,7 @@ export function registerTools(ctx: Context, host: ToolHost): void {
           'Use the live_* tools for this video (transcript, subtitles, frame, clip, download). Put new work in the folder above, under ext/<name>/ for your own files.',
         ].join('\n')
       },
-    }), 'dsh-stream: player context')
+    }), 'dsh-vidi: player context')
   })
 
   // /video <link or path> in any conversation.
@@ -228,6 +228,6 @@ export function registerTools(ctx: Context, host: ToolHost): void {
           return { kind: 'error', text: (err as Error).message }
         }
       },
-    }), 'dsh-stream: /video command')
+    }), 'dsh-vidi: /video command')
   })
 }
