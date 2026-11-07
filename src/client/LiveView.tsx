@@ -9,6 +9,7 @@ import { SubtitleMenu } from './SubtitleMenu.tsx'
 import type { LiveKey } from './locales.ts'
 import { LoginDialog } from './LoginDialog.tsx'
 import { Player, type CueLike, type PlayerHandle, type PlayerMenu } from './Player.tsx'
+import { RestreamPanel, type RestreamStatus } from './RestreamPanel.tsx'
 import { engineLabel, Settings, type Browser, type Provider } from './Settings.tsx'
 import { loadStyle, reconcile, saveStyle, type SubStyle } from './subStyle.tsx'
 
@@ -21,6 +22,7 @@ interface Summary {
   vod?: boolean; duration?: number; loginBrowser?: string; needsLogin?: NeedsLogin
   subs?: { state: 'off' | 'running' | 'paused' | 'done'; at: number }
   usage?: Usage
+  restream?: RestreamStatus
   site?: { key: string; lang: string; name?: string; auto: boolean }[]
   spoken?: string
   hls?: string; height?: number; heights?: number[]
@@ -622,6 +624,11 @@ export function LiveView(props: LiveViewInjected) {
                         style={subStyle} onStyle={setSubStyle} t={t} />
                     </>
                   ),
+                },
+                {
+                  id: 'restream', icon: <Icon.push />, title: t('menu.restream'),
+                  label: job.restream?.running ? t('rs.live') : undefined, on: !!job.restream?.running,
+                  content: <RestreamPanel jobId={job.id} status={job.restream} now={now} style={subStyle} t={t} />,
                 },
                 {
                   id: 'download', icon: <Icon.download />, title: t('menu.download'), content: (

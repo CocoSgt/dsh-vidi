@@ -14,6 +14,7 @@ import { exportCues, type ExportFormat } from './export.ts'
 import { Glossary } from './glossary.ts'
 import { LiveJob } from './job.ts'
 import { Downloads } from './downloads.ts'
+import { Targets } from './restream.ts'
 import { KeyStore, type Credentials, type DshProvider } from './keys.ts'
 import { installedBrowsers, type CookieChoice } from './sites.ts'
 import { LocalProvider } from './providers/local.ts'
@@ -155,6 +156,7 @@ export function apply(ctx: Context, config: Config): void {
   const translator = new Translator(() => llm)
 
   // Online speech keys come from DSH's own key store (shared with the Models page) when the host has one.
+  const restreamTargets = new Targets(join(config.dataDir, 'restream.json'))
   const keys = new KeyStore(join(config.dataDir, 'keys.json'), () => ({ openai: config.openaiApiKey }))
   // Model providers set up in DSH (Models page): the ones that also do speech recognition lend their key and address.
   keys.discover = () => {
@@ -481,6 +483,36 @@ export function apply(ctx: Context, config: Config): void {
           tgtLangs: Array.isArray(b.tgtLangs) ? (b.tgtLangs as unknown[]).map(String).slice(0, 4) : [config.defaultTargetLang],
           provider: typeof b.provider === 'string' ? b.provider : 'local', conversationId: String(b.conversationId ?? 'default'),
         }))
+      }
+      if (route === 'restream/targets') {
+        // GET: saved destinations (keys masked). POST { target } adds/changes one, { remove: id } deletes one.
+        if (req.method === 'POST') {
+          const b = await readJson(req)
+          try {
+            if (typeof b.remove === 'string') return send(res, 200, { targets: restreamTargets.remove(b.remove) })
+            return send(res, 200, { targets: restreamTargets.save((b.target ?? {}) as Record<string, string>) })
+          } catch (err) { return send(res, 400, { error: (err as Error).message }) }
+        }
+        return send(res, 200, { targets: restreamTargets.view() })
+      }
+      if (route === 'restream' && req.method === 'POST') {
+        // { jobId, action: 'start', targets: [ids], from, burn, style, height } | { jobId, action: 'stop', targetId? }
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        if (b.action === 'stop') { await job.stopRestream(typeof b.targetId === 'string' ? b.targetId : undefined); return send(res, 200, job.summary()) }
+        const ids = Array.isArray(b.targets) ? (b.targets as unknown[]).map(String) : []
+        const chosen = restreamTargets.list().filter(t => ids.includes(t.id))
+        if (!chosen.length) return send(res, 400, { error: 'choose where to stream first' })
+        try {
+          await job.startRestream(chosen, {
+            from: typeof b.from === 'number' ? b.from : 0,
+            burn: b.burn !== false,
+            style: b.style as never,
+            height: b.height === 1080 ? 1080 : 720,
+          })
+        } catch (err) { return send(res, 400, { error: (err as Error).message }) }
+        return send(res, 200, job.summary())
       }
       if (route === 'models') {
         // The models DSH has, for the subtitle-model picker; image = it can look at frames.

@@ -330,6 +330,44 @@ const CSS = `
 .dshl-submenu .seg button.on { background: rgba(255,255,255,.92); color: #111; font-weight: 600; }
 
 /* Download (inside the dark menu) */
+/* Restream (player menu) */
+.dshl-rs { display: grid; gap: 10px; padding: 0 6px; }
+.dshl-rs .rs-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12.5px; }
+.dshl-rs .rs-head .dshl-link { flex: none; font-size: 12.5px; }
+.dshl-rs .rs-list { display: grid; gap: 2px; margin: 0 -6px; }
+.dshl-rs .rs-row { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 6px 4px 10px; border-radius: 8px; }
+.dshl-rs .rs-row:hover { background: var(--hover); }
+.dshl-rs .rs-row input[type=checkbox], .dshl-rs .rs-check input { width: 16px; height: 16px; margin: 0; flex: none; accent-color: #3d6df2; cursor: pointer; }
+.dshl-rs .rs-name { display: grid; flex: 1; min-width: 0; font-size: 13.5px; font-weight: 550; }
+.dshl-rs .rs-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; font-weight: 400; }
+.dshl-rs .rs-tools { display: flex; gap: 2px; opacity: .65; }
+.dshl-rs .rs-row:hover .rs-tools { opacity: 1; }
+.dshl-rs button.ghost { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.dshl-rs button.ghost:hover { background: var(--l2); color: var(--ink); }
+.dshl-rs .rs-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--faint); }
+.dshl-rs .rs-dot.live { background: #2fbf71; box-shadow: 0 0 0 3px rgba(47,191,113,.2); }
+.dshl-rs .rs-dot.connecting, .dshl-rs .rs-dot.retrying { background: #f5a524; animation: dshl-pulse 1.4s ease-in-out infinite; }
+.dshl-rs .rs-dot.error { background: #ff5a5f; }
+.dshl-rs .rs-state { flex: none; color: var(--muted); font-size: 12px; }
+.dshl-rs .rs-state.live { color: #5fd897; }
+.dshl-rs .rs-state.error { color: #ff7a7e; }
+.dshl-rs .rs-opts { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; }
+.dshl-rs .rs-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.dshl-rs .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--l2); }
+.dshl-rs .seg button { height: 26px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+.dshl-rs .seg button.on { background: rgba(255,255,255,.92); color: #111; font-weight: 600; }
+.dshl-rs .dshl-btn.block { height: 38px; justify-content: center; }
+.dshl-rs .dshl-btn.rs-stop { border-color: transparent; background: #e5484d; color: #fff; }
+.dshl-rs .rs-hint { margin: 0; color: var(--faint); font-size: 12px; line-height: 1.55; }
+.dshl-rs .rs-err { margin: 0; color: #ff8f92; font-size: 12px; line-height: 1.55; }
+.dshl-rs .rs-field { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+.dshl-rs .rs-field input, .dshl-rs .rs-field select { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--l1); color: var(--ink); font: inherit; font-size: 13px; }
+.dshl-rs .rs-field select { padding-right: 28px; background-color: var(--l1); background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2710%27 height=%276%27%3E%3Cpath d=%27M1 1l4 4 4-4%27 fill=%27none%27 stroke=%27%23aaa%27 stroke-width=%271.5%27/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; appearance: none; }
+.dshl-rs .rs-field input:focus, .dshl-rs .rs-field select:focus { outline: none; border-color: var(--accent); }
+.dshl-rs .rs-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.dshl-menu.sheet .dshl-rs .rs-row { min-height: 50px; }
+.dshl-menu.sheet .dshl-rs .rs-field input, .dshl-menu.sheet .dshl-rs .rs-field select { height: 42px; font-size: 15px; }
+.dshl-menu.sheet .dshl-rs .dshl-btn.block { height: 46px; font-size: 15px; }
 .dshl-dl { display: grid; gap: 14px; padding: 0 6px; }
 .dshl-dl .grp { display: grid; gap: 8px; }
 .dshl-dl .cap { color: var(--muted); font-size: 12px; font-weight: 550; }

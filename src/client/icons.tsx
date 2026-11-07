@@ -21,6 +21,7 @@ export const Icon = {
   push: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><circle cx="12" cy="12" r="2" /><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8" /></svg>,
   folder: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>,
   plus: () => <svg viewBox="0 0 24 24" width="14" height="14" {...P}><path d="M12 5v14M5 12h14" /></svg>,
+  pencil: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></svg>,
   close: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><path d="M6 6l12 12M18 6L6 18" /></svg>,
   lock: () => <svg viewBox="0 0 24 24" width="22" height="22" {...P}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>,
   camera: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></svg>,

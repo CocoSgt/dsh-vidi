@@ -52,7 +52,8 @@
   "dependencies": {
     "@deepseek-ai/cordis": "^4.1.0",
     "@deepseek-ai/dsh-llm": "0.0.1-rc.1",
-    "@deepseek-ai/schemastery": "^3.19.0"
+    "@deepseek-ai/schemastery": "^3.19.0",
+    "@napi-rs/canvas": "1.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -64,5 +65,15 @@
     "tsdown": "^0.22.14",
     "typescript": "^5.9.2"
   },
-  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "video", "live", "stream", "subtitles", "translation", "podcast"]
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "video",
+    "live",
+    "stream",
+    "subtitles",
+    "translation",
+    "podcast"
+  ]
 }

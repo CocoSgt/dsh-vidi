@@ -3,13 +3,14 @@ import { EventEmitter } from 'node:events'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
-import { defaultExports, exportCues, type ExportFormat } from './export.ts'
+import { defaultExports, exportCues, subtitleText, type ExportFormat } from './export.ts'
 import type { Glossary } from './glossary.ts'
 import { Polisher } from './polish.ts'
 import { fetchComments, ffmpegInput, LoginRequired, resolveSite, type CookieChoice } from './sites.ts'
 import { translateBatch, type LlmHandle } from './translate.ts'
 import { fetchSiteSubs, loadSiteSubs, type SiteCue, type SiteTrack } from './sitesubs.ts'
 import type { Translator } from './translate.ts'
+import { Restream, type BurnStyle, type RestreamStatus, type Target } from './restream.ts'
 import type { Cue, JobOptions, JobStatus, JobSummary, ProviderCue, SpeechProvider, SubsState } from './types.ts'
 import type { UsageMeter } from './usage.ts'
 
@@ -130,7 +131,7 @@ export class LiveJob extends EventEmitter {
       startedAt: this.startedAt, dir: this.deps.dir, cueCount: this.cues.length,
       files: existsSync(this.deps.dir) ? readdirSync(this.deps.dir).filter(f => /\.(mp4|m4a|srt|vtt|txt|md|json|jsonl)$/.test(f)) : [],
       ingest: this.ingest, vod: this.vod, duration: this.duration, loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
-      hls: this.hlsName, height: this.height, heights: this.heights,
+      hls: this.hlsName, height: this.height, heights: this.heights, restream: this.restream,
       subs: { ...this.subs }, usage: this.deps.usage.summary(), site: this.siteTracks, spoken: this.spokenLang(),
     }
   }
@@ -634,8 +635,64 @@ export class LiveJob extends EventEmitter {
 
   /** Stop everything (closing the job): recording and subtitles. */
   async close(reason = 'closed'): Promise<void> {
+    await this.restreamer?.stop()
     await this.stop(reason)
     await this.pauseSubs()
+  }
+
+  // ── Restreaming ──
+
+  private restreamer?: Restream
+
+  get restream(): RestreamStatus | undefined { return this.restreamer?.summary }
+
+  /** Push this video (from media time `from`, subtitles drawn in) to the chosen destinations. */
+  async startRestream(targets: Target[], opts: { from: number; burn: boolean; style: BurnStyle; height: 720 | 1080 }): Promise<void> {
+    if (this.restreamer?.summary.running) { for (const t of targets) this.restreamer.add(t); return }
+    if (!this.segments().length) throw new Error('nothing recorded yet')
+    const r = new Restream({
+      input: from => this.restreamInput(from),
+      rowsAt: t => this.rowsAt(t, opts.style),
+    }, { ...opts, bitrateK: opts.height === 1080 ? 4500 : 2500 }, targets, m => this.deps.log(`[${this.id}] ${m}`))
+    this.restreamer = r
+    r.on('status', () => this.emit('state', this.summary()))
+    await r.start()
+  }
+
+  async stopRestream(targetId?: string): Promise<void> {
+    if (!this.restreamer) return
+    if (targetId && !this.restreamer.drop(targetId)) return
+    await this.restreamer.stop()
+  }
+
+  /** The recording from `from` on, for an ffmpeg that reads it in real time. */
+  private restreamInput(from: number): { args: string[]; at: number } {
+    const segs = this.segments()
+    const finished = readFileSync(this.m3u8, 'utf8').includes('#EXT-X-ENDLIST')
+    if (finished) return { args: ['-ss', String(Math.max(0, from)), '-i', this.m3u8], at: Math.max(0, from) }
+    const i = Math.max(0, segs.findLastIndex(sg => sg.start <= from))
+    return { args: ['-live_start_index', String(i), '-max_reload', '100000', '-i', this.m3u8], at: segs[i]?.start ?? 0 }
+  }
+
+  /** What the player would show at media time t, line by line (the same rules: no repeats, line-end marks dropped). */
+  private rowsAt(t: number, style: BurnStyle): { text: string; size: number; main: boolean }[] {
+    const cue = this.cues.find(c => c.final && c.start <= t && t < Math.max(c.end, c.start + 1.2))
+    const text = (key: string): string | undefined => {
+      if (key.startsWith('site:')) return this.siteCues.get(key)?.find(c => c.start <= t && t < c.end)?.text
+      if (!cue) return undefined
+      if (key === 'src') return cue.src
+      const tr = cue.tr?.[key]
+      return tr && tr.trim() !== cue.src.trim() ? tr : (cue.lang?.split('-')[0] === key.split('-')[0] ? cue.src : undefined)
+    }
+    const seen = new Set<string>()
+    const rows: { text: string; size: number; main: boolean }[] = []
+    for (const l of style.lines) {
+      const x = l.show ? text(l.key)?.trim() : undefined
+      if (!x || seen.has(x)) continue
+      seen.add(x)
+      rows.push({ text: subtitleText(x), size: l.size, main: rows.length === 0 })
+    }
+    return rows
   }
 
   /** Write the default subtitle and transcript set (source, each target, multilingual). */

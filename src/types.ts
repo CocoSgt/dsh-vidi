@@ -78,6 +78,8 @@ export interface JobSummary extends JobOptions {
   needsLogin?: { site: string; browser?: string; detail: string }
   subs?: { state: SubsState; at: number }
   usage?: import('./usage.ts').UsageSummary
+  /** Restreaming to other platforms, while it runs (and its last state after). */
+  restream?: import('./restream.ts').RestreamStatus
   site?: import('./sitesubs.ts').SiteTrack[]
   /** HLS folder being watched, its picture height, and the heights the site offers. */
   hls?: string
