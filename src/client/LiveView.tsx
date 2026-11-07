@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { frameStore, onOpenRequest } from './bus.ts'
 import { ChatPanel, type SessionFaceLike } from './ChatPanel.tsx'
@@ -9,6 +9,7 @@ import { SubtitleMenu } from './SubtitleMenu.tsx'
 import type { LiveKey } from './locales.ts'
 import { LoginDialog } from './LoginDialog.tsx'
 import { Player, type CueLike, type PlayerHandle, type PlayerMenu } from './Player.tsx'
+import { vidiUi, type VidiView } from './extensions.ts'
 import { RestreamPanel, type RestreamStatus } from './RestreamPanel.tsx'
 import { engineLabel, Settings, type Browser, type Provider } from './Settings.tsx'
 import { loadStyle, reconcile, saveStyle, type SubStyle } from './subStyle.tsx'
@@ -36,7 +37,7 @@ interface Task { id: string; url?: string; kind: 'original' | 'subtitled' | 'vid
 interface Term { src: string; tr: Record<string, string>; origin: 'auto' | 'user' }
 interface Dep { name: string; ok: boolean; hint?: string }
 interface Armed { jobId: string; rtmp?: string; key?: string }
-type Tab = 'transcript' | 'glossary'
+type Tab = string
 
 export interface LiveViewInjected {
   sessionId: string
@@ -496,12 +497,19 @@ export function LiveView(props: LiveViewInjected) {
   )
   /** On the video page the tools share the tab row, leaving the height to the lines. */
   const inline = pageMode && tab === 'transcript' && !!job
+  // Companion plugins' tabs and player menus, and what they see of this video.
+  const extPanels = useSyncExternalStore(vidiUi.panels.subscribe, vidiUi.panels.get)
+  const extMenus = useSyncExternalStore(vidiUi.playerMenus.subscribe, vidiUi.playerMenus.get)
+  const view: VidiView | undefined = job ? { job, cues, sessionId, now, seek: s => player.current?.seek(s), style: subStyle, lines: shownLines, ui } : undefined
   /** Subtitle lines and glossary: under the player on the video page, beside it in a conversation. */
   const transcriptBox = (
     <>
       <div className="dshl-sidetabs" role="tablist">
         {(['transcript', 'glossary'] as Tab[]).map(k => (
           <button key={k} role="tab" className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{t(`tab.${k}` as LiveKey)}</button>
+        ))}
+        {job && extPanels.map(p => (
+          <button key={p.id} role="tab" className={tab === p.id ? 'on' : ''} onClick={() => setTab(p.id)}>{p.label(ui)}</button>
         ))}
         {inline && <div className="dshl-tools inline">{trMode === 'lines' && trSearch}{trSeg}{trAction}</div>}
       </div>
@@ -551,6 +559,7 @@ export function LiveView(props: LiveViewInjected) {
         </div>
       )}
 
+      {job && view && extPanels.filter(p => p.id === tab).map(p => <div key={p.id} className="dshl-panel dshl-ext">{p.render(view)}</div>)}
       {tab === 'glossary' && job && <GlossaryPanel jobId={job.id} terms={terms} targets={job.tgtLangs} langName={langName} t={t} onTerms={setTerms} />}
     </>
   )
@@ -630,6 +639,7 @@ export function LiveView(props: LiveViewInjected) {
                   label: job.restream?.running ? t('rs.live') : undefined, on: !!job.restream?.running,
                   content: <RestreamPanel jobId={job.id} status={job.restream} now={now} style={subStyle} t={t} />,
                 },
+                ...extMenus.map(m => ({ id: `ext:${m.id}`, icon: m.icon, title: m.title(ui), content: view ? m.render(view, () => {}) : null })),
                 {
                   id: 'download', icon: <Icon.download />, title: t('menu.download'), content: (
                     <DownloadPanel job={job} lines={shownLines} tasks={tasks.filter(x => x.dirId === job.id)} sessionId={sessionId}

@@ -8,6 +8,7 @@
 import { onOpenRequest, pageStore } from './bus.ts'
 import { LiveView, type LiveViewInjected } from './LiveView.tsx'
 import { en, NS, zh, type LiveKey } from './locales.ts'
+import { vidiUi } from './extensions.ts'
 import { ensureStyles } from './styles.ts'
 import { openPage, PasteChip, SidebarButton, VideoPage, type SessionsLike } from './VideoPage.tsx'
 
@@ -40,6 +41,8 @@ function sessionsOf(ctx: any, extra: { uiWorkspace?: any; uiConversation?: any }
 export function apply(ctx: any): void {
   ensureStyles()
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-vidi: dictionaries')
+  // Extension points of the video page, for companion plugins (a Studio edition…).
+  ctx.effect(() => ctx.provide('vidiUi', vidiUi), 'dsh-vidi: page extensions')
   const t = ctx.locale.bind(NS) as (key: LiveKey) => string
   // Newer DS-Harness services, picked up when present (older versions have neither).
   const extra: { uiWorkspace?: any; uiConversation?: any } = {}
