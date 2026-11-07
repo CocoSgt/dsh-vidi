@@ -5,13 +5,20 @@ import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { defaultExports, exportCues, type ExportFormat } from './export.ts'
 import type { Glossary } from './glossary.ts'
+import { ffmpegInput, LoginRequired, resolveSite, type CookieChoice } from './sites.ts'
 import type { Translator } from './translate.ts'
 import type { Cue, JobOptions, JobStatus, JobSummary, ProviderCue, SpeechProvider } from './types.ts'
 
 const run = promisify(execFile)
 
 /** URLs ffmpeg can open directly (no yt-dlp resolution). */
-const DIRECT = /^(rtmps?|srt|rtsp|udp):\/\/|\.m3u8(\?|$)|\.mpd(\?|$)/i
+const DIRECT = /^(rtmps?|srt|rtsp|udp):\/\/|\.(m3u8|mpd|mp4|m4v|mov|mkv|webm|mp3|m4a|aac|wav|flac|ogg)(\?|$)/i
+/** Direct URLs that are files (videos) rather than live streams. */
+const FILE_LIKE = /\.(mp4|m4v|mov|mkv|webm|mp3|m4a|aac|wav|flac|ogg)(\?|$)/i
+
+/** Pace for videos: stop reading ahead once recognition or translation is this far behind (seconds / lines). */
+const AHEAD_MAX_SEC = 30
+const AHEAD_MAX_LINES = 10
 
 export interface JobDeps {
   dir: string
@@ -20,7 +27,9 @@ export interface JobDeps {
   glossary: Glossary
   log: (msg: string) => void
   /** Listening addresses for push sources. */
-  ingest: { host: string; rtmpPort: number; srtPort: number }
+  ingest: { host: string; rtmpPort: number; srtPort: number; key?: string }
+  /** Whose browser login to use for sites that need one. */
+  cookies: () => CookieChoice
 }
 
 interface Input {
@@ -30,6 +39,8 @@ interface Input {
   audio: string
   /** Map spec for the video stream, or undefined for audio-only sources. */
   video?: string
+  /** Video codec, when known; anything but H.264 is re-encoded for the browser. */
+  vcodec?: string
 }
 
 /**
@@ -52,6 +63,11 @@ export class LiveJob extends EventEmitter {
   private drafts = new Map<string, number>()
   ingest?: { rtmp?: string; srt?: string; key?: string }
   private translating: Promise<void> = Promise.resolve()
+  private pendingTranslations = 0
+  vod = false
+  duration?: number
+  private loginBrowser?: string
+  private needsLogin?: JobSummary['needsLogin']
 
   constructor(id: string, readonly opts: JobOptions, private readonly deps: JobDeps) {
     super()
@@ -64,7 +80,7 @@ export class LiveJob extends EventEmitter {
       ...this.opts, id: this.id, status: this.status, message: this.message, title: this.title,
       startedAt: this.startedAt, dir: this.deps.dir, cueCount: this.cues.length,
       files: existsSync(this.deps.dir) ? readdirSync(this.deps.dir).filter(f => /\.(mp4|m4a|srt|vtt|txt|md|json|jsonl)$/.test(f)) : [],
-      ingest: this.ingest,
+      ingest: this.ingest, vod: this.vod, duration: this.duration, loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
     }
   }
 
@@ -75,13 +91,16 @@ export class LiveJob extends EventEmitter {
     this.emit('state', this.summary())
   }
 
-  /** Does this input have a video stream? (Audio files and some URLs do not.) */
-  private async hasVideo(input: string): Promise<boolean> {
+  /** Video codec and duration of a file or URL (no video → vcodec undefined). */
+  private async probe(input: string): Promise<{ vcodec?: string; duration?: number; ok: boolean }> {
     try {
-      const { stdout } = await run('ffprobe', ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', input], { timeout: 30_000 })
-      return stdout.includes('video')
+      const { stdout } = await run('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name:format=duration', '-of', 'json', input], { timeout: 30_000 })
+      const j = JSON.parse(stdout) as { streams?: { codec_type: string; codec_name: string }[]; format?: { duration?: string } }
+      const v = j.streams?.find(s => s.codec_type === 'video' && !/^(mjpeg|png)$/.test(s.codec_name))
+      const d = Number(j.format?.duration)
+      return { vcodec: v?.codec_name, duration: isFinite(d) && d > 0 ? d : undefined, ok: true }
     } catch {
-      return true
+      return { ok: false }
     }
   }
 
@@ -94,11 +113,14 @@ export class LiveJob extends EventEmitter {
       if (!existsSync(url)) throw new Error(`file not found: ${url}`)
       // Uploads are stored as "<timestamp>-<name>"; show the original name.
       this.title = basename(url).replace(/^\d{10,}-/, '')
-      // -re: play the file at its natural pace so it behaves like a live stream.
-      return { args: [...q, '-re', '-i', url], audio: '0:a:0', video: (await this.hasVideo(url)) ? '0:v:0' : undefined }
+      // A file is a video: read it as fast as recognition keeps up (paced in spawnFfmpeg), play from the start.
+      const p = await this.probe(url)
+      this.vod = true
+      this.duration = p.duration
+      return { args: [...q, '-i', url], audio: '0:a:0', video: p.vcodec ? '0:v:0' : undefined, vcodec: p.vcodec }
     }
     if (source === 'push') {
-      const key = this.id.slice(-4)
+      const key = this.deps.ingest.key ?? this.id.slice(-4)
       const { host, rtmpPort, srtPort } = this.deps.ingest
       if (url === 'srt') {
         this.ingest = { srt: `srt://${host}:${srtPort}?streamid=${key}`, key }
@@ -108,18 +130,29 @@ export class LiveJob extends EventEmitter {
       return { args: [...q, '-listen', '1', '-i', `rtmp://0.0.0.0:${rtmpPort}/live/${key}`], audio: '0:a:0', video: '0:v:0?' }
     }
     if (DIRECT.test(url)) {
-      return { args: [...(/^https?:/.test(url) ? net : []), ...q, '-i', url], audio: '0:a:0', video: (await this.hasVideo(url)) ? '0:v:0' : undefined }
+      const p = await this.probe(url)
+      this.vod = FILE_LIKE.test(url)
+      if (this.vod) this.duration = p.duration
+      return { args: [...(/^https?:/.test(url) ? net : []), ...q, '-i', url], audio: '0:a:0', video: p.ok && !p.vcodec ? undefined : '0:v:0?', vcodec: p.vcodec }
     }
-    try {
-      const { stdout } = await run('yt-dlp', ['--no-warnings', '--print', '%(title)s', '--skip-download', '--no-playlist', url], { timeout: 60_000 })
-      this.title = stdout.trim().split('\n')[0]
-    } catch {}
-    const { stdout } = await run('yt-dlp', ['--no-warnings', '--no-playlist', '-f', 'b[height<=720]/bv*[height<=720]+ba/b/ba', '-g', url], { timeout: 90_000 })
-    const urls = stdout.trim().split('\n').filter(Boolean).slice(0, 2)
-    if (!urls.length) throw new Error('yt-dlp returned no stream URL (is the stream live?)')
-    const args = urls.flatMap(u => [...(/^https?:/.test(u) ? net : []), ...q, '-i', u])
-    if (urls.length === 2) return { args, video: '0:v:0', audio: '1:a:0' }
-    return { args, audio: '0:a:0', video: (await this.hasVideo(urls[0]!)) ? '0:v:0' : undefined }
+    // Any yt-dlp site (YouTube, Bilibili, …): one call gives title, live/video, length, stream URLs and the headers they need.
+    const r = await resolveSite(url, this.deps.cookies(), this.deps.log, browser => {
+      this.loginBrowser = browser
+      this.emit('state', this.summary())
+    })
+    this.title = r.title
+    this.vod = !r.isLive
+    this.duration = r.duration
+    this.loginBrowser = r.cookiesFrom
+    const args = r.inputs.flatMap(ffmpegInput)
+    if (r.inputs.length >= 2) {
+      const vi = r.inputs.findIndex(i => i.vcodec && i.vcodec !== 'none')
+      const v = vi < 0 ? 0 : vi
+      return { args, video: `${v}:v:0`, audio: `${v === 0 ? 1 : 0}:a:0`, vcodec: r.inputs[v]!.vcodec }
+    }
+    const only = r.inputs[0]!
+    const audioOnly = only.vcodec === 'none'
+    return { args, audio: '0:a:0', video: audioOnly ? undefined : '0:v:0?', vcodec: audioOnly ? undefined : only.vcodec }
   }
 
   async start(): Promise<void> {
@@ -130,6 +163,7 @@ export class LiveJob extends EventEmitter {
       this.spawnFfmpeg(input)
       this.setStatus('running', this.opts.source === 'push' ? 'waiting for the incoming stream' : undefined)
     } catch (err) {
+      if (err instanceof LoginRequired) this.needsLogin = { site: err.site, browser: err.triedBrowser, detail: err.message.replace(/^login required:\s*/, '') }
       this.setStatus('error', (err as Error).message)
     }
   }
@@ -147,8 +181,10 @@ export class LiveJob extends EventEmitter {
   private spawnFfmpeg(input: Input): void {
     const hls = join(this.deps.dir, 'hls')
     // Audio-only sources get a generated picture (waveform) so they play and export as video.
+    // H.264 copies straight into HLS; other codecs (AV1, VP9, HEVC) are re-encoded so every browser can play them.
+    const h264 = !input.vcodec || /^(h264|avc)/i.test(input.vcodec)
     const picture = input.video
-      ? ['-map', input.video, '-c:v', 'copy']
+      ? ['-map', input.video, ...(h264 ? ['-c:v', 'copy'] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-vf', 'scale=-2:min(720\\,ih)', '-g', '50'])]
       : ['-filter_complex', [
           'color=c=0x0f1420:s=1280x720:r=25[bg]',
           // showwaves ignores hex colours in some builds, so draw white and tint it.
@@ -171,12 +207,26 @@ export class LiveJob extends EventEmitter {
     ff.stdout!.on('data', (pcm: Buffer) => {
       if (first) { first = false; if (this.message) this.setStatus('running') }
       this.deps.provider.push(pcm)
+      // Videos are read faster than real time; pause reading (ffmpeg then waits too) while recognition or translation catches up.
+      if (this.vod && !ff.stdout!.isPaused() && this.behind()) {
+        ff.stdout!.pause()
+        const resume = setInterval(() => {
+          if (this.ffmpeg !== ff) { clearInterval(resume); return }
+          if (!this.behind(0.5)) { clearInterval(resume); ff.stdout!.resume() }
+        }, 300)
+      }
     })
     ff.stderr!.on('data', (d: Buffer) => appendFileSync(join(this.deps.dir, 'ffmpeg.log'), d))
     ff.on('exit', code => {
       this.ffmpeg = undefined
       if (this.status === 'running') void this.stop(code === 0 ? 'stream ended' : this.ffmpegError(code))
     })
+  }
+
+  /** Is recognition or translation too far behind the media read so far? (`slack` < 1 waits until it is well caught up.) */
+  private behind(slack = 1): boolean {
+    const asr = this.deps.provider.backlog?.() ?? 0
+    return asr > AHEAD_MAX_SEC * slack || this.pendingTranslations > AHEAD_MAX_LINES * slack
   }
 
   /** Provider cues: drafts are revised in place by key; finals get translated. */
@@ -203,6 +253,7 @@ export class LiveJob extends EventEmitter {
   private translate(cue: Cue): void {
     const context = this.cues.filter(c => c.final && c.id < cue.id).slice(-6)
     // Keep order but let a slow model fall behind gracefully: chain, never block capture.
+    this.pendingTranslations++
     this.translating = this.translating.then(async () => {
       try {
         const tr = await this.deps.translator.translate(this.opts.tgtLangs, cue.src, context, this.deps.glossary.forPrompt())
@@ -213,6 +264,7 @@ export class LiveJob extends EventEmitter {
       } catch (err) {
         this.deps.log(`[${this.id}] translate: ${(err as Error).message}`)
       }
+      this.pendingTranslations--
       this.record(cue)
       this.deps.glossary.noteFinished(this.cues.filter(c => c.final))
     })

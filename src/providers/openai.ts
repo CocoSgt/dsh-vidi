@@ -152,6 +152,14 @@ export class OpenAIProvider implements SpeechProvider {
     this.send({ type: 'input_audio_buffer.append', audio: this.up.push(Buffer.from(part)).toString('base64') })
   }
 
+  /** Committed audio still waiting for its transcript, plus the turn being collected. */
+  backlog(): number {
+    let sec = this.chunker.now - this.chunker.openStart
+    for (const it of this.items.values()) if (it.committed) sec += it.end - it.start
+    for (const c of this.commits) sec += c.end - c.start
+    return sec
+  }
+
   private onChunk({ start, end, level }: Chunk): void {
     this.sendUntil(end)
     if (level < 0.006) {

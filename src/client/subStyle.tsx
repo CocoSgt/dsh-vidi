@@ -14,30 +14,31 @@ export interface SubStyle {
 
 const STORE = 'dsh-live.subStyle'
 
-export function defaultStyle(targets: string[]): SubStyle {
+/** First line is the main one (largest); the original, when not first, is the smallest. */
+const sizeFor = (key: string, i: number) => (i === 0 ? 3.6 : key === 'src' ? 2.4 : 3)
+
+/** `lines`: the subtitle lines the user picked, top to bottom ('src' = original). */
+export function defaultStyle(lines: string[]): SubStyle {
+  return { lines: lines.map((k, i) => ({ key: k, show: true, size: sizeFor(k, i) })), position: 'bottom', offset: 5, bg: 0.62 }
+}
+
+/** Follow the picked lines and their order, keeping saved sizes for lines that stay. */
+export function reconcile(style: SubStyle, lines: string[]): SubStyle {
   return {
-    lines: [...targets.map((k, i) => ({ key: k, show: true, size: i === 0 ? 3.6 : 3 })), { key: 'src', show: true, size: 2.4 }],
-    position: 'bottom',
-    offset: 5,
-    bg: 0.62,
+    ...style,
+    lines: lines.map((k, i) => {
+      const old = style.lines.find(l => l.key === k)
+      return old ? { ...old, show: true } : { key: k, show: true, size: sizeFor(k, i) }
+    }),
   }
 }
 
-/** Keep saved preferences, but make sure every current target language has a line and stale ones are dropped. */
-export function reconcile(style: SubStyle, targets: string[]): SubStyle {
-  const want = new Set(['src', ...targets])
-  const lines = style.lines.filter(l => want.has(l.key))
-  for (const k of targets) if (!lines.some(l => l.key === k)) lines.splice(lines.findIndex(l => l.key === 'src'), 0, { key: k, show: true, size: 3 })
-  if (!lines.some(l => l.key === 'src')) lines.push({ key: 'src', show: true, size: 2.4 })
-  return { ...style, lines }
-}
-
-export function loadStyle(targets: string[]): SubStyle {
+export function loadStyle(lines: string[]): SubStyle {
   try {
     const raw = localStorage.getItem(STORE)
-    if (raw) return reconcile(JSON.parse(raw) as SubStyle, targets)
+    if (raw) return reconcile(JSON.parse(raw) as SubStyle, lines)
   } catch {}
-  return defaultStyle(targets)
+  return defaultStyle(lines)
 }
 
 export function saveStyle(style: SubStyle): void {
@@ -80,33 +81,31 @@ export function SubtitleSettings(props: {
     onChange({ ...style, lines })
   }
   return (
-    <div className="dshl-card dshl-subcfg">
-      <h3>{t('sub.lines')}</h3>
+    <div className="dshl-subcfg">
+      <h3>{t('sub.size')}</h3>
       {style.lines.map((l, i) => (
-        <div className="row" key={l.key}>
-          <input type="checkbox" checked={l.show} onChange={e => setLine(i, { show: e.target.checked })} />
+        <div className="opt" key={l.key}>
           <span>{l.key === 'src' ? t('sub.source') : langName(l.key)}</span>
-          <input type="range" min={1.4} max={6} step={0.1} value={l.size} title={`${t('sub.size')} ${l.size}`} onChange={e => setLine(i, { size: Number(e.target.value) })} />
-          <button className="mini" title={t('sub.up')} onClick={() => move(i, -1)}>↑</button>
-          <button className="mini" title={t('sub.down')} onClick={() => move(i, 1)}>↓</button>
+          <input type="range" min={1.4} max={6} step={0.1} value={l.size} onChange={e => setLine(i, { size: Number(e.target.value) })} />
         </div>
       ))}
+      <h3>{t('sub.position')}</h3>
       <div className="opt">
-        <span>{t('sub.position')}</span>
+        <span />
         <span className="dshl-seg">
           <button className={style.position === 'bottom' ? 'on' : ''} onClick={() => onChange({ ...style, position: 'bottom' })}>{t('pos.bottom')}</button>
           <button className={style.position === 'top' ? 'on' : ''} onClick={() => onChange({ ...style, position: 'top' })}>{t('pos.top')}</button>
         </span>
       </div>
       <div className="opt">
-        <span>{t('sub.offset')} {style.offset}%</span>
+        <span>{t('sub.offset')}</span>
         <input type="range" min={0} max={40} step={1} value={style.offset} onChange={e => onChange({ ...style, offset: Number(e.target.value) })} />
       </div>
       <div className="opt">
-        <span>{t('sub.bg')} {Math.round(style.bg * 100)}%</span>
+        <span>{t('sub.bg')}</span>
         <input type="range" min={0} max={1} step={0.05} value={style.bg} onChange={e => onChange({ ...style, bg: Number(e.target.value) })} />
       </div>
-      <button className="dshl-btn" onClick={onReset}>{t('sub.reset')}</button>
+      <button className="dshl-link" onClick={onReset}>{t('sub.reset')}</button>
     </div>
   )
 }
@@ -114,13 +113,10 @@ export function SubtitleSettings(props: {
 export type PresetName = 'everyday' | 'present' | 'single'
 
 /** Quick presets: everyday viewing, big presentation text, minimal single line. */
-export function preset(name: PresetName, targets: string[]): SubStyle {
-  const base = defaultStyle(targets)
-  if (name === 'present') {
-    return { ...base, offset: 6, bg: 0.78, lines: base.lines.map(l => ({ ...l, size: l.key === 'src' ? 3.4 : l.key === targets[0] ? 5.4 : 4.2 })) }
-  }
-  if (name === 'single') {
-    return { ...base, offset: 4, bg: 0.45, lines: base.lines.map(l => ({ ...l, show: l.key === targets[0], size: 3.8 })) }
-  }
+export function preset(name: PresetName, lines: string[]): SubStyle {
+  const base = defaultStyle(lines)
+  if (name === 'present') return { ...base, offset: 6, bg: 0.78, lines: base.lines.map((l, i) => ({ ...l, size: i === 0 ? 5.4 : 4 })) }
+  // One line: only the first picked line, a bit larger.
+  if (name === 'single') return { ...base, offset: 4, bg: 0.45, lines: base.lines.map((l, i) => ({ ...l, show: i === 0, size: 3.8 })) }
   return base
 }

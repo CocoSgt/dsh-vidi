@@ -19,6 +19,8 @@ export type ProviderCue = Omit<Cue, 'id'> & { key?: string }
 /** A speech provider consumes 16 kHz mono s16le PCM and emits cues. */
 export interface SpeechProvider {
   readonly name: string
+  /** Seconds of audio received but not yet turned into finished lines (used to pace videos). */
+  backlog?(): number
   /** True when the provider already returns translations (no LLM pass needed). */
   readonly translates: boolean
   start(emit: (cue: ProviderCue) => void, onError: (err: Error) => void): Promise<void>
@@ -59,4 +61,12 @@ export interface JobSummary extends JobOptions {
   files: string[]
   /** For push sources: where to send the stream. */
   ingest?: { rtmp?: string; srt?: string; key?: string }
+  /** A video (known length, plays from the start) rather than a live stream. */
+  vod?: boolean
+  /** Length in seconds, when known. */
+  duration?: number
+  /** Browser whose saved login is being used (the OS may ask permission to read it). */
+  loginBrowser?: string
+  /** Set when the site needs a login no browser session provided. */
+  needsLogin?: { site: string; browser?: string; detail: string }
 }

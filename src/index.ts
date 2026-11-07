@@ -3,7 +3,7 @@
  * subtitle translation through the harness model, and the HTTP surface the
  * browser half talks to (/live/api/*, /live/media/*).
  */
-import { appendFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { appendFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir, networkInterfaces } from 'node:os'
 import { extname, join, normalize, resolve, sep } from 'node:path'
@@ -13,7 +13,9 @@ import { checkDeps } from './deps.ts'
 import type { ExportFormat } from './export.ts'
 import { Glossary } from './glossary.ts'
 import { LiveJob } from './job.ts'
+import { Downloads } from './downloads.ts'
 import { KeyStore } from './keys.ts'
+import { installedBrowsers, type CookieChoice } from './sites.ts'
 import { LocalProvider } from './providers/local.ts'
 import { OpenAIProvider, verifyOpenAIKey } from './providers/openai.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
@@ -99,6 +101,13 @@ export function apply(ctx: Context, config: Config): void {
 
   const keys = new KeyStore(join(config.dataDir, 'keys.json'), () => ({ openai: config.openaiApiKey }))
 
+  // Page-level preferences (which browser login to use for video sites).
+  const settingsFile = join(config.dataDir, 'settings.json')
+  const prefs = (): { cookies: CookieChoice } => {
+    try { return { cookies: 'auto', ...JSON.parse(readFileSync(settingsFile, 'utf8')) } } catch { return { cookies: 'auto' } }
+  }
+  const downloads = new Downloads(join(config.dataDir, 'jobs'), () => prefs().cookies, log)
+
   function makeProvider(opts: JobOptions, glossary: Glossary): SpeechProvider {
     switch (opts.provider) {
       case 'openai': {
@@ -128,8 +137,50 @@ export function apply(ctx: Context, config: Config): void {
     return '127.0.0.1'
   }
 
-  async function startJob(opts: JobOptions): Promise<LiveJob> {
-    const prev = byConversation.get(opts.conversationId)
+  /**
+   * The push listener that waits while a Live page is idle. It is a push job
+   * that is not yet the conversation's job: it becomes it the moment a stream
+   * arrives. Only one can hold the RTMP port, so the most recently opened idle
+   * page owns it.
+   */
+  let armed: { conversationId: string; key: string; job: LiveJob } | undefined
+  const PUSH_KEY = 'dsh'
+
+  async function disarm(): Promise<void> {
+    const a = armed
+    armed = undefined
+    if (!a) return
+    await a.job.stop('not needed')
+    jobs.delete(a.job.id)
+    if (a.job.cues.length === 0) rmSync(a.job.summary().dir, { recursive: true, force: true })
+  }
+
+  async function arm(opts: JobOptions): Promise<{ jobId: string; rtmp?: string; key?: string } | { busy: true }> {
+    const streaming = (j: LiveJob) => j.opts.source === 'push' && j.status === 'running' && !j.message
+    if ([...jobs.values()].some(streaming)) return { busy: true }
+    const sig = JSON.stringify({ ...opts, source: 'push' })
+    if (armed && armed.conversationId === opts.conversationId && armed.key === sig && armed.job.status === 'running') {
+      return { jobId: armed.job.id, ...armed.job.ingest }
+    }
+    await disarm()
+    const job = await startJob({ ...opts, source: 'push', url: 'rtmp' }, true)
+    armed = { conversationId: opts.conversationId, key: sig, job }
+    job.on('state', (st: { status: string; message?: string }) => {
+      // The stream arrived: from now on this is the conversation's job.
+      if (st.status === 'running' && !st.message && armed?.job === job) {
+        armed = undefined
+        const prev = byConversation.get(opts.conversationId)
+        if (prev && prev !== job.id) void jobs.get(prev)?.stop('replaced by a new stream')
+        byConversation.set(opts.conversationId, job.id)
+      }
+    })
+    // Wait for the listening address.
+    for (let i = 0; i < 20 && !job.ingest; i++) await new Promise(r => setTimeout(r, 50))
+    return { jobId: job.id, ...job.ingest }
+  }
+
+  async function startJob(opts: JobOptions, waiting = false): Promise<LiveJob> {
+    const prev = waiting ? undefined : byConversation.get(opts.conversationId)
     if (prev) await jobs.get(prev)?.stop('replaced by a new stream')
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const id = `${stamp}-${Math.random().toString(36).slice(2, 6)}`
@@ -143,10 +194,11 @@ export function apply(ctx: Context, config: Config): void {
       translator,
       glossary,
       log,
-      ingest: { host: lanAddress(), rtmpPort: config.rtmpPort, srtPort: config.srtPort },
+      ingest: { host: lanAddress(), rtmpPort: config.rtmpPort, srtPort: config.srtPort, key: waiting ? PUSH_KEY : undefined },
+      cookies: () => prefs().cookies,
     })
     jobs.set(id, job)
-    byConversation.set(opts.conversationId, id)
+    if (!waiting) byConversation.set(opts.conversationId, id)
     void job.start()
     return job
   }
@@ -190,14 +242,17 @@ export function apply(ctx: Context, config: Config): void {
         const b = await readJson(req)
         if (typeof b.url !== 'string' || !b.url.trim()) return send(res, 400, { error: 'url required' })
         const source: SourceKind = b.source === 'push' || b.source === 'file' ? b.source : 'url'
+        await disarm()
+        const raw = b.url.trim()
         const job = await startJob({
           source,
-          url: b.url.trim(),
+          url: source === 'file' && raw.startsWith('~') ? join(homedir(), raw.slice(1)) : raw,
           mode: b.mode === 'polished' ? 'polished' : 'realtime',
           srcLang: typeof b.srcLang === 'string' ? b.srcLang : 'auto',
-          tgtLangs: Array.isArray(b.tgtLangs) && b.tgtLangs.length
+          // Empty = original only (no translation).
+          tgtLangs: Array.isArray(b.tgtLangs)
             ? (b.tgtLangs as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 4)
-            : [typeof b.tgtLang === 'string' ? b.tgtLang : config.defaultTargetLang],
+            : [config.defaultTargetLang],
           provider: typeof b.provider === 'string' ? b.provider : 'local',
           conversationId: String(b.conversationId ?? 'default'),
         })
@@ -209,6 +264,50 @@ export function apply(ctx: Context, config: Config): void {
         if (!job) return send(res, 404, { error: 'no such job' })
         void job.stop()
         return send(res, 200, job.summary())
+      }
+      if (route === 'arm' && req.method === 'POST') {
+        const b = await readJson(req)
+        return send(res, 200, await arm({
+          source: 'push', url: 'rtmp', mode: b.mode === 'polished' ? 'polished' : 'realtime',
+          srcLang: typeof b.srcLang === 'string' ? b.srcLang : 'auto',
+          tgtLangs: Array.isArray(b.tgtLangs) ? (b.tgtLangs as unknown[]).map(String).slice(0, 4) : [config.defaultTargetLang],
+          provider: typeof b.provider === 'string' ? b.provider : 'local', conversationId: String(b.conversationId ?? 'default'),
+        }))
+      }
+      if (route === 'settings') {
+        if (req.method === 'POST') {
+          const b = await readJson(req)
+          const ok = ['auto', 'none', ...installedBrowsers().map(x => x.id)]
+          if (typeof b.cookies === 'string' && ok.includes(b.cookies)) writeFileSync(settingsFile, JSON.stringify({ ...prefs(), cookies: b.cookies }, null, 2))
+        }
+        return send(res, 200, { ...prefs(), browsers: installedBrowsers() })
+      }
+      if (route === 'downloads') {
+        return send(res, 200, downloads.list(url.searchParams.get('conversationId') ?? ''))
+      }
+      if (route === 'download' && req.method === 'POST') {
+        // { conversationId, url } downloads a link on its own; { jobId } downloads the original of that job's link.
+        const b = await readJson(req)
+        const conversationId = String(b.conversationId ?? 'default')
+        const job = typeof b.jobId === 'string' ? jobs.get(b.jobId) : undefined
+        if (job) {
+          const s = job.summary()
+          if (s.source !== 'url') return send(res, 400, { error: 'only links can be downloaded; this source is already on this computer' })
+          return send(res, 200, downloads.original({ conversationId, url: s.url, dirId: s.id, title: s.title, browser: s.loginBrowser }))
+        }
+        if (typeof b.url !== 'string' || !/^https?:\/\//.test(b.url.trim())) return send(res, 400, { error: 'url required' })
+        return send(res, 200, downloads.original({ conversationId, url: b.url.trim() }))
+      }
+      if (route === 'subtitled' && req.method === 'POST') {
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        const s = job.summary()
+        const langs = Array.isArray(b.langs) && b.langs.length ? (b.langs as unknown[]).map(String) : [...s.tgtLangs, 'src']
+        return send(res, 200, downloads.subtitled({
+          conversationId: String(b.conversationId ?? s.conversationId), dirId: s.id, title: s.title,
+          cues: job.cues.filter(c => c.final), langs, fallbackVideo: s.source === 'file' ? s.url : undefined,
+        }))
       }
       if (route === 'job') {
         const id = url.searchParams.get('jobId') ?? byConversation.get(url.searchParams.get('conversationId') ?? '')
@@ -272,6 +371,8 @@ export function apply(ctx: Context, config: Config): void {
     if (!trusted(req)) { res.writeHead(403); res.end(); return }
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const [, , , jobId, ...rest] = url.pathname.split('/')
+    // Folder names are generated ids: refuse anything else (no "..", no hidden files such as keys).
+    if (!/^[\w-]+$/.test(decodeURIComponent(jobId ?? '')) || rest.some(p => decodeURIComponent(p).startsWith('.'))) { res.writeHead(404); res.end(); return }
     const job = jobs.get(decodeURIComponent(jobId ?? ''))
     const root = job ? resolve(job.summary().dir) : join(config.dataDir, 'jobs', decodeURIComponent(jobId ?? ''))
     const file = normalize(join(root, ...rest.map(decodeURIComponent)))

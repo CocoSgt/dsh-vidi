@@ -12,7 +12,11 @@ export interface PlayerHandle {
 
 interface Props {
   src: string | null
+  /** A live stream that is still running (live badge, delay, follow the edge). */
   live: boolean
+  /** A video: plays from the start, length known. */
+  vod?: boolean
+  duration?: number
   waitingText: string
   cues: CueLike[]
   style: SubStyle
@@ -37,7 +41,7 @@ const fmt = (s: number) => {
  * subtitle overlay (sized in container units) stays on screen and scales.
  */
 export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref) {
-  const { src, live, waitingText, cues, style, delay, onDelay, showDelay, theater, onTheater, onOpenSettings, onTime, t } = props
+  const { src, live, vod, duration, waitingText, cues, style, delay, onDelay, showDelay, theater, onTheater, onOpenSettings, onTime, t } = props
   const stage = useRef<HTMLDivElement>(null)
   const video = useRef<HTMLVideoElement>(null)
   const hls = useRef<Hls | null>(null)
@@ -69,7 +73,8 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
       }
       if (cancelled) return
       if (Hls.isSupported()) {
-        const h = new Hls({ liveSyncDuration: delay, liveMaxLatencyDuration: delay + 60, backBufferLength: 1800 })
+        // Videos start at 0 and never jump to the newest part; live streams sit `delay` seconds behind the edge.
+        const h = new Hls(vod ? { startPosition: 0, backBufferLength: Infinity } : { liveSyncDuration: delay, liveMaxLatencyDuration: delay + 60, backBufferLength: 1800 })
         hls.current = h
         h.loadSource(src)
         h.attachMedia(el)
@@ -154,7 +159,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
         case 'm': case 'M': toggleMute(); break
         case 'c': case 'C': setCcOn(v => !v); break
         case 't': case 'T': onTheater(); break
-        case 'l': case 'L': goLive(); break
+        case 'l': case 'L': if (live) goLive(); break
         case 'ArrowLeft': if (el) el.currentTime = Math.max(0, el.currentTime - 5); break
         case 'ArrowRight': if (el) el.currentTime = Math.min(edge, el.currentTime + 5); break
         default: return
@@ -171,6 +176,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
     idleTimer.current = window.setTimeout(() => setIdle(true), 2600)
   }
 
+  const total = vod ? Math.max(duration ?? 0, edge) : edge
   const behind = Math.max(0, edge - now)
   const atLive = behind < delay + 10
   const current = ccOn ? cues.filter(c => c.start - 0.2 <= now && now <= c.end + 1.2).at(-1) : undefined
@@ -182,25 +188,25 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
       <video ref={video} playsInline onClick={togglePlay} />
       {!ready && <div className="dshl-overlay"><div className="dshl-spinner" />{waitingText}</div>}
       {current && <SubtitleOverlay cue={current} style={style} />}
-      {ready && live && (
+      {ready && live && !vod && (
         <button className={`dshl-livebadge ${atLive ? 'on' : ''}`} onClick={goLive} title={t('player.goLive')}>
           <Icon.live /> {atLive ? t('player.live') : t('player.behind').replace('{s}', fmt(behind))}
         </button>
       )}
       <div className="dshl-controls" onClick={e => e.stopPropagation()}>
-        <div className="dshl-progress">
-          <input type="range" min={0} max={Math.max(edge, 1)} step={0.1} value={Math.min(now, edge)}
-            onChange={e => { if (video.current) video.current.currentTime = Number(e.target.value) }} aria-label="seek" />
+        <div className="dshl-progress" style={{ ['--done' as string]: `${total ? (edge / total) * 100 : 100}%`, ['--pos' as string]: `${total ? (Math.min(now, total) / total) * 100 : 0}%` }}>
+          <input type="range" min={0} max={Math.max(total, 1)} step={0.1} value={Math.min(now, total)}
+            onChange={e => { if (video.current) video.current.currentTime = Math.min(Number(e.target.value), edge) }} aria-label="seek" />
         </div>
         <div className="dshl-ctrlrow">
           <button className="ic" onClick={togglePlay} title={`${playing ? t('player.pause') : t('player.play')} (Space)`}>{playing ? <Icon.pause /> : <Icon.play />}</button>
           <button className="ic" onClick={toggleMute} title={`${t('player.mute')} (M)`}>{muted || volume === 0 ? <Icon.mute /> : <Icon.volume />}</button>
           <input className="vol" type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
             onChange={e => { const v = Number(e.target.value); setVolume(v); if (video.current) { video.current.volume = v; video.current.muted = v === 0; setMuted(v === 0) } }} aria-label="volume" />
-          <span className="time">{fmt(now)}{live ? '' : ` / ${fmt(edge)}`}</span>
+          <span className="time">{fmt(now)}{live && !vod ? '' : ` / ${fmt(total)}`}</span>
           <span className="grow" />
-          {showDelay && (
-            <label className="delay" title={t('player.delay.hint')}>
+          {showDelay && !vod && (
+            <label className="delay" title={t('player.delay.tip')}>
               {t('player.delay')} {delay}s
               <input type="range" min={2} max={30} step={1} value={delay} onChange={e => applyDelay(Number(e.target.value))} />
             </label>

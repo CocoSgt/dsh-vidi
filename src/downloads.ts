@@ -1,0 +1,130 @@
+import { execFile } from 'node:child_process'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { promisify } from 'node:util'
+import { exportCues } from './export.ts'
+import { LANGS } from './translate.ts'
+import { downloadOriginal, findOriginal, installedBrowsers, siteOf, type CookieChoice } from './sites.ts'
+import type { Cue } from './types.ts'
+
+const run = promisify(execFile)
+
+export interface Task {
+  id: string
+  kind: 'original' | 'subtitled'
+  conversationId: string
+  /** Page URL, for originals (to retry). */
+  url?: string
+  /** Folder name under jobs/ that holds the result (the job's own folder, or a download-only folder). */
+  dirId: string
+  title?: string
+  status: 'running' | 'done' | 'error'
+  pct: number
+  /** File name inside the folder, when done. */
+  file?: string
+  error?: string
+  needsLogin?: { site: string; browser?: string; detail: string }
+  startedAt: number
+}
+
+/** ISO 639-2 codes for MP4 subtitle tracks. */
+const ISO3: Record<string, string> = {
+  zh: 'chi', 'zh-Hant': 'chi', en: 'eng', ja: 'jpn', ko: 'kor', es: 'spa', fr: 'fre', de: 'ger', pt: 'por', ru: 'rus',
+  it: 'ita', ar: 'ara', hi: 'hin', id: 'ind', vi: 'vie', th: 'tha', tr: 'tur', nl: 'dut', pl: 'pol',
+}
+
+const NEEDS_LOGIN = /HTTP Error (401|403|412)|sign in|log ?in|login|cookies|members|premium|private video|age|not a bot|confirm you|precondition/i
+
+/**
+ * Background video jobs: download the original at best quality, and build an
+ * MP4 with subtitle tracks (each chosen language, plus one combined track).
+ * Tasks are kept per conversation so the live page can show their progress.
+ */
+export class Downloads {
+  private tasks = new Map<string, Task>()
+
+  constructor(private readonly jobsDir: string, private readonly cookies: () => CookieChoice, private readonly log: (m: string) => void) {}
+
+  list(conversationId: string): Task[] {
+    return [...this.tasks.values()].filter(t => t.conversationId === conversationId).sort((a, b) => b.startedAt - a.startedAt).slice(0, 12)
+  }
+
+  private add(task: Omit<Task, 'id' | 'status' | 'pct' | 'startedAt'>): Task {
+    const t: Task = { ...task, id: Math.random().toString(36).slice(2, 10), status: 'running', pct: 0, startedAt: Date.now() }
+    this.tasks.set(t.id, t)
+    return t
+  }
+
+  /**
+   * Download a page URL's original video. With `dirId` it lands in that job's
+   * folder; otherwise a download-only folder is created.
+   */
+  original(opts: { conversationId: string; url: string; dirId?: string; title?: string; browser?: string }): Task {
+    const dirId = opts.dirId ?? `${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}-dl${Math.random().toString(36).slice(2, 5)}`
+    const dir = join(this.jobsDir, dirId)
+    mkdirSync(dir, { recursive: true })
+    const task = this.add({ kind: 'original', conversationId: opts.conversationId, url: opts.url, dirId, title: opts.title ?? siteOf(opts.url) })
+    const choice = this.cookies()
+    const auto = installedBrowsers()[0]?.id
+    // Same policy as watching: the browser already known to work, else try without a login and retry with one.
+    const first = opts.browser ?? (choice === 'auto' || choice === 'none' ? undefined : choice)
+    const retry = first === undefined && choice === 'auto' ? auto : undefined
+    const go = (browser: string | undefined) => downloadOriginal(opts.url, dir, browser, pct => { task.pct = pct })
+    void go(first)
+      .catch(err => {
+        if (retry && NEEDS_LOGIN.test((err as Error).message)) { this.log(`download: retrying with ${retry}'s saved login`); task.pct = 0; return go(retry) }
+        throw err
+      })
+      .then(file => { task.file = basename(file); task.status = 'done'; task.pct = 100 })
+      .catch(err => {
+        const msg = (err as Error).message
+        task.status = 'error'
+        task.error = msg
+        if (NEEDS_LOGIN.test(msg)) task.needsLogin = { site: siteOf(opts.url), browser: first ?? retry, detail: msg }
+        this.log(`download failed: ${msg}`)
+      })
+    return task
+  }
+
+  /**
+   * MP4 with soft subtitle tracks: one per chosen language and, when more than
+   * one is chosen, a combined track (shown by default). The picture comes from
+   * the downloaded original, else the recording, else the source file.
+   */
+  subtitled(opts: { conversationId: string; dirId: string; title?: string; cues: Cue[]; langs: string[]; fallbackVideo?: string }): Task {
+    const dir = join(this.jobsDir, opts.dirId)
+    const task = this.add({ kind: 'subtitled', conversationId: opts.conversationId, dirId: opts.dirId, title: opts.title })
+    const video = findOriginal(dir) ?? (existsSync(join(dir, 'recording.mp4')) ? join(dir, 'recording.mp4') : opts.fallbackVideo)
+    void (async () => {
+      if (!video || !existsSync(video)) throw new Error('no video yet: download the original, or wait until this video has finished')
+      const tracks: { langs: string[]; name: string; code: string }[] = opts.langs.map(l => ({
+        langs: [l], name: l === 'src' ? 'Original' : (LANGS[l] ?? l), code: l === 'src' ? (opts.cues.find(c => c.lang)?.lang ?? 'und') : l,
+      }))
+      if (opts.langs.length > 1) tracks.unshift({ langs: opts.langs, name: opts.langs.map(l => (l === 'src' ? 'Original' : LANGS[l] ?? l)).join(' + '), code: opts.langs.find(l => l !== 'src') ?? 'und' })
+      const tmp = join(dir, '.tracks')
+      mkdirSync(tmp, { recursive: true })
+      const inputs: string[] = []
+      const meta: string[] = []
+      tracks.forEach((t, i) => {
+        const file = join(tmp, `${i}.srt`)
+        writeFileSync(file, exportCues(opts.cues, t.langs, 'srt', opts.title))
+        inputs.push('-i', file)
+        meta.push(`-metadata:s:s:${i}`, `language=${ISO3[t.code] ?? ISO3[t.code.slice(0, 2)] ?? 'und'}`, `-metadata:s:s:${i}`, `title=${t.name}`,
+          `-disposition:s:${i}`, i === 0 ? 'default' : '0')
+      })
+      task.pct = 30
+      const out = join(dir, 'subtitled.mp4')
+      await run('ffmpeg', [
+        '-v', 'error', '-y', '-i', video, ...inputs,
+        '-map', '0:v?', '-map', '0:a?', ...tracks.flatMap((_, i) => ['-map', `${i + 1}:0`]),
+        '-c', 'copy', '-c:s', 'mov_text', ...meta, '-movflags', '+faststart', out,
+      ], { timeout: 900_000 })
+      rmSync(tmp, { recursive: true, force: true })
+      task.file = basename(out)
+    })()
+      .then(() => { task.status = 'done'; task.pct = 100 })
+      .catch(err => { task.status = 'error'; task.error = String((err as { stderr?: string }).stderr || (err as Error).message).slice(-300); this.log(`subtitled video failed: ${task.error}`) })
+    return task
+  }
+}
+
