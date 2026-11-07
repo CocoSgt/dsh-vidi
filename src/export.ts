@@ -1,10 +1,13 @@
 /**
- * Subtitle style: no full stop at the end of a line (。 ． . ｡), keeping
- * ellipses, question/exclamation marks and abbreviations such as "U.S.".
+ * Subtitle style: a line ends without a full stop or pause mark
+ * (。 ． . ｡ ， , 、 ； ; ： :), keeping ellipses, question/exclamation marks,
+ * closing quotes and abbreviations such as "U.S.".
  */
 export function subtitleText(text: string): string {
-  const t = text.trim()
+  let t = text.trim()
   if (/(\.\.\.|…)$/.test(t)) return t
+  // Pause marks first (a line may end with "，" or "、" just like with "。").
+  t = t.replace(/[，,、；;：:]+$/, '').trimEnd()
   if (/[。．｡]$/.test(t)) return t.slice(0, -1).trimEnd()
   if (/[^.\s]\.$/.test(t) && !/\b[A-Z]\.[A-Z]\.$|\b(?:Mr|Mrs|Ms|Dr|St|vs|etc|Inc|Ltd|Jr|Sr)\.$/.test(t)) return t.slice(0, -1)
   return t
@@ -16,7 +19,7 @@ export type ExportFormat = 'srt' | 'vtt' | 'txt' | 'md'
 
 /** Text of one cue for the chosen lines ('src' = original, else a language code), in order. */
 function lines(c: Cue, langs: string[]): string[] {
-  return langs.map(l => (l === 'src' ? c.src : c.tr?.[l] ?? '')).filter(Boolean)
+  return langs.map(l => subtitleText(l === 'src' ? c.src : c.tr?.[l] ?? '')).filter(Boolean)
 }
 
 const stamp = (s: number, sep: string) => {

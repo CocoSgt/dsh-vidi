@@ -53,7 +53,7 @@ interface Props {
 interface Toast { text: string; href?: string; busy?: boolean }
 
 /** Subtitles carry no full stop at the end of a line (older lines may still have one). */
-const noStop = (x: string) => (/(\.\.\.|…)$/.test(x) ? x : x.replace(/[。．｡]$|(?<=[^.\s])\.$/, ''))
+const noStop = (x: string) => (/(\.\.\.|…)$/.test(x) ? x : x.replace(/[，,、；;：:]+$/, '').replace(/[。．｡]$|(?<=[^.\s])\.$/, ''))
 
 const qLabel = (h: number) => (h >= 2160 ? '4K' : h >= 1440 ? '2K' : `${h}p`)
 
