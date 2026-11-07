@@ -1,4 +1,3 @@
-import type { LiveKey } from './locales.ts'
 
 /** One subtitle line: 'src' (original) or a target language code. */
 export interface SubLine { key: string; show: boolean; /** Font size as % of player width. */ size: number }
@@ -121,62 +120,4 @@ export function drawSubtitles(g: CanvasRenderingContext2D, W: number, H: number,
       y += lineH(b.px)
     }
   })
-}
-
-/** Settings panel: which lines, order, size per line, position, background. */
-export function SubtitleSettings(props: {
-  style: SubStyle
-  onChange: (s: SubStyle) => void
-  onReset: () => void
-  langName: (key: string) => string
-  t: (k: LiveKey) => string
-}) {
-  const { style, onChange, onReset, langName, t } = props
-  const setLine = (i: number, patch: Partial<SubLine>) => onChange({ ...style, lines: style.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) })
-  const move = (i: number, d: number) => {
-    const j = i + d
-    if (j < 0 || j >= style.lines.length) return
-    const lines = style.lines.slice()
-    ;[lines[i], lines[j]] = [lines[j]!, lines[i]!]
-    onChange({ ...style, lines })
-  }
-  return (
-    <div className="dshl-subcfg">
-      <h3>{t('sub.size')}</h3>
-      {style.lines.map((l, i) => (
-        <div className="opt" key={l.key}>
-          <span>{l.key === 'src' ? t('sub.source') : langName(l.key)}</span>
-          <input type="range" min={1.4} max={6} step={0.1} value={l.size} onChange={e => setLine(i, { size: Number(e.target.value) })} />
-        </div>
-      ))}
-      <h3>{t('sub.position')}</h3>
-      <div className="opt">
-        <span />
-        <span className="dshl-seg">
-          <button className={style.position === 'bottom' ? 'on' : ''} onClick={() => onChange({ ...style, position: 'bottom' })}>{t('pos.bottom')}</button>
-          <button className={style.position === 'top' ? 'on' : ''} onClick={() => onChange({ ...style, position: 'top' })}>{t('pos.top')}</button>
-        </span>
-      </div>
-      <div className="opt">
-        <span>{t('sub.offset')}</span>
-        <input type="range" min={0} max={40} step={1} value={style.offset} onChange={e => onChange({ ...style, offset: Number(e.target.value) })} />
-      </div>
-      <div className="opt">
-        <span>{t('sub.bg')}</span>
-        <input type="range" min={0} max={1} step={0.05} value={style.bg} onChange={e => onChange({ ...style, bg: Number(e.target.value) })} />
-      </div>
-      <button className="dshl-link" onClick={onReset}>{t('sub.reset')}</button>
-    </div>
-  )
-}
-
-export type PresetName = 'everyday' | 'present' | 'single'
-
-/** Quick presets: everyday viewing, big presentation text, minimal single line. */
-export function preset(name: PresetName, lines: string[]): SubStyle {
-  const base = defaultStyle(lines)
-  if (name === 'present') return { ...base, offset: 6, bg: 0.78, lines: base.lines.map((l, i) => ({ ...l, size: i === 0 ? 5.4 : 4 })) }
-  // One line: only the first picked line, a bit larger.
-  if (name === 'single') return { ...base, offset: 4, bg: 0.45, lines: base.lines.map((l, i) => ({ ...l, show: i === 0, size: 3.8 })) }
-  return base
 }

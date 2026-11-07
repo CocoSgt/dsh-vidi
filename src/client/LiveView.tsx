@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { frameStore, onOpenRequest } from './bus.ts'
 import { ChatPanel, type SessionFaceLike } from './ChatPanel.tsx'
 import { Icon } from './icons.tsx'
@@ -9,7 +10,7 @@ import type { LiveKey } from './locales.ts'
 import { LoginDialog } from './LoginDialog.tsx'
 import { Player, type CueLike, type PlayerHandle, type PlayerMenu } from './Player.tsx'
 import { Settings, type Browser, type KeyInfo } from './Settings.tsx'
-import { defaultStyle, loadStyle, preset, reconcile, saveStyle, SubtitleSettings, type PresetName, type SubStyle } from './subStyle.tsx'
+import { loadStyle, reconcile, saveStyle, type SubStyle } from './subStyle.tsx'
 
 type Source = 'url' | 'push' | 'file'
 interface NeedsLogin { site: string; browser?: string; detail: string }
@@ -377,7 +378,22 @@ export function LiveView(props: LiveViewInjected) {
     if (next.length) setReadPick(next)
   }
   const speakerName = (sp?: string) => sp?.replace(/^Speaker\s*(\d+)$/i, (_, n) => t('tr.speaker').replace('{n}', n))
-  const joinText = (parts: string[]) => parts.reduce((acc, p) => (!acc ? p : /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]$/.test(acc) && /^[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(p) ? acc + p : `${acc} ${p}`), '')
+  // Lines join into running text. Lines saved without end punctuation (older versions stripped it) get a pause mark:
+  // "，" between Chinese/Japanese/Korean lines and "。" at the end; Latin lines get ". " before a capital and "." at the end.
+  const joinText = (parts: string[]) => {
+    const wide = /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/
+    const ended = /[.!?;:,…。！？；：，、」』）)"'”’]$/
+    const items = parts.map(p => p.trim().replace(/([\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])/g, '$1，')).filter(Boolean)
+    return items.reduce((acc, p, i) => {
+      const last = i === items.length - 1
+      const cjk = wide.test(p.slice(-1))
+      const piece = ended.test(p) ? p : cjk ? p + (last ? '。' : '，') : last && /[A-Za-z0-9]$/.test(p) ? `${p}.` : p
+      if (!acc) return piece
+      if (wide.test(acc.slice(-1)) && wide.test(piece[0]!)) return acc + piece
+      const sep = !ended.test(acc) && /^[A-Z]/.test(piece) ? '. ' : ' '
+      return acc + sep + piece
+    }, '')
+  }
   // Consecutive lines of one speaker become a paragraph (new paragraph on a long pause or when it gets long).
   const paragraphs = useMemo(() => {
     const out: { speaker?: string; start: number; cues: CueLike[]; texts: Record<string, string> }[] = []
@@ -426,18 +442,18 @@ export function LiveView(props: LiveViewInjected) {
   const hasMain = !!job && !(job.status === 'error' && !job.files.length)
   const emptyBox = (
     <div className="dshl-drop">
-            <h2>{t('empty.title')}</h2>
-            <p>{t('empty.body')}</p>
-            {armed?.rtmp && (
-              <div className="dshl-pushinfo">
-                <div className="title"><Icon.push /> {t('push.title')} <span>{t('push.hint')}</span></div>
-                <dl>
-                  <CopyRow label={t('push.server')} value={armed.rtmp} copy={t('push.copy')} copied={t('push.copied')} />
-                  {armed.key && <CopyRow label={t('push.key')} value={armed.key} copy={t('push.copy')} copied={t('push.copied')} />}
-                </dl>
-              </div>
-            )}
-          </div>
+      <h2>{t('empty.title')}</h2>
+      <p>{t('empty.body')}</p>
+      {armed?.rtmp && (
+        <div className="dshl-pushinfo">
+          <div className="title"><Icon.push /> {t('push.title')} <span>{t('push.hint')}</span></div>
+          <dl>
+            <CopyRow label={t('push.server')} value={armed.rtmp} copy={t('push.copy')} copied={t('push.copied')} />
+            {armed.key && <CopyRow label={t('push.key')} value={armed.key} copy={t('push.copy')} copied={t('push.copied')} />}
+          </dl>
+        </div>
+      )}
+    </div>
   )
 
   return (
@@ -482,21 +498,7 @@ export function LiveView(props: LiveViewInjected) {
       )}
 
       {!hasMain && !pageMode ? (
-        <section className="dshl-empty">
-          <div className="dshl-drop">
-            <h2>{t('empty.title')}</h2>
-            <p>{t('empty.body')}</p>
-            {armed?.rtmp && (
-              <div className="dshl-pushinfo">
-                <div className="title"><Icon.push /> {t('push.title')} <span>{t('push.hint')}</span></div>
-                <dl>
-                  <CopyRow label={t('push.server')} value={armed.rtmp} copy={t('push.copy')} copied={t('push.copied')} />
-                  {armed.key && <CopyRow label={t('push.key')} value={armed.key} copy={t('push.copy')} copied={t('push.copied')} />}
-                </dl>
-              </div>
-            )}
-          </div>
-        </section>
+        <section className="dshl-empty">{emptyBox}</section>
       ) : (
         <main className="dshl-main">
           <div className="dshl-col">
@@ -559,23 +561,22 @@ export function LiveView(props: LiveViewInjected) {
                     <button className={trMode === 'lines' ? 'on' : ''} onClick={() => setTrMode('lines')}>{t('tr.mode.lines')}</button>
                     <button className={trMode === 'read' ? 'on' : ''} onClick={() => setTrMode('read')}>{t('tr.mode.read')}</button>
                   </div>
-                  {trMode === 'lines' ? (
-                    <>
-                      <label className="dshl-field small"><Icon.search /><input type="text" value={query} placeholder={t('tr.search')} onChange={e => setQuery(e.target.value)} /></label>
-                      <button className="ghost" title={t('tr.copy')} onClick={copyAll}><Icon.copy /></button>
-                    </>
-                  ) : (
-                    <>
-                      {readable.length > 1 && (
-                        <div className="dshl-seg multi">
-                          {readable.map(k => <button key={k} className={readLangs.includes(k) ? 'on' : ''} onClick={() => toggleRead(k)}>{k === 'src' ? nameWithSpoken('src') : langName(k)}</button>)}
-                        </div>
-                      )}
-                      <span className="grow" />
-                      <button className="dshl-btn small" onClick={() => downloadMd()}><Icon.download /> {t('tr.md')}</button>
-                    </>
-                  )}
+                  <span className="grow" />
+                  {trMode === 'lines'
+                    ? <button className="dshl-btn small quiet" title={t('tr.copy')} onClick={copyAll}><Icon.copy /> {t('tr.copyShort')}</button>
+                    : <button className="dshl-btn small quiet" onClick={() => downloadMd()}><Icon.download /> {t('tr.md')}</button>}
                 </div>
+                {trMode === 'lines' ? (
+                  <label className="dshl-field small block"><Icon.search /><input type="text" value={query} placeholder={t('tr.search')} onChange={e => setQuery(e.target.value)} /></label>
+                ) : readable.length > 1 && (
+                  <div className="dshl-checks2" role="group">
+                    {readable.map(k => (
+                      <button key={k} className={readLangs.includes(k) ? 'on' : ''} aria-pressed={readLangs.includes(k)} onClick={() => toggleRead(k)}>
+                        <i aria-hidden="true" />{k === 'src' ? nameWithSpoken('src') : langName(k)}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {trMode === 'lines' ? (
                   <div className="dshl-lines" ref={linesBox} onWheel={() => { userScrolled.current = Date.now() }} onTouchMove={() => { userScrolled.current = Date.now() }}>
                     {shown.length === 0 && <div className="dshl-muted pad">{t('tr.empty')}</div>}
@@ -651,10 +652,17 @@ function SubsStarter(props: {
 }) {
   const { lines, onLines, spoken, langName, options, siteChips, onStart, t } = props
   const [open, setOpen] = useState(false)
+  const [sheet, setSheet] = useState(false)
   const box = useRef<HTMLSpanElement>(null)
+  const pop = useRef<HTMLDivElement>(null)
+  const toggle = () => {
+    // On a small player the chooser opens as a sheet from the bottom of the screen, like the player's menus.
+    setSheet((box.current?.closest('.dshl-stage')?.clientWidth ?? 999) < 560 && !document.fullscreenElement)
+    setOpen(v => !v)
+  }
   useEffect(() => {
     if (!open) return
-    const close = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
+    const close = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node) && !pop.current?.contains(e.target as Node)) setOpen(false) }
     window.addEventListener('mousedown', close)
     return () => window.removeEventListener('mousedown', close)
   }, [open])
@@ -664,11 +672,12 @@ function SubsStarter(props: {
   const presets: string[][] = same ? [['src']] : [[me, 'src'], [me], ['src']]
   const eq = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
   const isPreset = presets.some(p => eq(own, p))
+  const wrap = (el: React.ReactElement) => sheet ? createPortal(<div className="dshl-sheetwrap">{el}</div>, document.body) : el
   return (
     <span className="dshl-starter" ref={box}>
-      <button className="dshl-subsbtn" onClick={() => setOpen(v => !v)} title={t('subs.start.tip')}>{t('subs.start')}</button>
-      {open && (
-        <div className="dshl-startpop" onClick={e => e.stopPropagation()}>
+      <button className="dshl-subsbtn" onClick={toggle} title={t('subs.start.tip')}>{t('subs.start')}</button>
+      {open && wrap(
+        <div ref={pop} className={`dshl-startpop ${sheet ? 'sheet' : ''}`} onClick={e => e.stopPropagation()}>
           <div className="head">{t('subs.pick')}</div>
           {same && <p className="note">{t('subs.same').replace('{l}', langName(me))}</p>}
           <div className="opts">
@@ -683,7 +692,7 @@ function SubsStarter(props: {
             <LineChips lines={lines} onChange={onLines} options={options} site={siteChips} name={langName} t={t} />
           </details>
           <button className="dshl-btn primary go" onClick={() => { setOpen(false); onStart() }}>{t('subs.go')}</button>
-        </div>
+        </div>,
       )}
     </span>
   )

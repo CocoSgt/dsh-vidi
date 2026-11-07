@@ -375,7 +375,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
         </div>
         <div className="dshl-ctrlrow">
           <button className="ic" onClick={togglePlay} title={`${playing ? t('player.pause') : t('player.play')} (Space)`}>{playing ? <Icon.pause /> : <Icon.play />}</button>
-          <button className="ic" onClick={toggleMute} title={`${t('player.mute')} (M)`}>{muted || volume === 0 ? <Icon.mute /> : <Icon.volume />}</button>
+          <button className="ic mute" onClick={toggleMute} title={`${t('player.mute')} (M)`}>{muted || volume === 0 ? <Icon.mute /> : <Icon.volume />}</button>
           <input className="vol" type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
             onChange={e => { const v = Number(e.target.value); setVolume(v); if (video.current) { video.current.volume = v; video.current.muted = v === 0; setMuted(v === 0) } }} aria-label="volume" />
           <span className="time">{fmt(now)}{live && !vod ? '' : ` / ${fmt(total)}`}</span>
@@ -388,7 +388,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
               {m.icon}{m.label && <span className="txt">{m.label}</span>}{m.label && <span className="caret" />}
             </button>
           ))}
-          {!full && !pageFull && <button className={`ic ${theater ? 'on' : ''}`} onClick={onTheater} title={`${t('player.theater')} (T)`}><Icon.theater /></button>}
+          {!full && !pageFull && <button className={`ic theater ${theater ? 'on' : ''}`} onClick={onTheater} title={`${t('player.theater')} (T)`}><Icon.theater /></button>}
           <button className="ic" onClick={toggleFull} title={`${t('player.fullscreen')} (F)`}>{full || pageFull ? <Icon.exitFull /> : <Icon.full />}</button>
         </div>
       </div>

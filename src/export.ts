@@ -18,6 +18,7 @@ import type { Cue } from './types.ts'
 export type ExportFormat = 'srt' | 'vtt' | 'txt' | 'md'
 
 /** Text of one cue for the chosen lines ('src' = original, else a language code), in order. */
+/** Subtitle lines of a cue (subtitle style: no punctuation at the end). */
 function lines(c: Cue, langs: string[]): string[] {
   return langs.map(l => subtitleText(l === 'src' ? c.src : c.tr?.[l] ?? '')).filter(Boolean)
 }
@@ -68,7 +69,7 @@ export function exportCues(cues: Cue[], langs: string[], format: ExportFormat, t
   return head + paragraphs(rows).map(p => {
     const who = p[0]!.speaker
     const ts = md ? `**${who ? `${who} · ` : ''}${clock(p[0]!.start)}**` : `[${who ? `${who} ` : ''}${clock(p[0]!.start)}]`
-    const blocks = [...new Set(langs.map(l => join(p.map(c => (l === 'src' ? c.src : c.tr?.[l] ?? '')).filter(Boolean))).filter(Boolean))]
+    const blocks = [...new Set(langs.map(l => join(p.map(c => (l === 'src' ? c.src : c.tr?.[l] ?? '').trim()).filter(Boolean))).filter(Boolean))]
     return md ? `${ts}\n\n${blocks.join('\n\n')}` : `${ts} ${blocks.join('\n')}`
   }).join('\n\n') + '\n'
 }

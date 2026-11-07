@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
-import { defaultExports, exportCues, subtitleText, type ExportFormat } from './export.ts'
+import { defaultExports, exportCues, type ExportFormat } from './export.ts'
 import type { Glossary } from './glossary.ts'
 import { Polisher } from './polish.ts'
 import { fetchComments, ffmpegInput, LoginRequired, resolveSite, type CookieChoice } from './sites.ts'
@@ -110,8 +110,7 @@ export class LiveJob extends EventEmitter {
       llm: deps.llm, glossary: deps.glossary, log: m => deps.log(`[${id}] ${m}`),
       brief: () => this.brief, siteText: (a, b) => this.siteText(a, b), targets: () => this.targets(),
       onLine: (cue, src, tr, speaker) => {
-        cue.src = subtitleText(src)
-        for (const k of Object.keys(tr)) tr[k] = subtitleText(tr[k]!)
+        cue.src = src
         if (speaker) cue.speaker = speaker
         if (Object.keys(tr).length) cue.tr = { ...cue.tr, ...tr }
         cue.polished = true
@@ -448,7 +447,6 @@ export class LiveJob extends EventEmitter {
         for (const c of todo) {
           const tr = got.get(c.id)
           if (!tr) continue
-          for (const k of Object.keys(tr)) tr[k] = subtitleText(tr[k]!)
           c.tr = { ...c.tr, ...tr }
           this.emit('cue', c)
           this.record(c)
@@ -493,7 +491,7 @@ export class LiveJob extends EventEmitter {
   /** Provider cues: drafts are revised in place by key; finals get translated. */
   private onProviderCue(pc: ProviderCue, offset = 0): void {
     const { key, ...raw } = pc
-    const rest = { ...raw, start: raw.start + offset, end: raw.end + offset, src: subtitleText(raw.src) }
+    const rest = { ...raw, start: raw.start + offset, end: raw.end + offset }
     let cue: Cue
     const existing = key !== undefined ? this.drafts.get(key) : undefined
     if (existing !== undefined) {
@@ -523,7 +521,6 @@ export class LiveJob extends EventEmitter {
         const ref = this.siteText(cue.start, cue.end).map(x => `[${x.lang}${x.auto ? ', auto' : ''}] ${x.text}`).join('\n')
         const tr = await this.deps.translator.translate(this.targets(), cue.src, context, this.deps.glossary.forPrompt(), undefined, ref)
         if (tr) {
-          for (const k of Object.keys(tr)) tr[k] = subtitleText(tr[k]!)
           cue.tr = { ...cue.tr, ...tr }
           this.emit('cue', cue)
         }
