@@ -431,9 +431,14 @@ export function LiveView(props: LiveViewInjected) {
 
 function SubsButton(props: { state: 'off' | 'running' | 'paused' | 'done'; at: number; onStart: () => void; onPause: () => void; onResume: () => void; t: (k: LiveKey) => string }) {
   const { state, at, onStart, onPause, onResume, t } = props
-  if (state === 'done') return <span className="dshl-subsbtn done" title={t('subs.done')}><Icon.cc /> ✓</span>
-  if (state === 'running') return <button className="dshl-subsbtn running" onClick={onPause} title={t('subs.pause.tip')}><i className="dot" />{CLOCK(at)} · {t('subs.pause')}</button>
-  if (state === 'paused') return <button className="dshl-subsbtn" onClick={onResume} title={t('subs.resume.tip').replace('{t}', CLOCK(at))}>{t('subs.resume')} {CLOCK(at)}</button>
+  if (state === 'done') return <span className="dshl-subsbtn done">✓ {t('subs.done')}</span>
+  // Running: says what is happening; on hover it says what a click does.
+  if (state === 'running') return (
+    <button className="dshl-subsbtn running" onClick={onPause} title={t('subs.pause.tip').replace('{t}', CLOCK(at))}>
+      <i className="dot" /><span className="now">{t('subs.running')}</span><span className="act">{t('subs.pause')}</span>
+    </button>
+  )
+  if (state === 'paused') return <button className="dshl-subsbtn" onClick={onResume} title={t('subs.resume.tip').replace('{t}', CLOCK(at))}>{t('subs.resume')}</button>
   return <button className="dshl-subsbtn" onClick={onStart} title={t('subs.start.tip')}>{t('subs.start')}</button>
 }
 

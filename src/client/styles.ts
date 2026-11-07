@@ -289,6 +289,10 @@ const CSS = `
 .dshl-subsbtn.running { background: rgba(255,255,255,.16); font-weight: 500; }
 .dshl-subsbtn.running .dot { width: 7px; height: 7px; border-radius: 50%; background: #ff5a5f; animation: dshl-pulse 1.6s ease-in-out infinite; }
 .dshl-subsbtn.done { background: none; opacity: .8; cursor: default; }
+.dshl-subsbtn.running .act { display: none; }
+.dshl-subsbtn.running:hover .now { display: none; }
+.dshl-subsbtn.running:hover .act { display: inline; }
+.dshl-subsbtn.running:hover .dot { animation: none; border-radius: 1px; width: 8px; height: 8px; background: #fff; }
 @container (max-width: 520px) { .dshl-subsbtn { padding: 0 9px; margin: 0 2px; } }
 
 /* Progress: played (red), loaded (light), subtitles ready (blue line under the track) */
