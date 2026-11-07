@@ -64,7 +64,7 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
     return () => clearInterval(id)
   }, [running])
   /** Known notes from the host, in the page's language. */
-  const note = (m?: string) => (m === 'ended' ? t('rs.m.ended') : m === 'no-burn' ? t('rs.m.noBurn') : m)
+  const note = (m?: string) => (m === 'ended' ? t('rs.m.ended') : m === 'no-burn' ? t('rs.m.noBurn') : m === 'stalled' ? t('rs.m.stalled') : m)
 
   const pname = (p: string) => t(`rs.p.${p}` as LiveKey)
   const save = async () => {

@@ -650,6 +650,8 @@ export class LiveJob extends EventEmitter {
   async startRestream(targets: Target[], opts: { from: number; burn: boolean; style: BurnStyle; height: 720 | 1080 }): Promise<void> {
     if (this.restreamer?.summary.running) { for (const t of targets) this.restreamer.add(t); return }
     if (!this.segments().length) throw new Error('nothing recorded yet')
+    // Watched to the end of a video: stream it from the beginning rather than end at once.
+    if (this.vod && this.duration && opts.from >= this.duration - 1.5) opts = { ...opts, from: 0 }
     const r = new Restream({
       input: from => this.restreamInput(from),
       rowsAt: t => this.rowsAt(t, opts.style),

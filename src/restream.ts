@@ -197,6 +197,9 @@ export class Restream extends EventEmitter {
   private blank?: Buffer
   private startAt = 0
   private spawnedAt = 0
+  private watchdog?: ReturnType<typeof setInterval>
+  private lastOut = 0
+  private stuckSince = Date.now()
 
   constructor(private readonly source: RestreamSource, private readonly opts: { from: number; burn: boolean; style: BurnStyle; height: 720 | 1080; bitrateK: number }, targets: Target[], private readonly log: (m: string) => void) {
     super()
@@ -262,6 +265,12 @@ export class Restream extends EventEmitter {
     })
     if (burn) this.feedSubtitles(w, h)
     for (const p of this.pushes.values()) this.connect(p.target.id)
+    // Nothing coming out of the encoder after a while (no picture to read): say so instead of "connecting" forever.
+    this.watchdog = setInterval(() => {
+      if (this.stopped) return
+      if (this.outTime > this.lastOut) { this.lastOut = this.outTime; this.stuckSince = Date.now(); return }
+      if (Date.now() - this.stuckSince > 25_000) { this.log('restream: the encoder stopped producing'); void this.stop('stalled') }
+    }, 5000)
     this.changed()
   }
 
@@ -365,6 +374,7 @@ export class Restream extends EventEmitter {
   async stop(message?: string): Promise<void> {
     if (this.stopped) return
     this.stopped = true
+    clearInterval(this.watchdog)
     process.off('exit', this.killAll)
     clearInterval(this.subsTimer)
     for (const p of this.pushes.values()) {
