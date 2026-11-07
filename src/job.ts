@@ -410,7 +410,7 @@ export class LiveJob extends EventEmitter {
     const finished = readFileSync(this.m3u8, 'utf8').includes('#EXT-X-ENDLIST')
     // A growing playlist can't be seeked; start at the segment that contains `at` instead.
     let input: string[]
-    if (finished) input = ['-ss', String(at), '-i', this.m3u8]
+    if (finished) input = this.seekable(at)
     else {
       const i = Math.max(0, segs.findLastIndex(sg => sg.start <= at))
       at = segs[i]!.start
@@ -665,11 +665,22 @@ export class LiveJob extends EventEmitter {
     await this.restreamer.stop()
   }
 
+  /**
+   * Input arguments for a finished recording from media time `from`. Seeking
+   * an HLS playlist to 0 skips its whole first segment when the stream's
+   * timestamps don't start at 0, so: no seek from the start, and the single
+   * recording file (exact seeking) once it exists.
+   */
+  private seekable(from: number): string[] {
+    const file = this.captureDone && existsSync(join(this.deps.dir, 'recording.mp4')) ? join(this.deps.dir, 'recording.mp4') : this.m3u8
+    return from > 0.05 ? ['-ss', String(from), '-i', file] : ['-i', file]
+  }
+
   /** The recording from `from` on, for an ffmpeg that reads it in real time. */
   private restreamInput(from: number): { args: string[]; at: number } {
     const segs = this.segments()
     const finished = readFileSync(this.m3u8, 'utf8').includes('#EXT-X-ENDLIST')
-    if (finished) return { args: ['-ss', String(Math.max(0, from)), '-i', this.m3u8], at: Math.max(0, from) }
+    if (finished) return { args: this.seekable(from), at: Math.max(0, from) }
     const i = Math.max(0, segs.findLastIndex(sg => sg.start <= from))
     return { args: ['-live_start_index', String(i), '-max_reload', '100000', '-i', this.m3u8], at: segs[i]?.start ?? 0 }
   }

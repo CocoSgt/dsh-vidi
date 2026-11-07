@@ -196,6 +196,7 @@ export class Restream extends EventEmitter {
   private lastPng?: Buffer
   private blank?: Buffer
   private startAt = 0
+  private spawnedAt = 0
 
   constructor(private readonly source: RestreamSource, private readonly opts: { from: number; burn: boolean; style: BurnStyle; height: 720 | 1080; bitrateK: number }, targets: Target[], private readonly log: (m: string) => void) {
     super()
@@ -220,7 +221,7 @@ export class Restream extends EventEmitter {
     if (burn) this.blank = await drawSubtitles([], this.opts.style, w, h)
     const video = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25,setpts=PTS-STARTPTS`
     const filter = burn
-      ? `${video}[v];[1:v]format=rgba,setpts=PTS-STARTPTS[s];[v][s]overlay=0:0:eof_action=repeat:shortest=0,format=yuv420p[o]`
+      ? `${video}[v];[1:v]format=rgba,setpts=PTS-STARTPTS[s];[v][s]overlay=0:0:eof_action=repeat:shortest=1,format=yuv420p[o]`
       : `${video},format=yuv420p[o]`
     const b = this.opts.bitrateK
     const args = [
@@ -234,6 +235,7 @@ export class Restream extends EventEmitter {
     ]
     const enc = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] })
     this.encoder = enc
+    this.spawnedAt = Date.now()
     // If DSH itself goes away, take the ffmpeg processes with it (they would keep pushing on their own).
     process.once('exit', this.killAll)
     let errTail = ''
@@ -268,22 +270,34 @@ export class Restream extends EventEmitter {
     const sin = this.encoder!.stdin!
     const tick = async () => {
       if (this.stopped) return
-      // Before the encoder reports progress it is still opening its inputs: give it a few seconds to start on.
-      const ahead = this.outTime > 0 ? this.outTime + 3 : 4
+      // ffmpeg reads the recording in real time (-re), several seconds ahead of what it has sent:
+      // keep the pictures a little ahead of that reading position (wall clock since start), never far
+      // ahead (lines for a live stream may still be on their way).
+      const ahead = Math.max(4, (Date.now() - this.spawnedAt) / 1000 + 2.5)
       while (!this.stopped && this.sentFrames / FPS_SUBS <= ahead && sin.writableLength < 4 << 20) {
         const t = this.startAt + this.sentFrames / FPS_SUBS
         const rows = this.source.rowsAt(t)
         const key = JSON.stringify(rows)
         if (key !== this.lastKey) {
           this.lastKey = key
-          this.lastPng = rows.length ? (await drawSubtitles(rows, this.opts.style, w, h)) ?? this.blank : this.blank
+          try {
+            this.lastPng = rows.length ? (await drawSubtitles(rows, this.opts.style, w, h)) ?? this.blank : this.blank
+          } catch (err) {
+            // A line that can't be drawn must not stall the picture: show nothing for it.
+            this.log(`restream: subtitle drawing failed (${(err as Error).message})`)
+            this.lastPng = this.blank
+          }
         }
         if (this.lastPng) sin.write(this.lastPng)
         this.sentFrames++
       }
     }
     let busy = false
-    this.subsTimer = setInterval(() => { if (busy) return; busy = true; void tick().finally(() => { busy = false }) }, 100)
+    this.subsTimer = setInterval(() => {
+      if (busy) return
+      busy = true
+      void tick().catch(err => this.log(`restream: subtitles: ${(err as Error).message}`)).finally(() => { busy = false })
+    }, 100)
   }
 
   /** Start (or restart) one destination. */
@@ -291,19 +305,28 @@ export class Restream extends EventEmitter {
     const p = this.pushes.get(id)
     if (!p || this.stopped) return
     const url = pushUrl(p.target)
-    const proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'mpegts', '-i', 'pipe:0', '-c', 'copy', '-f', 'flv', '-flvflags', 'no_duration_filesize', url], { stdio: ['pipe', 'ignore', 'pipe'] })
+    // Info level: "Output #0" appears once the platform accepted the connection.
+    const proc = spawn('ffmpeg', ['-hide_banner', '-nostats', '-loglevel', 'info', '-f', 'mpegts', '-i', 'pipe:0', '-c', 'copy', '-f', 'flv', '-flvflags', 'no_duration_filesize', url], { stdio: ['pipe', 'ignore', 'pipe'] })
     p.proc = proc
     p.status = { ...p.status, state: p.tries ? 'retrying' : 'connecting', since: Date.now(), message: undefined }
     let errTail = ''
-    proc.stderr!.on('data', (d: Buffer) => { errTail = (errTail + d.toString()).slice(-400) })
+    let opened = false
+    proc.stderr!.on('data', (d: Buffer) => {
+      const text = d.toString()
+      errTail = (errTail + text).slice(-600)
+      if (!opened && /Output #0/.test(errTail) && p.proc === proc) {
+        opened = true
+        p.tries = 0
+        p.status = { ...p.status, state: 'live', message: undefined, since: Date.now() }
+        this.changed()
+      }
+    })
     proc.stdin!.on('error', () => {})
-    // Live once data has been flowing for a few seconds without the process failing.
-    const ok = setTimeout(() => { if (p.proc === proc && proc.exitCode === null) { p.tries = 0; p.status = { ...p.status, state: 'live', since: Date.now() }; this.changed() } }, 4000)
     proc.on('exit', () => {
-      clearTimeout(ok)
       if (p.proc !== proc || this.stopped) return
       p.proc = undefined
-      const reason = errTail.trim().split('\n').pop()?.replace(/^\[[^\]]*\]\s*/, '') || 'the platform closed the connection'
+      const lines = errTail.split('\n').map(l => l.replace(/^\[[^\]]*\]\s*/, '').trim()).filter(Boolean)
+      const reason = lines.reverse().find(l => /error|fail|refused|denied|invalid|timed out|not found|unauthor|forbidden|reset|broken/i.test(l)) || 'the platform closed the connection'
       if (p.tries >= RETRY_MS.length) { p.status = { ...p.status, state: 'error', message: reason, since: Date.now() }; this.changed(); return }
       p.status = { ...p.status, state: 'retrying', message: reason, since: Date.now() }
       p.timer = setTimeout(() => this.connect(id), RETRY_MS[p.tries++])
@@ -346,8 +369,10 @@ export class Restream extends EventEmitter {
     clearInterval(this.subsTimer)
     for (const p of this.pushes.values()) {
       clearTimeout(p.timer)
-      p.proc?.stdin?.end()
-      p.proc?.kill('SIGTERM')
+      // Let each push send what it has and close the stream properly; force it after a few seconds.
+      const proc = p.proc
+      proc?.stdin?.end()
+      if (proc) setTimeout(() => { if (proc.exitCode === null) proc.kill('SIGTERM') }, 3000)
       p.status = { ...p.status, state: 'stopped', since: Date.now() }
     }
     this.encoder?.kill('SIGTERM')
