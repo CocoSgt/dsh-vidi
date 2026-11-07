@@ -23,7 +23,7 @@ function paragraphs(cues: Cue[]): Cue[][] {
   let cur: Cue[] = []
   for (const c of cues) {
     const prev = cur.at(-1)
-    if (prev && (c.start - prev.end > 2.5 || c.end - cur[0]!.start > 45)) { out.push(cur); cur = [] }
+    if (prev && (c.speaker !== prev.speaker || c.start - prev.end > 2.5 || c.end - cur[0]!.start > 45)) { out.push(cur); cur = [] }
     cur.push(c)
   }
   if (cur.length) out.push(cur)
@@ -51,9 +51,10 @@ export function exportCues(cues: Cue[], langs: string[], format: ExportFormat, t
   const md = format === 'md'
   const head = md && title ? `# ${title}\n\n` : title ? `${title}\n\n` : ''
   return head + paragraphs(rows).map(p => {
-    const ts = md ? `**[${clock(p[0]!.start)}]**` : `[${clock(p[0]!.start)}]`
-    const blocks = langs.map(l => join(p.map(c => (l === 'src' ? c.src : c.tr?.[l] ?? '')).filter(Boolean))).filter(Boolean)
-    return `${ts} ${blocks.join(md ? '\n\n' : '\n')}`
+    const who = p[0]!.speaker
+    const ts = md ? `**${who ? `${who} · ` : ''}${clock(p[0]!.start)}**` : `[${who ? `${who} ` : ''}${clock(p[0]!.start)}]`
+    const blocks = [...new Set(langs.map(l => join(p.map(c => (l === 'src' ? c.src : c.tr?.[l] ?? '')).filter(Boolean))).filter(Boolean))]
+    return md ? `${ts}\n\n${blocks.join('\n\n')}` : `${ts} ${blocks.join('\n')}`
   }).join('\n\n') + '\n'
 }
 

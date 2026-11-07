@@ -45,22 +45,71 @@ export function saveStyle(style: SubStyle): void {
   try { localStorage.setItem(STORE, JSON.stringify(style)) } catch {}
 }
 
-interface CueLike { src: string; tr?: Record<string, string>; final: boolean }
+/** Text per line key for the moment on screen ('src', a language code, or 'site:<lang>'). */
+export type LineTexts = Record<string, string | undefined>
 
-/** The subtitle block drawn over the video. */
-export function SubtitleOverlay({ cue, style }: { cue: CueLike; style: SubStyle }) {
-  const rows = style.lines.filter(l => l.show).map(l => ({ l, text: l.key === 'src' ? cue.src : cue.tr?.[l.key] })).filter(r => r.text)
+/** The subtitle block drawn over the video. `draft` marks the original line while it is still being revised. */
+export function SubtitleOverlay({ texts, style, draft }: { texts: LineTexts; style: SubStyle; draft?: boolean }) {
+  const rows = style.lines.filter(l => l.show && texts[l.key])
   if (!rows.length) return null
   const edge = style.position === 'top' ? { top: `${style.offset}%` } : { bottom: `${style.offset}%` }
   return (
     <div className="dshl-sub" data-pos={style.position} style={{ ...edge, ['--subbg' as string]: String(style.bg) }}>
-      {rows.map(({ l, text }) => (
+      {rows.map((l, i) => (
         <div key={l.key}>
-          <span className={l.key === 'src' ? `src ${cue.final ? '' : 'draft'}` : 'tgt'} style={{ fontSize: `${l.size}cqw` }}>{text}</span>
+          <span className={`${i === 0 ? 'tgt' : 'src'} ${l.key === 'src' && draft ? 'draft' : ''} ${l.key.startsWith('site:') ? 'site' : ''}`} style={{ fontSize: `${l.size}cqw` }}>{texts[l.key]}</span>
         </div>
       ))}
     </div>
   )
+}
+
+/**
+ * Draw the same subtitles onto a canvas (for screenshots): sizes are % of the
+ * picture width, like the overlay's container units; lines wrap at 92% width.
+ */
+export function drawSubtitles(g: CanvasRenderingContext2D, W: number, H: number, texts: LineTexts, style: SubStyle): void {
+  const rows = style.lines.filter(l => l.show && texts[l.key])
+  if (!rows.length) return
+  const family = 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif'
+  const blocks = rows.map((l, i) => {
+    const px = (l.size / 100) * W
+    g.font = `${i === 0 ? 600 : 400} ${px}px ${family}`
+    const words = [...String(texts[l.key])]
+    const lines: string[] = []
+    let cur = ''
+    for (const ch of words) {
+      if (g.measureText(cur + ch).width > W * 0.88 && cur) { lines.push(cur); cur = ch.trimStart() } else cur += ch
+    }
+    if (cur) lines.push(cur)
+    return { px, weight: i === 0 ? 600 : 400, lines, color: i === 0 ? '#ffffff' : '#e6e6e6' }
+  })
+  const lineH = (px: number) => px * 1.55
+  const gap = (px: number) => px * 0.3
+  const total = blocks.reduce((h, b, i) => h + b.lines.length * lineH(b.px) + (i ? gap(b.px) : 0), 0)
+  let y = style.position === 'top' ? (style.offset / 100) * H : H - (style.offset / 100) * H - total
+  blocks.forEach((b, i) => {
+    if (i) y += gap(b.px)
+    g.font = `${b.weight} ${b.px}px ${family}`
+    for (const line of b.lines) {
+      const w = g.measureText(line).width
+      const padX = b.px * 0.45
+      const x = (W - w) / 2
+      g.fillStyle = `rgba(0,0,0,${style.bg})`
+      const r = b.px * 0.22
+      g.beginPath()
+      g.roundRect(x - padX, y + b.px * 0.08, w + padX * 2, lineH(b.px) - b.px * 0.16, r)
+      g.fill()
+      g.fillStyle = b.color
+      g.textBaseline = 'middle'
+      g.shadowColor = 'rgba(0,0,0,.45)'
+      g.shadowBlur = b.px * 0.08
+      g.shadowOffsetY = b.px * 0.04
+      g.fillText(line, x, y + lineH(b.px) / 2)
+      g.shadowColor = 'transparent'
+      y += lineH(b.px)
+    }
+  })
 }
 
 /** Settings panel: which lines, order, size per line, position, background. */

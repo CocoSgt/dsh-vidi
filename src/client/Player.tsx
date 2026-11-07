@@ -2,9 +2,9 @@ import Hls from 'hls.js'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from 'react'
 import { Icon } from './icons.tsx'
 import type { LiveKey } from './locales.ts'
-import { SubtitleOverlay, type SubStyle } from './subStyle.tsx'
+import { drawSubtitles, SubtitleOverlay, type LineTexts, type SubStyle } from './subStyle.tsx'
 
-export interface CueLike { id: number; start: number; end: number; src: string; tr?: Record<string, string>; final: boolean }
+export interface CueLike { id: number; start: number; end: number; src: string; tr?: Record<string, string>; final: boolean; polished?: boolean; speaker?: string }
 
 export interface PlayerHandle {
   seek(t: number): void
@@ -24,6 +24,8 @@ interface Props {
   subsAt?: number
   waitingText: string
   cues: CueLike[]
+  /** The site's own subtitle tracks that are switched on (key 'site:<lang>'). */
+  siteCues?: Record<string, { start: number; end: number; text: string }[]>
   style: SubStyle
   delay: number
   onDelay: (v: number) => void
@@ -34,8 +36,14 @@ interface Props {
   /** Inline action in the control bar (the subtitle start/pause button). */
   action?: ReactNode
   menus?: PlayerMenu[]
+  /** Save a screenshot (PNG of picture + subtitles as shown). */
+  onSnapshot?: (png: Blob, at: number) => Promise<{ url?: string; path?: string }>
+  /** Cut [from, to] into a clip. */
+  onClip?: (from: number, to: number) => Promise<{ url?: string; path?: string }>
   t: (k: LiveKey) => string
 }
+
+interface Toast { text: string; href?: string; busy?: boolean }
 
 const fmt = (s: number) => {
   if (!isFinite(s)) return '0:00'
@@ -49,7 +57,7 @@ const fmt = (s: number) => {
  * stage, so subtitles (sized in container units) and menus come along.
  */
 export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref) {
-  const { src, live, vod, duration, subsAt, waitingText, cues, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], t } = props
+  const { src, live, vod, duration, subsAt, waitingText, cues, siteCues, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], onSnapshot, onClip, t } = props
   const stage = useRef<HTMLDivElement>(null)
   const video = useRef<HTMLVideoElement>(null)
   const hls = useRef<Hls | null>(null)
@@ -65,6 +73,16 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   const [pageFull, setPageFull] = useState(false)
   const [idle, setIdle] = useState(false)
   const [menu, setMenu] = useState<string | null>(null)
+  const [speed, setSpeed] = useState(1)
+  const [toast, setToastRaw] = useState<Toast | null>(null)
+  const toastTimer = useRef<number>()
+  const setToast = (x: Toast | null, ms = 4500) => {
+    setToastRaw(x)
+    window.clearTimeout(toastTimer.current)
+    if (x && !x.busy) toastTimer.current = window.setTimeout(() => setToastRaw(null), ms)
+  }
+  /** Clip start while the user picks the end. */
+  const [clipIn, setClipIn] = useState<number | null>(null)
   const idleTimer = useRef<number>()
 
   useImperativeHandle(ref, () => ({ seek: (time: number) => { if (video.current) video.current.currentTime = Math.max(0, time) } }), [])
@@ -172,7 +190,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
       switch (e.key) {
         case ' ': case 'k': e.preventDefault(); togglePlay(); break
         case 'f': case 'F': toggleFull(); break
-        case 'Escape': if (menu) setMenu(null); else if (pageFull) setPageFull(false); else return; break
+        case 'Escape': if (clipIn !== null) { setClipIn(null); setToast(null) } else if (menu) setMenu(null); else if (pageFull) setPageFull(false); else return; break
         case 'm': case 'M': toggleMute(); break
         case 'c': case 'C': setCcOn(v => !v); break
         case 't': case 'T': onTheater(); break
@@ -196,18 +214,82 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   const total = vod ? Math.max(duration ?? 0, edge) : edge
   const behind = Math.max(0, edge - now)
   const atLive = behind < delay + 10
-  const current = ccOn ? cues.filter(c => c.start - 0.2 <= now && now <= c.end + 1.2).at(-1) : undefined
+  const current = cues.filter(c => c.start - 0.2 <= now && now <= c.end + 1.2).at(-1)
+  // What each line shows now; a translation identical to the original is not repeated.
+  const texts: LineTexts = {}
+  if (ccOn) {
+    if (current) {
+      texts.src = current.src
+      for (const [k, v] of Object.entries(current.tr ?? {})) if (v && v.trim() !== current.src.trim()) texts[k] = v
+    }
+    for (const [k, list] of Object.entries(siteCues ?? {})) texts[k] = list.find(c => c.start - 0.2 <= now && now <= c.end + 0.3)?.text
+  }
+
+  const snapshot = async () => {
+    const v = video.current
+    if (!v || !v.videoWidth || !onSnapshot) return
+    const W = v.videoWidth, H = v.videoHeight
+    const canvas = document.createElement('canvas')
+    canvas.width = W; canvas.height = H
+    const g = canvas.getContext('2d')!
+    g.drawImage(v, 0, 0, W, H)
+    drawSubtitles(g, W, H, texts, style)
+    const blob = new Promise<Blob>((res, rej) => canvas.toBlob(b => (b ? res(b) : rej(new Error('snapshot failed'))), 'image/png'))
+    // Copy to the clipboard right away (inside the click), then save into the video folder.
+    let copied = false
+    try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); copied = true } catch {}
+    try {
+      const r = await onSnapshot(await blob, now)
+      setToast({ text: copied ? t('player.shot.copied') : t('player.shot.saved'), href: r.url })
+    } catch (err) { setToast({ text: (err as Error).message }) }
+  }
+  const clip = async () => {
+    if (!onClip) return
+    if (clipIn === null) { setClipIn(now); setToast({ text: t('player.clip.in').replace('{t}', fmt(now)), busy: true }); return }
+    const from = Math.min(clipIn, now), to = Math.max(clipIn, now)
+    setClipIn(null)
+    if (to - from < 0.5) { setToast(null); return }
+    setToast({ text: t('player.clip.making').replace('{a}', fmt(from)).replace('{b}', fmt(to)), busy: true })
+    try {
+      const r = await onClip(from, to)
+      setToast({ text: t('player.clip.done').replace('{a}', fmt(from)).replace('{b}', fmt(to)), href: r.url }, 8000)
+    } catch (err) { setToast({ text: (err as Error).message }) }
+  }
+  const applySpeed = (v: number) => { setSpeed(v); if (video.current) video.current.playbackRate = v }
+  const playMenu: PlayerMenu = {
+    id: 'play', icon: <Icon.speed />, title: t('player.settings'), on: speed !== 1, content: (
+      <>
+        <div className="opt"><span>{t('player.speed')}</span>
+          <span className="dshl-seg">{[0.5, 0.75, 1, 1.25, 1.5, 2].map(v => <button key={v} className={speed === v ? 'on' : ''} onClick={() => applySpeed(v)}>{v}×</button>)}</span>
+        </div>
+        {showDelay && !vod && (
+          <label className="opt" title={t('player.delay.tip')}>
+            <span>{t('player.delay')} {delay}s</span>
+            <input type="range" min={2} max={120} step={1} value={delay} onChange={e => applyDelay(Number(e.target.value))} />
+          </label>
+        )}
+      </>
+    ),
+  }
+  const allMenus = [...menus.filter(m => m.id === 'cc'), playMenu, ...menus.filter(m => m.id !== 'cc')]
   // Controls stay up while a menu is open.
   const controlsHidden = idle && playing && !menu
   const pct = (v: number) => `${total ? (Math.min(v, total) / total) * 100 : 0}%`
-  const openMenu = menus.find(m => m.id === menu)
+  const openMenu = allMenus.find(m => m.id === menu)
 
   return (
     <div ref={stage} className={`dshl-stage ${full ? 'full' : ''} ${pageFull ? 'pagefull' : ''} ${controlsHidden ? 'idle' : ''}`} tabIndex={0}
       onMouseMove={poke} onMouseLeave={() => setIdle(true)} onDoubleClick={e => { if (!(e.target as HTMLElement).closest('.dshl-controls, .dshl-menu')) toggleFull() }}>
       <video ref={video} playsInline onClick={togglePlay} />
       {!ready && <div className="dshl-overlay"><div className="dshl-spinner" />{waitingText}</div>}
-      {current && <SubtitleOverlay cue={current} style={style} />}
+      <SubtitleOverlay texts={texts} style={style} draft={current ? !current.final : false} />
+      {toast && (
+        <div className="dshl-toast">
+          {toast.busy && <i className="dshl-spinner sm" />}<span>{toast.text}</span>
+          {toast.href && <a href={toast.href} target="_blank" rel="noreferrer">{t('player.open')}</a>}
+          {clipIn !== null && <button className="dshl-link" onClick={() => { setClipIn(null); setToast(null) }}>{t('player.cancel')}</button>}
+        </div>
+      )}
       {ready && live && !vod && (
         <button className={`dshl-livebadge ${atLive ? 'on' : ''}`} onClick={goLive} title={t('player.goLive')}>
           <Icon.live /> {atLive ? t('player.live') : t('player.behind').replace('{s}', fmt(behind))}
@@ -215,21 +297,21 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
       )}
       {openMenu && (
         <div className="dshl-menu" role="dialog" aria-label={openMenu.title}>
-          <div className="head">{openMenu.title}<button className="ghost" onClick={() => setMenu(null)}><Icon.close /></button></div>
-          <div className="body">
-            {openMenu.content}
-            {openMenu.id === 'cc' && showDelay && !vod && (
-              <label className="opt" title={t('player.delay.tip')}>
-                <span>{t('player.delay')} {delay}s</span>
-                <input type="range" min={2} max={30} step={1} value={delay} onChange={e => applyDelay(Number(e.target.value))} />
-              </label>
+          <div className="head">
+            <span>{openMenu.title}</span>
+            {openMenu.id === 'cc' && (
+              <button className={`dshl-switch ${ccOn ? 'on' : ''}`} role="switch" aria-checked={ccOn} title={`${t('player.cc')} (C)`} onClick={() => setCcOn(v => !v)}><i /></button>
             )}
+            <span className="grow" />
+            <button className="ghost" onClick={() => setMenu(null)}><Icon.close /></button>
           </div>
+          <div className="body">{openMenu.content}</div>
         </div>
       )}
       <div className="dshl-controls" onClick={e => e.stopPropagation()}>
         <div className="dshl-progress" style={{ ['--pos' as string]: pct(now), ['--done' as string]: vod ? pct(edge) : '100%', ['--subs' as string]: subsAt !== undefined ? pct(subsAt) : '0%' }}>
           {subsAt !== undefined && subsAt > 0 && <i className="subs" title={t('player.subsAt').replace('{t}', fmt(subsAt))} />}
+          {clipIn !== null && <i className="clip" style={{ left: pct(Math.min(clipIn, now)), width: `calc(${pct(Math.max(clipIn, now))} - ${pct(Math.min(clipIn, now))})` }} />}
           <input type="range" min={0} max={Math.max(total, 1)} step={0.1} value={Math.min(now, total)}
             onChange={e => { if (video.current) video.current.currentTime = Math.min(Number(e.target.value), edge) }} aria-label="seek" />
         </div>
@@ -241,7 +323,9 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
           <span className="time">{fmt(now)}{live && !vod ? '' : ` / ${fmt(total)}`}</span>
           <span className="grow" />
           {action}
-          {menus.map(m => (
+          {onSnapshot && <button className="ic" onClick={() => void snapshot()} title={t('player.shot')}><Icon.camera /></button>}
+          {onClip && <button className={`ic ${clipIn !== null ? 'on rec' : ''}`} onClick={() => void clip()} title={clipIn === null ? t('player.clip') : t('player.clip.end')}><Icon.scissors /></button>}
+          {allMenus.map(m => (
             <button key={m.id} className={`ic dshl-menubtn ${menu === m.id || m.on ? 'on' : ''}`} title={m.title} onClick={() => setMenu(v => (v === m.id ? null : m.id))}>{m.icon}</button>
           ))}
           {!full && !pageFull && <button className={`ic ${theater ? 'on' : ''}`} onClick={onTheater} title={`${t('player.theater')} (T)`}><Icon.theater /></button>}

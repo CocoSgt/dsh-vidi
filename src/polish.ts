@@ -13,7 +13,7 @@ export interface PolishDeps {
   siteText: (from: number, to: number) => { lang: string; auto: boolean; text: string }[]
   targets: () => string[]
   /** A line came back polished. */
-  onLine: (cue: Cue, src: string, tr: Record<string, string>) => void
+  onLine: (cue: Cue, src: string, tr: Record<string, string>, speaker?: string) => void
 }
 
 const CLOCK = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
@@ -85,8 +85,9 @@ export class Polisher {
       'You polish live speech-recognition subtitles and maintain the glossary for this video.',
       'Fix misheard words (names, terms, homophones) using the video background, the glossary, the site\'s own subtitles and the surrounding lines. Otherwise keep the speaker\'s words: do not rewrite, summarise, merge or split lines; keep every id.',
       targets.length ? `Translate each fixed line into: ${names}, as natural, concise subtitles.` : 'No translation is needed.',
+      'Speaker: say who says each line — a name when the background or context makes it clear (host, guest, a named person), otherwise "Speaker 1", "Speaker 2"… consistent with the earlier lines; if only one person talks, use the same label throughout.',
       'Glossary: keep names and terms that must stay consistent — people, groups, places, products, titles, jargon, and words recognition keeps getting wrong. Merge spelling variants under one correct form and list the wrong forms as aliases. Only add what the text or background confirms; correct or remove earlier entries when new evidence shows they were wrong. Skip ordinary words, and skip entries whose translation equals the source unless they have aliases. Return only changes.',
-      `Reply with JSON only: {"lines":[{"id":1,"src":"…"${targets.length ? `,"tr":{${targets.map(t => `"${t}":"…"`).join(',')}}` : ''}}],"glossary":{"set":[{"src":"correct form","aliases":["misheard form"],"tr":{"<lang>":"…"},"note":"who/what, short"}],"remove":["src"]}}`,
+      `Reply with JSON only: {"lines":[{"id":1,"speaker":"…","src":"…"${targets.length ? `,"tr":{${targets.map(t => `"${t}":"…"`).join(',')}}` : ''}}],"glossary":{"set":[{"src":"correct form","aliases":["misheard form"],"tr":{"<lang>":"…"},"note":"who/what, short"}],"remove":["src"]}}`,
     ].join('\n')
     const from = batch[0]!.start, to = batch.at(-1)!.end
     const site = this.deps.siteText(from, to)
@@ -94,7 +95,7 @@ export class Polisher {
       // Stable first (cache-friendly): background, then glossary, then the moving parts.
       this.deps.brief() ? `Video background (from the page; may contain spelling of names):\n${this.deps.brief()}\n` : '',
       `Glossary so far:\n${this.deps.glossary.forPrompt() || '(empty)'}\n`,
-      this.done.length ? `Earlier lines (already polished):\n${this.done.slice(-4).map(c => `- ${c.src}`).join('\n')}\n` : '',
+      this.done.length ? `Earlier lines (already polished):\n${this.done.slice(-6).map(c => `- ${c.speaker ? `[${c.speaker}] ` : ''}${c.src}`).join('\n')}\n` : '',
       site.length ? `The site's own subtitles for this stretch (may be wrong or misaligned):\n${site.map(s => `[${s.lang}${s.auto ? ', auto' : ''}] ${s.text}`).join('\n')}\n` : '',
       'Lines to polish:',
       JSON.stringify(batch.map(c => ({ id: c.id, t: CLOCK(c.start), src: c.src, ...(c.tr && targets.length ? { tr: c.tr } : {}) }))),
@@ -108,14 +109,14 @@ export class Polisher {
     const out = asm.blocks().filter((b: { type: string }) => b.type === 'text').map((b: { type: string; text?: string }) => b.text ?? '').join('')
     const m = out.match(/\{[\s\S]*\}/)
     if (!m) { this.deps.log(`polish: no JSON (${out.slice(0, 120)})`); this.done.push(...batch); return }
-    let res: { lines?: { id?: number; src?: string; tr?: Record<string, string> }[]; glossary?: TermChange }
+    let res: { lines?: { id?: number; src?: string; tr?: Record<string, string>; speaker?: string }[]; glossary?: TermChange }
     try { res = JSON.parse(m[0]) } catch { this.deps.log('polish: bad JSON'); this.done.push(...batch); return }
     for (const line of res.lines ?? []) {
       const cue = batch.find(c => c.id === line.id)
       if (!cue || typeof line.src !== 'string' || !line.src.trim()) continue
       const tr: Record<string, string> = {}
       for (const t of targets) if (typeof line.tr?.[t] === 'string') tr[t] = line.tr[t]!
-      this.deps.onLine(cue, line.src.trim(), tr)
+      this.deps.onLine(cue, line.src.trim(), tr, typeof line.speaker === 'string' && line.speaker.trim() ? line.speaker.trim().slice(0, 40) : undefined)
     }
     if (res.glossary) this.deps.glossary.apply(res.glossary)
     this.done.push(...batch)

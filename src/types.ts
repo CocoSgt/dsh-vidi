@@ -13,6 +13,8 @@ export interface Cue {
   final: boolean
   /** Re-read with context (fixed words, better translation). */
   polished?: boolean
+  /** Who says it (inferred during polishing; may be wrong). */
+  speaker?: string
 }
 
 /** What a speech provider hands back: cue text without an id yet. */

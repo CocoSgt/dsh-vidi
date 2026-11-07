@@ -101,9 +101,10 @@ export class LiveJob extends EventEmitter {
     mkdirSync(join(deps.dir, 'hls'), { recursive: true })
     this.polisher = new Polisher({
       llm: deps.llm, glossary: deps.glossary, log: m => deps.log(`[${id}] ${m}`),
-      brief: () => this.brief, siteText: (a, b) => this.siteText(a, b), targets: () => this.opts.tgtLangs,
-      onLine: (cue, src, tr) => {
+      brief: () => this.brief, siteText: (a, b) => this.siteText(a, b), targets: () => this.targets(),
+      onLine: (cue, src, tr, speaker) => {
         cue.src = src
+        if (speaker) cue.speaker = speaker
         if (Object.keys(tr).length) cue.tr = { ...cue.tr, ...tr }
         cue.polished = true
         this.emit('cue', cue)
@@ -445,7 +446,7 @@ export class LiveJob extends EventEmitter {
     if (cue.final) {
       // Real-time: a quick per-line translation now, polished a few lines later.
       // Polished mode: no quick pass; the polishing batch fixes and translates.
-      if (this.opts.mode === 'realtime' && !this.provider?.translates && cue.tr === undefined && this.opts.tgtLangs.length) this.translate(cue)
+      if (this.opts.mode === 'realtime' && !this.provider?.translates && cue.tr === undefined && this.targets().length) this.translate(cue)
       else { this.record(cue); this.polisher.add(cue) }
     }
   }
@@ -457,7 +458,7 @@ export class LiveJob extends EventEmitter {
     this.translating = this.translating.then(async () => {
       try {
         const ref = this.siteText(cue.start, cue.end).map(x => `[${x.lang}${x.auto ? ', auto' : ''}] ${x.text}`).join('\n')
-        const tr = await this.deps.translator.translate(this.opts.tgtLangs, cue.src, context, this.deps.glossary.forPrompt(), undefined, ref)
+        const tr = await this.deps.translator.translate(this.targets(), cue.src, context, this.deps.glossary.forPrompt(), undefined, ref)
         if (tr) {
           cue.tr = { ...cue.tr, ...tr }
           this.emit('cue', cue)
@@ -574,6 +575,18 @@ export class LiveJob extends EventEmitter {
       '-movflags', '+faststart', out], { timeout: 600_000 })
     for (const f of readdirSync(dir)) if (f.startsWith(`.${name}.`)) rmSync(join(dir, f), { force: true })
     return out
+  }
+
+  /** Language actually spoken (setting, or what recognition detected). */
+  private spokenLang(): string | undefined {
+    if (this.opts.srcLang !== 'auto') return this.opts.srcLang
+    return this.cues.findLast(c => c.lang)?.lang
+  }
+
+  /** Translation targets, minus the language already spoken (a Chinese video needs no Chinese translation). */
+  targets(): string[] {
+    const spoken = this.spokenLang()
+    return this.opts.tgtLangs.filter(t => t !== spoken)
   }
 
   private setBrief(text: string): void {

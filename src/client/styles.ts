@@ -376,6 +376,88 @@ const CSS = `
   background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #3b6ef5) 12%, transparent); color: var(--dsw-alias-state-business-primary, #3b6ef5); max-width: 100%; }
 .dshl-pastechip button svg { width: 13px; height: 13px; flex: none; }
 .dshl-pastechip .url { opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Subtitle line chips (one tap each; numbered = shown, top to bottom) */
+.dshl-chips .row { display: flex; flex-wrap: wrap; gap: 6px; }
+.dshl-chips .chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.dshl-chips .chip:hover { border-color: var(--accent); }
+.dshl-chips .chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg)); color: var(--accent); font-weight: 550; }
+.dshl-chips .chip i { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; margin-left: -4px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 11px; font-style: normal; font-weight: 600; }
+.dshl-chips .chip.site:not(.on) { border-style: dashed; }
+.dshl-chips select.chip.add { appearance: none; -webkit-appearance: none; border-style: dashed; color: var(--muted); padding: 0 12px; }
+.dshl-chips .chip.ghost { width: 30px; padding: 0; justify-content: center; color: var(--muted); }
+.dshl-more summary { cursor: pointer; color: var(--muted); font-size: 12.5px; list-style: none; }
+.dshl-more summary::before { content: '▸ '; }
+.dshl-more[open] summary::before { content: '▾ '; }
+.dshl-more[open] summary { margin-bottom: 8px; }
+
+/* Switch */
+.dshl-switch { position: relative; width: 34px; height: 20px; border: 0; border-radius: 999px; background: color-mix(in srgb, var(--ink) 18%, transparent); cursor: pointer; padding: 0; flex: none; }
+.dshl-switch i { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: left .15s; }
+.dshl-switch.on { background: var(--accent); }
+.dshl-switch.on i { left: 16px; }
+.dshl-menu .head { gap: 10px; }
+.dshl-menu .head .grow { flex: 1; }
+
+/* Player notices, clip range, recording state */
+.dshl-toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6; display: inline-flex; align-items: center; gap: 10px; max-width: calc(100% - 24px);
+  padding: 8px 14px; border-radius: 10px; background: rgba(20,20,22,.86); color: #fff; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
+.dshl-toast a, .dshl-toast .dshl-link { color: #8fb4ff; text-decoration: none; white-space: nowrap; }
+.dshl-spinner.sm { width: 14px; height: 14px; border-width: 2px; flex: none; }
+.dshl-progress i.clip { position: absolute; top: 0; height: 4px; background: rgba(255,215,64,.85); border-radius: 2px; pointer-events: none; }
+.dshl-ctrlrow .ic.rec { color: #ffd740; background: rgba(255,215,64,.16); }
+
+/* Subtitle progress inside the pill */
+.dshl-subsbtn.running { background: linear-gradient(to right, rgba(127,176,255,.45) var(--p, 0%), rgba(255,255,255,.14) var(--p, 0%)); }
+
+/* Download: choose, then one button */
+.dshl-dl { display: grid; gap: 14px; }
+.dshl-dl .grp { display: grid; gap: 8px; }
+.dshl-dl .cap { font-size: 12px; color: var(--muted); font-weight: 550; }
+.dshl-dl .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dshl-card-opt { display: grid; gap: 2px; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); cursor: pointer; font: inherit; }
+.dshl-card-opt b { font-size: 13.5px; font-weight: 600; }
+.dshl-card-opt span { font-size: 12px; color: var(--muted); }
+.dshl-card-opt:hover:not(:disabled) { border-color: var(--accent); }
+.dshl-card-opt.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--bg)); }
+.dshl-card-opt:disabled { opacity: .45; cursor: default; }
+.dshl-dl .dshl-btn.block { width: 100%; margin: 0; height: 40px; }
+.dshl-dl .dshl-btn.block + .dshl-btn.block { margin-top: -6px; }
+.dshl-dl .dshl-btn.progress { background: linear-gradient(to right, color-mix(in srgb, var(--accent) 30%, var(--bg)) var(--p, 0%), var(--l1) var(--p, 0%)); cursor: default; }
+.dshl-dl .err { margin: 0; color: var(--live); font-size: 12.5px; }
+
+/* Glossary (model-maintained) */
+.dshl-gl2 { display: grid; gap: 2px; align-content: start; }
+.dshl-gl2 .term { padding: 8px 8px; border-radius: 8px; }
+.dshl-gl2 .term:hover { background: var(--hover); }
+.dshl-gl2 .line { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: 13.5px; }
+.dshl-gl2 .line .tr { color: var(--muted); }
+.dshl-gl2 .line .tr::before { content: '→ '; color: var(--faint); }
+.dshl-gl2 .line .grow { flex: 1; }
+.dshl-gl2 .line button.ghost { opacity: 0; width: 24px; height: 24px; }
+.dshl-gl2 .term:hover .line button.ghost { opacity: 1; }
+.dshl-gl2 .tag { font-size: 11px; padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.dshl-gl2 .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 2px; font-size: 12px; color: var(--faint); }
+.dshl-gl2 .term.edit { display: grid; gap: 6px; background: var(--l1); }
+.dshl-gl2 .term.edit input { height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; }
+.dshl-gl2 .term.edit .acts { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+
+/* Transcript: lines vs reading */
+.dshl-line.raw .main, .dshl-line.raw .sub { opacity: .62; }
+.dshl-tools .dshl-seg { height: 30px; }
+.dshl-tools .grow { flex: 1; }
+.dshl-read { overflow: auto; flex: 1; min-height: 0; display: grid; gap: 14px; align-content: start; padding: 2px 2px 12px; max-height: calc(100vh - 290px); }
+.dshl.page .dshl-read { max-height: none; }
+.dshl-read section { padding: 2px 8px 2px 10px; border-left: 2px solid transparent; }
+.dshl-read section.active { border-left-color: var(--accent); }
+.dshl-read header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 12.5px; }
+.dshl-read header b { color: var(--ink); }
+.dshl-read header .ts { border: 0; background: none; padding: 0; color: var(--faint); font: inherit; font-size: 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.dshl-read p { margin: 0 0 4px; font-size: 14px; line-height: 1.7; }
+.dshl-read p.src { color: var(--ink); }
+.dshl-read p.tr { color: var(--muted); }
 /* Login dialog */
 .dshl-modal { position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.36); }
 .dshl-modal .box { position: relative; width: min(400px, 100%); padding: 28px 24px 20px; border-radius: 16px; background: var(--bg); color: var(--ink);

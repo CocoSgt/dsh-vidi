@@ -10,7 +10,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { checkDeps } from './deps.ts'
-import type { ExportFormat } from './export.ts'
+import { exportCues, type ExportFormat } from './export.ts'
 import { Glossary } from './glossary.ts'
 import { LiveJob } from './job.ts'
 import { Downloads } from './downloads.ts'
@@ -394,7 +394,15 @@ export function apply(ctx: Context, config: Config): void {
         // The site's own subtitle track: [{start,end,text}].
         const job = jobs.get(url.searchParams.get('jobId') ?? '')
         if (!job) return send(res, 404, { error: 'no such job' })
-        return send(res, 200, job.siteCues.get(url.searchParams.get('key') ?? '') ?? [])
+        const list = job.siteCues.get(url.searchParams.get('key') ?? '') ?? []
+        const fmt = url.searchParams.get('format')
+        if (fmt === 'srt' || fmt === 'vtt' || fmt === 'txt' || fmt === 'md') {
+          const text = exportCues(list.map((c, i) => ({ id: i + 1, start: c.start, end: c.end, src: c.text, final: true })), ['src'], fmt, job.summary().title)
+          res.writeHead(200, { 'content-type': MIME[`.${fmt}`] ?? 'text/plain; charset=utf-8', 'content-disposition': `attachment; filename="site.${fmt}"`, 'cache-control': 'no-store' })
+          res.end(text)
+          return
+        }
+        return send(res, 200, list)
       }
       if (route === 'snapshot' && req.method === 'POST') {
         // Raw PNG of what the player shows (picture + subtitles), saved into the video folder.
