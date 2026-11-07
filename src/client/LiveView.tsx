@@ -4,6 +4,7 @@ import { ChatPanel, type SessionFaceLike } from './ChatPanel.tsx'
 import { Icon } from './icons.tsx'
 import { langLabel } from './langs.ts'
 import { LineChips } from './LineChips.tsx'
+import { SubtitleMenu } from './SubtitleMenu.tsx'
 import type { LiveKey } from './locales.ts'
 import { LoginDialog } from './LoginDialog.tsx'
 import { Player, type CueLike, type PlayerHandle, type PlayerMenu } from './Player.tsx'
@@ -505,16 +506,8 @@ export function LiveView(props: LiveViewInjected) {
                   label: `${t('player.cc')} · ${lines.filter(l => !l.startsWith('site:') || siteChips.some(c => c.key === l)).map(k => siteChips.find(c => c.key === k)?.label ?? langName(k)).join(' · ')}`,
                   content: (
                     <>
-                      <LineChips lines={lines} onChange={l => void changeLines(l)} options={langOptions} site={siteChips} name={langName} t={t} />
-                      <div className="dshl-seg wide">
-                        {(['everyday', 'present', 'single'] as PresetName[]).map(p => (
-                          <button key={p} onClick={() => setSubStyle(preset(p, shownLines))}>{t(`preset.${p}` as LiveKey)}</button>
-                        ))}
-                      </div>
-                      <details className="dshl-more">
-                        <summary>{t('sub.more')}</summary>
-                        <SubtitleSettings style={subStyle} onChange={setSubStyle} t={t} onReset={() => setSubStyle(defaultStyle(shownLines))} langName={k => siteChips.find(x => x.key === k)?.label ?? langName(k)} />
-                      </details>
+                      <SubtitleMenu lines={lines} onLines={l => void changeLines(l)} options={langOptions} site={siteChips} name={langName}
+                        style={subStyle} onStyle={setSubStyle} t={t} />
                     </>
                   ),
                 },

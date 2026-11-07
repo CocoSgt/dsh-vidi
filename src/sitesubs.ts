@@ -31,12 +31,12 @@ export function pickTracks(info: Record<string, any>): SiteTrack[] {
     if (skip.test(lang)) continue
     out.push({ key: `site:${lang}`, lang, name: list?.[0]?.name, auto: false })
   }
-  const own = String(info.language ?? '')
-  for (const lang of Object.keys((info.automatic_captions ?? {}) as Record<string, unknown>)) {
-    const orig = lang.endsWith('-orig') || (own && (lang === own || lang.split('-')[0] === own.split('-')[0]))
-    if (!orig || out.some(t => t.lang === lang.replace(/-orig$/, ''))) continue
-    out.push({ key: `site:${lang}`, lang, auto: true })
-  }
+  // Automatic captions: only the video's own language. YouTube marks auto-dubbed audio
+  // languages "-orig" too, so "-orig" alone does not mean "the video's language".
+  const own = String(info.language ?? '').split('-')[0]!.toLowerCase()
+  const autoKeys = Object.keys((info.automatic_captions ?? {}) as Record<string, unknown>)
+  const auto = own ? (autoKeys.find(k => k.toLowerCase() === `${own}-orig`) ?? autoKeys.find(k => k.split('-')[0]!.toLowerCase() === own)) : undefined
+  if (auto && !out.some(t => t.lang.split('-')[0]!.toLowerCase() === own)) out.push({ key: `site:${auto}`, lang: auto, auto: true })
   return out.slice(0, 6)
 }
 

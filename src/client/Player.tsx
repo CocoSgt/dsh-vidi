@@ -324,10 +324,10 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
         <div className="dshl-menu" role="dialog" aria-label={openMenu.title}>
           <div className="head">
             <span>{openMenu.title}</span>
+            <span className="grow" />
             {openMenu.id === 'cc' && (
               <button className={`dshl-switch ${ccOn ? 'on' : ''}`} role="switch" aria-checked={ccOn} title={`${t('player.cc')} (C)`} onClick={() => setCcOn(v => !v)}><i /></button>
             )}
-            <span className="grow" />
             <button className="ghost" onClick={() => setMenu(null)}><Icon.close /></button>
           </div>
           <div className="body">{openMenu.content}</div>

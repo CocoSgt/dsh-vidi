@@ -139,7 +139,7 @@ export class LiveJob extends EventEmitter {
     if (this.opts.source === 'push' && this.message) return // an idle push listener is not worth keeping
     try {
       writeFileSync(join(this.deps.dir, 'job.json'), JSON.stringify({
-        id: this.id, opts: this.opts, title: this.title, vod: this.vod, duration: this.duration,
+        id: this.id, opts: this.opts, title: this.title, vod: this.vod, duration: this.duration, siteLang: this.siteLang,
         startedAt: this.startedAt, subs: this.subs, status: this.status,
       }, null, 2))
     } catch {}
@@ -166,7 +166,12 @@ export class LiveJob extends EventEmitter {
       job.cues.push(...[...seen.values()].sort((a, b) => a.start - b.start))
       job.nextId = Math.max(0, ...job.cues.map(c => c.id)) + 1
       if (existsSync(join(dir, 'brief.txt'))) job.brief = readFileSync(join(dir, 'brief.txt'), 'utf8')
+      job.siteLang = (j as { siteLang?: string }).siteLang
       const site = loadSiteSubs(dir)
+      // Older jobs kept every "-orig" auto track (YouTube's auto-dubs): keep only the spoken language's.
+      const spoken = (job.siteLang ?? job.cues.find(c => c.lang)?.lang ?? '').split('-')[0]
+      const autos = site.tracks.filter(t => t.auto)
+      site.tracks = site.tracks.filter(t => !t.auto || autos.length === 1 || (spoken && t.lang.split('-')[0] === spoken))
       job.siteTracks = site.tracks
       for (const [k, v] of site.cues) job.siteCues.set(k, v)
       const at = j.subs?.at ?? job.cues.at(-1)?.end ?? 0
