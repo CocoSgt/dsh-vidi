@@ -168,9 +168,13 @@ html[data-platform='darwin']:not([data-fullscreen]) .dshl-pagewrap .dshl.page .d
    publishes how much room they take: the top bar starts after them. */
 .dshl-panelwrap { height: 100%; min-height: 0; background: var(--dsw-alias-bg-base, #fff); }
 .dshl-panelwrap .dshl.page .dshl-top { padding-left: max(20px, var(--dsh-frame-leading-clearance, 0px)); }
-/* Narrow windows (sidebar as a drawer): the app gives its opener a row of its own above the page. */
-[data-sidebar-drawer] .dshl-panelwrap .dshl.page .dshl-top { padding-left: 12px; }
-html[data-platform='darwin']:not([data-fullscreen]) .dshl-panelwrap .dshl.page .dshl-top { padding-top: 4px; padding-bottom: 8px; }
+/* Web page in a narrow window (sidebar as a drawer): the app gives its opener a row of its own above
+   the page, so the bar starts at the edge. The desktop app keeps the opener on the bar's row instead
+   (beside the traffic lights on macOS), and the clearance above leaves room for it. */
+html:not([data-platform]) [data-sidebar-drawer] .dshl-panelwrap .dshl.page .dshl-top { padding-left: 12px; }
+/* macOS: the app's window controls (traffic lights, sidebar toggle, new chat) are centred at y 25 in
+   every state, full screen included; the bar's 40px row is centred on the same line. */
+html[data-platform='darwin'] .dshl-panelwrap .dshl.page .dshl-top { padding-top: 5px; padding-bottom: 8px; }
 html[data-platform='darwin'] .dshl.page .dshl-top { -webkit-app-region: drag; app-region: drag; }
 html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, select, .dshl-pick) { -webkit-app-region: no-drag; app-region: no-drag; }
 .dshl.page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
@@ -622,6 +626,8 @@ let done = false
 export function ensureStyles(): void {
   if (done || typeof document === 'undefined') return
   done = true
+  // An update loads this module again without reloading the page: replace the old rules, never stack on them.
+  for (const old of document.querySelectorAll('style[data-dsh-live]')) old.remove()
   const el = document.createElement('style')
   el.dataset.dshLive = ''
   el.textContent = CSS
