@@ -207,7 +207,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .dshl-pagewrap .dshl.page .d
 html:not([data-platform]) [data-sidebar-drawer] .dshl-panelwrap .dshl.page .dshl-top { padding-left: 12px; }
 /* macOS: the app's window controls (traffic lights, sidebar toggle, new chat) are centred at y 25 in
    every state, full screen included; the bar's 40px row is centred on the same line. */
-html[data-platform='darwin'] .dshl-panelwrap .dshl.page .dshl-top { padding-top: 5px; padding-bottom: 8px; }
+html[data-platform='darwin'] .dshl-panelwrap .dshl.page .dshl-top { padding-top: 12px; padding-bottom: 12px; }
 html[data-platform='darwin'] .dshl.page .dshl-top { -webkit-app-region: drag; app-region: drag; }
 html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .dshl-select, .dshl-pick) { -webkit-app-region: no-drag; app-region: no-drag; }
 .dshl.page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
