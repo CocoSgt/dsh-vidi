@@ -611,6 +611,7 @@ body > .dshl-menu { z-index: 2147483002; }
 .dshl-pop.settings .srow + .srow { border-top: 1px solid var(--line-soft); }
 .dshl-pop.settings .srow.version .vline { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; color: var(--faint); font-size: 12.5px; }
 .dshl-pop.settings .srow.version .new { color: #e5484d; font-weight: 550; }
+.dshl-pop.settings .srow.version .dshl-btn.small { height: 28px; padding: 0 12px; border-radius: 7px; font-size: 12.5px; }
 .dshl-pop.settings .srow > .dshl-select, .dshl-pop.settings .srow > .dshl-seg { width: 168px; }
 .dshl-pop.settings .srow > .dshl-seg button { flex: 1; padding: 0 6px; }
 .dshl .srow.col { display: grid; justify-content: stretch; gap: 8px; padding: 10px 0; }

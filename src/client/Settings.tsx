@@ -60,7 +60,7 @@ async function post(path: string, body: unknown): Promise<any> {
 
 /** Everything most people never touch, behind one gear: recognition and its key, mode, spoken language, site login. */
 /** This Vidi and the newest release on npm (checked by the host at start and daily). */
-export interface UpdateInfo { current: string; latest?: string; newer: boolean; checkedAt?: number; error?: string }
+export interface UpdateInfo { current: string; latest?: string; newer: boolean; canInstall?: boolean; checkedAt?: number; error?: string }
 
 export function Settings(props: {
   engine: string
@@ -89,6 +89,19 @@ export function Settings(props: {
   const { engine, onEngine, mode, onMode, spoken, onSpoken, langOptions, login, onLogin, browsers, providers, shared, name, onKey, disabled, open, onOpen, update, onCheckUpdate, t } = props
   const [checking, setChecking] = useState(false)
   const [checked, setChecked] = useState(false)
+  // One-click update: installing, then "restart to finish" or what went wrong.
+  const [installing, setInstalling] = useState(false)
+  const [installed, setInstalled] = useState<{ status: 'applied' | 'restart' | 'failed'; version?: string; message?: string } | null>(null)
+  const installUpdate = async () => {
+    setInstalling(true); setInstalled(null)
+    try {
+      const r = await fetch('/live/api/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      const j = await r.json()
+      setInstalled(j)
+      if (j.status === 'applied') setTimeout(() => location.reload(), 800)
+    } catch (e) { setInstalled({ status: 'failed', message: (e as Error).message }) }
+    setInstalling(false)
+  }
   const box = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -250,12 +263,16 @@ export function Settings(props: {
               <span className="vline">
                 <span>{t('upd.version').replace('{v}', update.current)}</span>
                 {update.newer
-                  ? <span className="new">{t('upd.available').replace('{v}', update.latest ?? '')}</span>
+                  ? update.canInstall && !installed
+                    ? <button className="dshl-btn primary small" disabled={installing} onClick={() => void installUpdate()}>{installing ? t('upd.installing') : t('upd.install').replace('{v}', update.latest ?? '')}</button>
+                    : <span className="new">{installed?.status === 'restart' ? t('upd.restart').replace('{v}', installed.version ?? '') : installed?.status === 'applied' ? t('upd.applied') : t('upd.available').replace('{v}', update.latest ?? '')}</span>
                   : <button className="dshl-link" disabled={checking} onClick={() => { setChecking(true); void onCheckUpdate?.().finally(() => { setChecking(false); setChecked(true) }) }}>
                       {checking ? t('upd.checking') : checked && !update.error ? t('upd.latest') : t('upd.check')}
                     </button>}
               </span>
-              {update.newer && <span className="hint">{t('upd.how')}</span>}
+              {update.newer && !update.canInstall && <span className="hint">{t('upd.how')}</span>}
+              {installed?.status === 'restart' && <span className="hint">{t('upd.restartHow')}</span>}
+              {installed?.status === 'failed' && <span className="hint">{t('upd.installFailed').replace('{m}', installed.message ?? '')}</span>}
               {checked && update.error && <span className="hint">{t('upd.failed')}</span>}
             </div>
           )}
