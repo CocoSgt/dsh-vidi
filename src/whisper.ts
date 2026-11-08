@@ -48,7 +48,13 @@ export class WhisperServer {
   private starting?: Promise<number>
   private users = 0
 
-  constructor(private readonly model: string, private readonly log: (msg: string) => void) {}
+  /**
+   * @param audioCtx Whisper's encoder window in frames (1500 = 30 s). Chunks
+   * here are a few seconds long, and the encoder costs the same for 5 s as for
+   * 30 s unless the window is cut down: a window just over the longest chunk
+   * made recognition about 2.5× faster (Apple M5, large-v3-turbo).
+   */
+  constructor(private readonly model: string, private readonly log: (msg: string) => void, private readonly audioCtx = 0) {}
 
   async acquire(): Promise<number> {
     this.users++
@@ -64,7 +70,7 @@ export class WhisperServer {
 
   private async boot(): Promise<number> {
     const port = await freePort()
-    const proc = spawn('whisper-server', ['-m', this.model, '--host', '127.0.0.1', '--port', String(port), '-t', '8', '-nt'], { stdio: ['ignore', 'ignore', 'pipe'] })
+    const proc = spawn('whisper-server', ['-m', this.model, '--host', '127.0.0.1', '--port', String(port), '-t', '8', '-nt', ...(this.audioCtx ? ['-ac', String(this.audioCtx)] : [])], { stdio: ['ignore', 'ignore', 'pipe'] })
     this.proc = proc
     proc.on('exit', code => {
       this.log(`whisper-server exited (${code})`)

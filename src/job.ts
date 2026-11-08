@@ -521,9 +521,12 @@ export class LiveJob extends EventEmitter {
     const p = this.provider
     this.provider = undefined
     await p?.stop().catch(() => {})
+    // Say it right away: the lines still being translated or polished finish in the background.
+    this.subs = { state, at: this.subs.at }
+    this.persist()
+    this.emit('state', this.summary())
     await this.translating
     await this.polisher.flush()
-    this.subs = { state, at: this.subs.at }
     this.save()
     this.persist()
     this.emit('state', this.summary())
@@ -555,7 +558,8 @@ export class LiveJob extends EventEmitter {
       this.deps.glossary.notice(cue.src)
       // Real-time: a quick per-line translation now, polished a few lines later.
       // Polished mode: no quick pass; the polishing batch fixes and translates.
-      if (this.opts.mode === 'realtime' && !this.provider?.translates && cue.tr === undefined && this.targets().length) this.translate(cue)
+      // ('site' mode only transcribes when asked; then it works like real-time.)
+      if (this.opts.mode !== 'polished' && !this.provider?.translates && cue.tr === undefined && this.targets().length) this.translate(cue)
       else { this.record(cue); this.polisher.add(cue) }
     }
   }

@@ -1,5 +1,6 @@
 import type { LiveKey } from './locales.ts'
 import type { SubStyle } from './subStyle.tsx'
+import { Pick } from './Pick.tsx'
 
 /** Sizes (% of picture width) for the main line and the second line, per step. */
 const SIZES = { s: [2.8, 2.2], m: [3.6, 2.8], l: [4.8, 3.6] } as const
@@ -30,16 +31,12 @@ export function SubtitleMenu(props: {
   const label = (k: string) => site.find(s => s.key === k)?.label ?? name(k)
   // Choices: the original, languages already in use, the site's own tracks, then any other language (translated on demand).
   const inUse = lines.filter(l => l !== 'src' && !l.startsWith('site:'))
-  const choices = (
-    <>
-      <option value="src">{label('src')}</option>
-      {inUse.map(k => <option key={k} value={k}>{label(k)}</option>)}
-      {site.length > 0 && <optgroup label={t('sub.siteGroup')}>{site.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}</optgroup>}
-      <optgroup label={t('sub.translateTo')}>
-        {options.filter(([k]) => !inUse.includes(k)).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-      </optgroup>
-    </>
-  )
+  const choices = [
+    { value: 'src', label: label('src') },
+    ...inUse.map(k => ({ value: k, label: label(k) })),
+    ...site.map(s => ({ value: s.key, label: s.label, group: t('sub.siteGroup') })),
+    ...options.filter(([k]) => !inUse.includes(k)).map(([k, v]) => ({ value: k, label: v, group: t('sub.translateTo') })),
+  ]
   const setMain = (v: string) => onLines(v === second ? [v, main] : second ? [v, second] : [v])
   const setSecond = (v: string) => onLines(!v ? [main] : v === main ? [main] : [main, v])
   const first = style.lines.find(l => l.show)?.size ?? SIZES.m[0]
@@ -52,14 +49,11 @@ export function SubtitleMenu(props: {
       <div className="slots">
         <label className="slot">
           <span>{t('sub.main')}</span>
-          <select value={main} onChange={e => setMain(e.target.value)}>{choices}</select>
+          <Pick value={main} onChange={setMain} options={choices} />
         </label>
         <label className="slot">
           <span>{t('sub.second')}</span>
-          <select value={second} onChange={e => setSecond(e.target.value)}>
-            <option value="">{t('sub.none')}</option>
-            {choices}
-          </select>
+          <Pick value={second} onChange={setSecond} options={[{ value: '', label: t('sub.none') }, ...choices]} />
         </label>
         {second && <button className="swap" onClick={() => onLines([second, main])}>⇅ {t('sub.swapMain')}</button>}
       </div>

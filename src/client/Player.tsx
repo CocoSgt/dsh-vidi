@@ -126,7 +126,9 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
       if (cancelled) return
       if (Hls.isSupported()) {
         // Videos start at 0 and never jump ahead; live streams sit `delay` seconds behind the edge.
-        const h = new Hls(vod ? { startPosition: lastTime.current, backBufferLength: Infinity } : { liveSyncDuration: delay, liveMaxLatencyDuration: delay + 60, backBufferLength: 1800 })
+        // Live: start `delay` behind the edge, and stay wherever the viewer drags to (no max latency, so
+        // hls.js never pulls them back to the edge); the live badge / L key goes back on purpose.
+        const h = new Hls(vod ? { startPosition: lastTime.current, backBufferLength: Infinity } : { liveSyncDuration: delay, backBufferLength: Infinity })
         hls.current = h
         h.loadSource(src)
         h.attachMedia(el)
@@ -185,7 +187,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   // Close a menu when clicking elsewhere.
   useEffect(() => {
     if (!menu) return
-    const close = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest?.('.dshl-menu, .dshl-menubtn')) setMenu(null) }
+    const close = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest?.('.dshl-menu, .dshl-menubtn, .dshl-options')) setMenu(null) }
     window.addEventListener('mousedown', close)
     return () => window.removeEventListener('mousedown', close)
   }, [menu])
@@ -220,7 +222,6 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
     const h = hls.current, el = video.current
     if (h && el) {
       h.config.liveSyncDuration = v
-      h.config.liveMaxLatencyDuration = v + 60
       const pos = h.liveSyncPosition
       if (pos != null) el.currentTime = pos
     }

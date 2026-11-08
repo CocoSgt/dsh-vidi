@@ -1,6 +1,7 @@
 import { Icon } from './icons.tsx'
 import type { LiveKey } from './locales.ts'
 import type { Browser } from './Settings.tsx'
+import { Pick } from './Pick.tsx'
 
 /** Shown when a site needs a login no browser session provided: sign in there, pick a browser, retry. */
 export function LoginDialog(props: {
@@ -22,9 +23,7 @@ export function LoginDialog(props: {
         <p>{t('login.body')}</p>
         <div className="srow">
           <span>{t('login.from')}</span>
-          <select value={browser} onChange={e => onBrowser(e.target.value)}>
-            {browsers.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
-          </select>
+          <Pick value={browser} onChange={onBrowser} options={browsers.map(b => ({ value: b.id, label: b.label }))} />
         </div>
         <div className="acts">
           <a className="dshl-btn" href={`https://${site}`} target="_blank" rel="noreferrer">{t('login.open')} ↗</a>

@@ -1,5 +1,6 @@
 import { Icon } from './icons.tsx'
 import type { LiveKey } from './locales.ts'
+import { Pick } from './Pick.tsx'
 
 const MAX_TRANSLATIONS = 4
 
@@ -38,10 +39,8 @@ export function LineChips(props: {
           )
         })}
         {translations.length < MAX_TRANSLATIONS && (
-          <select className="chip add" value="" onChange={e => { if (e.target.value) onChange([...lines, e.target.value]) }} title={t('in.addLang')}>
-            <option value="">{t('sub.addLang')}</option>
-            {options.filter(([k]) => !lines.includes(k)).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
+          <Pick className="chip add" value="" label={t('sub.addLang')} title={t('in.addLang')} onChange={v => { if (v) onChange([...lines, v]) }}
+            options={options.filter(([k]) => !lines.includes(k)).map(([k, v]) => ({ value: k, label: v }))} />
         )}
         {lines.length > 1 && (
           <button className="chip ghost" title={t('sub.swap')} onClick={() => onChange([...lines.slice(1), lines[0]!])}><Icon.swap /></button>

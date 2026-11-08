@@ -16,6 +16,8 @@ import { engineLabel, Settings, type Browser, type Provider } from './Settings.t
 import { loadStyle, reconcile, saveStyle, type SubStyle } from './subStyle.tsx'
 
 type Source = 'url' | 'push' | 'file'
+/** Live subtitles: the site's own (no delay), real-time (a few seconds behind) or polished (a minute or two behind). */
+type LiveMode = 'site' | 'realtime' | 'polished'
 interface NeedsLogin { site: string; browser?: string; detail: string }
 interface Summary {
   id: string; status: 'resolving' | 'running' | 'stopping' | 'stopped' | 'error'; message?: string; title?: string
@@ -51,6 +53,10 @@ export interface LiveViewInjected {
   onClose?: () => void
   /** Page mode as one of the app's main panels (no back button: the sidebar stays). */
   page?: boolean
+  /** Video page: a different video was asked for while one is open — open it in a conversation of its own (resolves false to switch in place). */
+  onNewVideo?: (link: string) => Promise<boolean>
+  /** Video page: the video's title is known — name the conversation after it. */
+  onTitle?: (title: string) => void
   /** A link to open right away (sidebar, paste prompt). */
   pending?: string
   onPendingDone?: () => void
@@ -129,8 +135,9 @@ export function LiveView(props: LiveViewInjected) {
   // Default: the viewer's language + the original.
   const [lines, setLinesRaw] = useState<string[]>(() => store.get('lines', [browserLang(), 'src']))
   const setLines = (l: string[]) => { setLinesRaw(l); store.set('lines', l) }
-  const [mode, setModeRaw] = useState<'realtime' | 'polished'>(() => store.get('mode', 'realtime'))
-  const setMode = (m: 'realtime' | 'polished') => { setModeRaw(m); store.set('mode', m) }
+  // Live subtitles: the site's own (no delay), real-time (seconds behind) or polished (a minute or two behind, the default).
+  const [mode, setModeRaw] = useState<LiveMode>(() => store.get('mode', 'polished'))
+  const setMode = (m: LiveMode) => { setModeRaw(m); store.set('mode', m) }
   const [engine, setEngineRaw] = useState<string>(() => store.get('engine', ''))
   const setEngine = (e: string) => { setEngineRaw(e); store.set('engine', e) }
   const [spoken, setSpoken] = useState('auto')
@@ -177,6 +184,15 @@ export function LiveView(props: LiveViewInjected) {
   const langOptions = useMemo(() => Object.entries(langs).filter(([k]) => k !== 'auto').map(([k, v]) => [k, langLabel(k, ui, v)] as [string, string]), [langs, ui])
   const langName = useCallback((k: string) => (k === 'src' ? t('sub.source') : langLabel(k, ui, langs[k])), [langs, t, ui])
   // Lines on screen: the job's own lines while one is shown, else the picker.
+  // No-delay mode shows the site's own subtitles: the ones picked, else the best track the site has.
+  const siteBest = useMemo(() => {
+    const list = job?.site ?? []
+    const base = (l: string) => l.replace(/-orig$/, '').split('-')[0]
+    return (list.find(x => !x.auto && base(x.lang) === ui) ?? list.find(x => !x.auto) ?? list.find(x => base(x.lang) === ui) ?? list[0])?.key
+  }, [job?.site, ui])
+  const siteOnly = mode === 'site' && !!job
+  // Only the picture changes: the subtitle list keeps the lines made here. (A video without subtitles of its own keeps them on screen too.)
+  const screenLines = siteOnly && siteBest ? (lines.some(l => l.startsWith('site:')) ? lines.filter(l => l.startsWith('site:')) : [siteBest]) : lines
   const shownLines = lines
   /** The chosen recognition, or — when it can't run here (no key, not installed) — the first one that can. */
   const usableEngine = () => {
@@ -202,7 +218,7 @@ export function LiveView(props: LiveViewInjected) {
     }).catch(() => {})
   }, [sessionId])
 
-  useEffect(() => { setSubStyle(s => reconcile(s, shownLines)) }, [shownLines.join(',')])
+  useEffect(() => { setSubStyle(s => reconcile(s, screenLines)) }, [screenLines.join(',')])
   useEffect(() => { saveStyle(subStyle) }, [subStyle])
   useEffect(() => { const id = setInterval(() => setTick(Date.now()), 1000); return () => clearInterval(id) }, [])
 
@@ -281,6 +297,8 @@ export function LiveView(props: LiveViewInjected) {
     setError('')
     const c = forced ? { source: forced, url: target } : classify(target)
     if (!c) return
+    // Another video while one is open: it gets its own conversation (this one keeps its video and chat).
+    if (props.onNewVideo && job && job.source !== 'push' && job.url !== c.url && c.source !== 'push' && await props.onNewVideo(target)) return
     try {
       const j = await post('start', { ...options(), source: c.source, url: c.url })
       setCues([]); setTerms([]); setJob(j); setArmed(null)
@@ -294,14 +312,44 @@ export function LiveView(props: LiveViewInjected) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending])
   const subs = job?.subs ?? { state: 'off' as const, at: 0 }
-  const startSubs = async (from?: number) => {
+  // Name the conversation after its video once the title is known (once per video).
+  useEffect(() => {
+    if (!job?.title || !props.onTitle) return
+    const key = `dsh-live.named.${sessionId}`
+    try { if (localStorage.getItem(key) === job.id) return; localStorage.setItem(key, job.id) } catch {}
+    props.onTitle(job.title)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.id, job?.title])
+  // How fast transcription moves compared with the clock (live streams): below 1× the subtitles fall further behind.
+  const rateLog = useRef<{ wall: number; at: number }[]>([])
+  const [rate, setRate] = useState<number | null>(null)
+  useEffect(() => {
+    if (!job || job.vod || job.status !== 'running' || subs.state !== 'running') { rateLog.current = []; setRate(null); return }
+    const log = rateLog.current
+    log.push({ wall: Date.now(), at: subs.at })
+    while (log.length > 2 && log[0]!.wall < Date.now() - 120_000) log.shift()
+    const first = log[0]!, last = log.at(-1)!
+    setRate(last.wall - first.wall > 45_000 ? (last.at - first.at) / ((last.wall - first.wall) / 1000) : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subs.at, subs.state, job?.status, job?.id])
+  // Listening but nobody has spoken yet (music, an ad break, a countdown): say so instead of looking stuck.
+  const emptyLines = subs.state === 'running' && cues.length === 0 && subs.at > 15 ? t('tr.listening').replace('{t}', CLOCK(subs.at)) : t('tr.empty')
+  const startSubs = async (from?: number, withMode?: LiveMode) => {
     if (!job) return
     setError('')
     const p = providers.find(x => x.id === usableEngine())
     if (p && !p.ready) { setSettingsOpen(true); setError(t(p.online ? 'set.key.needed' : 'set.local.needed').replace('{s}', engineName(p.id))); return }
-    try { setJob(await post('subs', { ...options(), jobId: job.id, action: 'start', from })) } catch (e) { setError((e as Error).message) }
+    try { setJob(await post('subs', { ...options(), ...(withMode ? { mode: withMode } : {}), jobId: job.id, action: 'start', from })) } catch (e) { setError((e as Error).message) }
   }
   const pauseSubs = async () => { if (job) setJob(await post('subs', { jobId: job.id, action: 'pause' }).catch(() => job)) }
+  /** Switching modes while a video is open takes effect right away: no delay stops transcribing, the others (re)start it. */
+  const changeMode = (m: LiveMode) => {
+    if (m === mode) return
+    setMode(m)
+    if (!job || job.status === 'error') return
+    if (m === 'site') { if (subs.state === 'running') void pauseSubs(); return }
+    void startSubs(subs.state === 'off' ? now : undefined, m)
+  }
   // New subtitle languages: from now on, and filled in for lines already there (no pause needed).
   const changeLines = async (next: string[]) => {
     const before = translationsOf(lines).join(','), after = translationsOf(next).join(',')
@@ -311,6 +359,12 @@ export function LiveView(props: LiveViewInjected) {
     }
   }
   const stop = async () => { if (job) await post('stop', { jobId: job.id }).catch(() => {}) }
+  /** Leave this video: everything for it stops, the page is empty again (its files stay in the video folder). */
+  const closeVideo = async () => {
+    if (!job) return
+    await post('close', { jobId: job.id }).catch(() => {})
+    setJob(null); setCues([]); setTerms([]); setInput(''); setBench(null)
+  }
   const onFile = async (file: File) => {
     setError(''); setUploading(0)
     try {
@@ -335,7 +389,7 @@ export function LiveView(props: LiveViewInjected) {
 
   // ── The site's own subtitle tracks that are switched on ──
   const [siteCues, setSiteCues] = useState<Record<string, { start: number; end: number; text: string }[]>>({})
-  const siteKeys = lines.filter(l => l.startsWith('site:') && job?.site?.some(s => s.key === l))
+  const siteKeys = screenLines.filter(l => l.startsWith('site:') && job?.site?.some(s => s.key === l))
   useEffect(() => {
     if (!job) return
     for (const k of siteKeys) {
@@ -532,7 +586,7 @@ export function LiveView(props: LiveViewInjected) {
           )}
           {trMode === 'lines' ? (
             <div className="dshl-lines" ref={linesBox} onWheel={() => { userScrolled.current = Date.now() }} onTouchMove={() => { userScrolled.current = Date.now() }}>
-              {shown.length === 0 && <div className="dshl-muted pad">{t('tr.empty')}</div>}
+              {shown.length === 0 && <div className="dshl-muted pad">{emptyLines}</div>}
               {shown.map(c => (
                 <button className={`dshl-line ${c.id === activeId ? 'active' : ''} ${c.polished ? 'ok' : 'raw'}`} key={c.id} onClick={() => player.current?.seek(c.start)}
                   title={c.polished ? t('tr.polished') : t('tr.raw')}>
@@ -546,7 +600,7 @@ export function LiveView(props: LiveViewInjected) {
             </div>
           ) : (
             <div className="dshl-read">
-              {paragraphs.length === 0 && <div className="dshl-muted pad">{t('tr.empty')}</div>}
+              {paragraphs.length === 0 && <div className="dshl-muted pad">{emptyLines}</div>}
               {paragraphs.some(p => p.speaker) && <p className="dshl-muted small">{t('tr.speakers.tip')}</p>}
               {paragraphs.map((p, i) => (
                 <section key={i} className={p.cues.some(c => c.id === activeId) ? 'active' : ''}>
@@ -566,6 +620,20 @@ export function LiveView(props: LiveViewInjected) {
       {tab === 'glossary' && job && <GlossaryPanel jobId={job.id} terms={terms} targets={job.tgtLangs} langName={langName} t={t} onTerms={setTerms} />}
     </>
   )
+
+  // Live notes under the player: no site subtitles in no-delay mode; subtitles behind the picture; transcription slower than the stream.
+  const live = !!job && job.status === 'running' && !job.vod
+  const slow = live && mode !== 'site' && rate !== null && rate < 0.95
+  const behindBy = live && mode !== 'site' && subs.state === 'running' && cues.length > 0 ? now - subs.at : 0
+  const engineNow = providers.find(x => x.id === usableEngine())
+  const liveNote = siteOnly && job && job.status !== 'resolving' && !(job.site?.length) ? (
+    <div className="dshl-lag"><span>{t('site.none')}</span><button className="dshl-link" onClick={() => changeMode('polished')}>{t('site.switch')}</button></div>
+  ) : slow ? (
+    <div className="dshl-lag warn"><span>{t(engineNow && !engineNow.online ? 'lag.slowLocal' : 'lag.slow').replace('{x}', rate!.toFixed(2))}</span>
+      {engineNow && !engineNow.online && <button className="dshl-link" onClick={() => setSettingsOpen(true)}>{t('lag.settings')}</button>}</div>
+  ) : behindBy > 6 ? (
+    <div className="dshl-lag"><span>{t('lag.behind').replace('{t}', CLOCK(behindBy))}</span><button className="dshl-link" onClick={() => player.current?.seek(Math.max(0, subs.at - 2))}>{t('lag.wait')}</button></div>
+  ) : null
 
   return (
     <div className={`dshl ${theater && !activeBench ? 'theater' : ''} ${pageMode ? 'page' : ''} ${activeBench ? 'bench' : ''}`} data-dsh-own-drop="dsh-vidi"
@@ -589,7 +657,7 @@ export function LiveView(props: LiveViewInjected) {
               onChange={e => { const f = e.target.files?.[0]; if (f) void onFile(f); e.target.value = '' }} />
           </label>
           <button className="dshl-btn primary" onClick={() => start()} disabled={!classify(input)}>{t('in.open')}</button>
-          <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={setMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
+          <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={changeMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
             login={login} onLogin={chooseLogin} browsers={browsers} providers={providers} shared={keysShared} name={engineName}
             onKey={(id, k) => { setProviders(ps => ps.map(p => p.id === id ? { ...p, key: k, ready: k.set } : p)); if (k.set) setError('') }}
             open={settingsOpen} onOpen={setSettingsOpen} t={t} />
@@ -613,7 +681,7 @@ export function LiveView(props: LiveViewInjected) {
               quality={job.source === 'url' && job.heights?.length ? { heights: job.heights.filter(h => h <= 2160), current: job.height ?? 720, onChange: h => void post('quality', { jobId: job.id, height: h }).then(setJob).catch(() => {}) } : undefined}
               live={job.status === 'running'} vod={job.vod} duration={job.duration} subsAt={subs.state === 'off' ? undefined : subs.at}
               waitingText={job.status === 'resolving' ? statusText : t('player.waiting')}
-              cues={cues} siteCues={shownSite} spoken={spokenBase} style={subStyle} delay={job.mode === 'polished' && !job.vod ? Math.max(delay, 75) : delay} onDelay={setDelay} showDelay={job.status === 'running' && !job.vod}
+              cues={cues} siteCues={shownSite} spoken={spokenBase} style={subStyle} delay={job.vod ? delay : mode === 'polished' ? Math.max(delay, 75) : mode === 'site' ? 3 : delay} onDelay={setDelay} showDelay={job.status === 'running' && !job.vod}
               onSnapshot={saveSnapshot} onClip={makeClip} onThumb={rememberFrame}
               theater={theater} onTheater={() => setTheater(v => !v)} onTime={setNow} t={t}
               action={subs.state === 'off'
@@ -652,7 +720,9 @@ export function LiveView(props: LiveViewInjected) {
               <span className="dshl-title" title={job.title || job.url}>{job.title || (job.source === 'push' ? '' : job.url)}</span>
               <UsagePill usage={job.usage} t={t} ui={ui} />
               {job.status === 'running' && !job.vod && <button className="dshl-btn small" onClick={stop}>{t('in.stop')}</button>}
+              <button className="dshl-btn small icon quiet" title={t('in.close')} aria-label={t('in.close')} onClick={() => void closeVideo()}><Icon.close /></button>
             </div>
+            {liveNote}
             {pageMode && <section className="dshl-under">{transcriptBox}</section>}
             </>}
           </div>
@@ -712,7 +782,7 @@ function SubsStarter(props: {
   }
   useEffect(() => {
     if (!open) return
-    const close = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node) && !pop.current?.contains(e.target as Node)) setOpen(false) }
+    const close = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node) && !pop.current?.contains(e.target as Node) && !(e.target as HTMLElement).closest?.('.dshl-options')) setOpen(false) }
     window.addEventListener('mousedown', close)
     return () => window.removeEventListener('mousedown', close)
   }, [open])

@@ -51,6 +51,7 @@ const CSS = `
 .dshl-btn.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.06); }
 .dshl-btn.stop { background: var(--live); border-color: var(--live); color: #fff; }
 .dshl-btn.icon { width: 40px; padding: 0; }
+.dshl-btn.small.icon { width: 30px; }
 .dshl-btn.icon.back { color: var(--muted); }
 .dshl-btn.icon.back svg { transform: rotate(180deg); }
 .dshl-btn.block { display: flex; width: 100%; }
@@ -78,10 +79,25 @@ const CSS = `
 .dshl-switch.on { background: var(--accent); }
 .dshl-switch.on i { left: 16px; }
 
-.dshl select { height: 32px; padding: 0 28px 0 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer;
-  appearance: none; -webkit-appearance: none;
-  background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9993' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center; }
-.dshl select:hover { border-color: color-mix(in srgb, var(--ink) 25%, var(--line)); }
+.dshl-select { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.dshl-select .v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshl-select .caret { flex: none; width: 6px; height: 6px; margin: -3px 1px 0 0; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); transform: rotate(45deg); transition: transform .15s; }
+.dshl-select.open .caret { margin-top: 3px; transform: rotate(-135deg); }
+.dshl-select:hover:not(:disabled), .dshl-select.open { border-color: color-mix(in srgb, var(--ink) 25%, var(--line)); }
+.dshl-select:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px; }
+.dshl-select:disabled { opacity: .5; cursor: default; }
+/* The list: drawn at the page's top level (so no panel clips it), in the colours of where it opened. */
+.dshl-options { position: fixed; z-index: 2147483000; overflow: auto; overscroll-behavior: contain; padding: 4px; border: 1px solid var(--line, #e4e3de); border-radius: 10px;
+  background: var(--bg, #fff); color: var(--ink, #1b1b19); box-shadow: 0 10px 30px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.08); font-size: 13px; line-height: 1.4; -webkit-font-smoothing: antialiased; }
+.dshl-options .grp { padding: 8px 10px 4px; color: var(--faint, #9a9993); font-size: 11.5px; font-weight: 600; }
+.dshl-options .opt { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.dshl-options .opt.act { background: var(--hover, rgba(0,0,0,.05)); }
+.dshl-options .opt.on { font-weight: 550; }
+.dshl-options .opt.off { opacity: .45; cursor: default; }
+.dshl-options .opt .l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshl-options .opt .h { flex: none; color: var(--faint, #9a9993); font-size: 12px; }
+.dshl-options .opt .ok { flex: none; margin-left: auto; color: var(--accent, #3b6ef5); }
 
 /* Toggle chips (several can be on): languages to show or download */
 .dshl-chips .row, .dshl-checks2 { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -92,7 +108,8 @@ const CSS = `
 .dshl-chips .chip i { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-left: -3px; border-radius: 50%;
   background: var(--accent); color: #fff; font-size: 10.5px; font-style: normal; font-weight: 600; }
 .dshl-chips .chip.site:not(.on) { border-style: dashed; }
-.dshl-chips select.chip.add { appearance: none; -webkit-appearance: none; height: 28px; border-style: dashed; padding: 0 10px; }
+.dshl-chips .dshl-select.chip.add { height: 28px; border-style: dashed; padding: 0 10px; background: transparent; }
+.dshl-chips .dshl-select.chip.add .caret { display: none; }
 .dshl-chips .chip.ghost { width: 28px; padding: 0; justify-content: center; }
 .dshl-checks2 { margin: 0 0 10px; }
 .dshl-checks2 button i { width: 14px; height: 14px; margin-left: -2px; border: 1.5px solid currentColor; border-radius: 4px; opacity: .55; flex: none; }
@@ -176,7 +193,7 @@ html:not([data-platform]) [data-sidebar-drawer] .dshl-panelwrap .dshl.page .dshl
    every state, full screen included; the bar's 40px row is centred on the same line. */
 html[data-platform='darwin'] .dshl-panelwrap .dshl.page .dshl-top { padding-top: 5px; padding-bottom: 8px; }
 html[data-platform='darwin'] .dshl.page .dshl-top { -webkit-app-region: drag; app-region: drag; }
-html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, select, .dshl-pick) { -webkit-app-region: no-drag; app-region: no-drag; }
+html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .dshl-select, .dshl-pick) { -webkit-app-region: no-drag; app-region: no-drag; }
 .dshl.page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .dshl.page .dshl-main { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 420px); align-items: stretch; padding-bottom: 16px; }
 /* Video page: player on top, then the status row, then subtitles/glossary filling what is left; chat on the right. */
@@ -186,6 +203,8 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, s
 .dshl.page .dshl-side { position: static; height: 100%; max-height: none; }
 /* Workbench open: the video and its subtitles keep a column on the left; the bench takes the rest. */
 .dshl.page.bench .dshl-main { grid-template-columns: clamp(340px, 32vw, 520px) minmax(0, 1fr); }
+.dshl-lag { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: -2px 0 8px; padding: 7px 12px; border-radius: 8px; background: var(--l1, rgba(0,0,0,.04)); color: var(--muted); font-size: 12.5px; }
+.dshl-lag.warn { background: color-mix(in srgb, #f5a524 14%, transparent); color: var(--ink); }
 .dshl-guard { display: grid; gap: 8px; margin: 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, #d1434b 35%, var(--line)); border-radius: 10px; color: var(--ink); font-size: 13px; }
 .dshl-guard p { margin: 0; line-height: 1.6; }
 .dshl-guard code { color: var(--muted); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
@@ -360,11 +379,7 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, s
 .dshl-submenu { display: grid; gap: 4px; }
 .dshl-submenu .slots { display: grid; gap: 8px; padding: 4px 6px 10px; }
 .dshl-submenu .slot { display: grid; grid-template-columns: 56px 1fr; align-items: center; gap: 10px; color: var(--muted); }
-.dshl-submenu .slot select { width: 100%; min-width: 0; height: 34px; padding: 0 30px 0 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer;
-  appearance: none; -webkit-appearance: none;
-  background: var(--l1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23b4b4ba' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center; }
-.dshl-submenu .slot select:hover { border-color: rgba(255,255,255,.28); }
-.dshl-submenu .slot select option, .dshl-submenu .slot select optgroup { background: #fff; color: #111; }
+.dshl-submenu .slot .dshl-select { width: 100%; height: 34px; background: var(--l1); }
 .dshl-submenu .swap { justify-self: start; height: 26px; margin-left: 66px; padding: 0 10px; border: 0; border-radius: 6px; background: var(--l2); color: var(--muted); font-size: 12px; cursor: pointer; }
 .dshl-submenu .swap:hover { color: var(--ink); }
 .dshl-submenu .opts { position: sticky; bottom: -10px; display: grid; gap: 2px; margin: 0 -8px -10px; padding: 6px 8px 10px; border-top: 1px solid var(--line-soft); background: rgb(28,28,31); }
@@ -404,12 +419,12 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, s
 .dshl-rs .rs-hint { margin: 0; color: var(--faint); font-size: 12px; line-height: 1.55; }
 .dshl-rs .rs-err { margin: 0; color: #ff8f92; font-size: 12px; line-height: 1.55; }
 .dshl-rs .rs-field { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
-.dshl-rs .rs-field input, .dshl-rs .rs-field select { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--l1); color: var(--ink); font: inherit; font-size: 13px; }
-.dshl-rs .rs-field select { padding-right: 28px; background-color: var(--l1); background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2710%27 height=%276%27%3E%3Cpath d=%27M1 1l4 4 4-4%27 fill=%27none%27 stroke=%27%23aaa%27 stroke-width=%271.5%27/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; appearance: none; }
-.dshl-rs .rs-field input:focus, .dshl-rs .rs-field select:focus { outline: none; border-color: var(--accent); }
+.dshl-rs .rs-field .dshl-select { width: 100%; height: 34px; background: var(--l1); }
+.dshl-rs .rs-field input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--l1); color: var(--ink); font: inherit; font-size: 13px; }
+.dshl-rs .rs-field input:focus { outline: none; border-color: var(--accent); }
 .dshl-rs .rs-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .dshl-menu.sheet .dshl-rs .rs-row { min-height: 50px; }
-.dshl-menu.sheet .dshl-rs .rs-field input, .dshl-menu.sheet .dshl-rs .rs-field select { height: 42px; font-size: 15px; }
+.dshl-menu.sheet .dshl-rs .rs-field input, .dshl-menu.sheet .dshl-rs .rs-field .dshl-select { height: 42px; font-size: 15px; }
 .dshl-menu.sheet .dshl-rs .dshl-btn.block { height: 46px; font-size: 15px; }
 .dshl-dl { display: grid; gap: 14px; padding: 0 6px; }
 .dshl-dl .grp { display: grid; gap: 8px; }
@@ -439,7 +454,7 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, s
 .dshl-menu.sheet .dshl-seg button, .dshl-menu.sheet .dshl-submenu .seg button { min-width: 52px; height: 34px; font-size: 14px; }
 .dshl-menu.sheet .dshl-submenu .seg { width: 210px; }
 .dshl-menu.sheet .dshl-submenu .slot { grid-template-columns: 64px 1fr; font-size: 15px; }
-.dshl-menu.sheet .dshl-submenu .slot select { height: 44px; font-size: 15px; }
+.dshl-menu.sheet .dshl-submenu .slot .dshl-select { height: 44px; font-size: 15px; }
 .dshl-menu.sheet .dshl-submenu .swap { height: 34px; margin-left: 74px; font-size: 14px; }
 .dshl-menu.sheet .dshl-switch { width: 44px; height: 26px; }
 .dshl-menu.sheet .dshl-switch i { width: 22px; height: 22px; }
@@ -559,7 +574,7 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, s
 .dshl .srow { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; font-size: 13.5px; }
 .dshl-pop.settings { width: 320px; padding: 6px 12px; }
 .dshl-pop.settings .srow + .srow { border-top: 1px solid var(--line-soft); }
-.dshl-pop.settings .srow > select, .dshl-pop.settings .srow > .dshl-seg { width: 168px; }
+.dshl-pop.settings .srow > .dshl-select, .dshl-pop.settings .srow > .dshl-seg { width: 168px; }
 .dshl-pop.settings .srow > .dshl-seg button { flex: 1; padding: 0 6px; }
 .dshl .srow.col { display: grid; justify-content: stretch; gap: 8px; padding: 10px 0; }
 .dshl .srow .keyline { display: flex; align-items: center; gap: 6px; }
@@ -574,7 +589,7 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, s
 .dshl .srow .keyfoot { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: var(--faint); font-size: 12px; line-height: 1.5; }
 .dshl .srow .hint { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
 .dshl .srow .pair { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.dshl .srow .pair > select { width: 168px; }
+.dshl .srow .pair > .dshl-select { width: 168px; }
 .dshl-pop.usage { min-width: 320px; padding: 12px 14px; }
 .dshl-pop.usage h3 { margin: 0 0 8px; color: var(--muted); font-size: 12.5px; font-weight: 600; }
 .dshl-pop.usage table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }

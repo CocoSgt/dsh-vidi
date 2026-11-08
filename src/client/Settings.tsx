@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from './icons.tsx'
 import type { LiveKey } from './locales.ts'
+import { Pick } from './Pick.tsx'
 
 export interface KeyInfo { set: boolean; source?: 'dsh' | 'settings' | 'env' | 'page'; ref?: string; hint?: string; provider?: string }
 export interface Browser { id: string; label: string }
@@ -23,8 +24,8 @@ async function post(path: string, body: unknown): Promise<any> {
 export function Settings(props: {
   engine: string
   onEngine: (e: string) => void
-  mode: 'realtime' | 'polished'
-  onMode: (m: 'realtime' | 'polished') => void
+  mode: 'site' | 'realtime' | 'polished'
+  onMode: (m: 'site' | 'realtime' | 'polished') => void
   spoken: string
   onSpoken: (l: string) => void
   langOptions: [string, string][]
@@ -51,7 +52,8 @@ export function Settings(props: {
 
   useEffect(() => {
     if (!open) return
-    const close = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) onOpen(false) }
+    // (A drop-down's list sits outside the panel, at the page's top level.)
+    const close = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node) && !(e.target as HTMLElement).closest?.('.dshl-options')) onOpen(false) }
     window.addEventListener('mousedown', close)
     return () => window.removeEventListener('mousedown', close)
   }, [open, onOpen])
@@ -97,9 +99,8 @@ export function Settings(props: {
         <div className="dshl-pop settings right">
           <div className="srow">
             <span title={t('set.engine.tip')}>{t('set.engine')}</span>
-            <select value={engine} disabled={disabled} onChange={e => onEngine(e.target.value)}>
-              {providers.map(p => <option key={p.id} value={p.id}>{name(p.id)}{p.ready ? '' : ` · ${t(p.online ? 'set.engine.noKey' : 'set.engine.notInstalled')}`}</option>)}
-            </select>
+            <Pick value={engine} disabled={disabled} onChange={onEngine}
+              options={providers.map(p => ({ value: p.id, label: name(p.id), hint: p.ready ? undefined : t(p.online ? 'set.engine.noKey' : 'set.engine.notInstalled') }))} />
           </div>
           {cur?.online && (
             <div className="srow col">
@@ -126,38 +127,30 @@ export function Settings(props: {
           <div className="srow col">
             <span className="pair">
               <span title={t('set.model.tip')}>{t('set.model')}</span>
-              <select value={models?.chosen ? modelKey(models.chosen) : ''} onChange={e => chooseModel(e.target.value)}>
-                <option value="">{models?.fallback ? t('set.model.default').replace('{m}', modelName(models.fallback)) : t('set.model.dsh')}</option>
-                {providersOf.map(pn => (
-                  <optgroup key={pn} label={pn}>
-                    {models!.models.filter(m => m.providerName === pn).map(m => <option key={modelKey(m)} value={modelKey(m)}>{m.name}{m.image ? ` · ${t('set.model.image')}` : ''}</option>)}
-                  </optgroup>
-                ))}
-              </select>
+              <Pick value={models?.chosen ? modelKey(models.chosen) : ''} onChange={chooseModel}
+                options={[
+                  { value: '', label: models?.fallback ? t('set.model.default').replace('{m}', modelName(models.fallback)) : t('set.model.dsh') },
+                  ...providersOf.flatMap(pn => models!.models.filter(m => m.providerName === pn).map(m => ({ value: modelKey(m), label: m.name, hint: m.image ? t('set.model.image') : undefined, group: pn }))),
+                ]} />
             </span>
             <span className="hint">{t(sees ? 'set.model.sees' : 'set.model.text')}</span>
           </div>
-          <div className="srow">
-            <span>{t('set.mode')}</span>
-            <span className="dshl-seg">
-              <button className={mode === 'realtime' ? 'on' : ''} title={t('mode.realtime.tip')} onClick={() => onMode('realtime')}>{t('mode.realtime')}</button>
-              <button className={mode === 'polished' ? 'on' : ''} title={t('mode.polished.tip')} onClick={() => onMode('polished')}>{t('mode.polished')}</button>
+          <div className="srow col">
+            <span className="pair">
+              <span>{t('set.mode')}</span>
+              <span className="dshl-seg">
+                {(['site', 'realtime', 'polished'] as const).map(m => <button key={m} className={mode === m ? 'on' : ''} title={t(`mode.${m}.tip`)} onClick={() => onMode(m)}>{t(`mode.${m}`)}</button>)}
+              </span>
             </span>
+            <span className="hint">{t(`mode.${mode}.tip`)}</span>
           </div>
           <div className="srow">
             <span>{t('set.spoken')}</span>
-            <select value={spoken} disabled={disabled} onChange={e => onSpoken(e.target.value)}>
-              <option value="auto">{t('set.auto')}</option>
-              {langOptions.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
+            <Pick value={spoken} disabled={disabled} onChange={onSpoken} options={[{ value: 'auto', label: t('set.auto') }, ...langOptions.map(([k, v]) => ({ value: k, label: v }))]} />
           </div>
           <div className="srow" title={t('set.login.tip')}>
             <span>{t('set.login')}</span>
-            <select value={login} onChange={e => onLogin(e.target.value)}>
-              <option value="auto">{t('set.auto')}</option>
-              {browsers.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
-              <option value="none">{t('set.login.none')}</option>
-            </select>
+            <Pick value={login} onChange={onLogin} options={[{ value: 'auto', label: t('set.auto') }, ...browsers.map(b => ({ value: b.id, label: b.label })), { value: 'none', label: t('set.login.none') }]} />
           </div>
         </div>
       )}

@@ -21,7 +21,7 @@ import { LocalProvider } from './providers/local.ts'
 import { OpenAIProvider } from './providers/openai.ts'
 import { geminiEngine, SERVICES, service, speechServiceOf, verifyKey, whisperApiEngine } from './providers/cloud.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
-import type { JobOptions, SourceKind, SpeechProvider } from './types.ts'
+import type { JobOptions, Mode, SourceKind, SpeechProvider } from './types.ts'
 import type { JobDeps } from './job.ts'
 import { registerTools } from './tools.ts'
 import { metered, UsageMeter } from './usage.ts'
@@ -107,7 +107,8 @@ export function apply(ctx: Context, config: Config): void {
     if (logger?.info) logger.info(msg); else console.log(`[dsh-vidi] ${msg}`)
     try { appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`) } catch {}
   }
-  const whisper = new WhisperServer(config.whisperModel, log)
+  // Encoder window: the longest chunk plus 5 s of room, in 64-frame steps (50 frames = 1 s).
+  const whisper = new WhisperServer(config.whisperModel, log, Math.min(1500, Math.max(256, Math.ceil(((config.maxChunkSec + 5) * 50) / 64) * 64)))
   const jobs = new Map<string, LiveJob>()
   const byConversation = new Map<string, string>()
 
@@ -222,7 +223,7 @@ export function apply(ctx: Context, config: Config): void {
   }
   const savePrefs = (patch: Partial<Prefs>) => { try { writeFileSync(settingsFile, JSON.stringify({ ...prefs(), ...patch }, null, 2)) } catch {} }
   /** Subtitle options last used on the page: tools and commands reuse them. */
-  const lastOptions = (): NonNullable<Prefs['last']> => prefs().last ?? { tgtLangs: [config.defaultTargetLang], srcLang: 'auto', provider: defaultEngine(), mode: 'realtime' }
+  const lastOptions = (): NonNullable<Prefs['last']> => prefs().last ?? { tgtLangs: [config.defaultTargetLang], srcLang: 'auto', provider: defaultEngine(), mode: 'polished' }
 
   /** Browser notifications: "show this video" for a session (tools, /video). */
   const bus = new EventEmitter()
@@ -331,13 +332,14 @@ export function apply(ctx: Context, config: Config): void {
   /** The conversation's video: in memory, or the latest one on disk (after a restart). */
   function jobForConversation(conversationId: string): LiveJob | undefined {
     const id = byConversation.get(conversationId)
+    if (id === '') return undefined // closed on the page
     if (id && jobs.has(id)) return jobs.get(id)
     const root = join(config.dataDir, 'jobs')
     if (!existsSync(root)) return undefined
     const dirs = readdirSync(root).filter(n => /^[\w-]+$/.test(n)).sort().reverse()
     for (const name of dirs) {
       const file = join(root, name, 'job.json')
-      if (!existsSync(file)) continue
+      if (!existsSync(file) || existsSync(join(root, name, 'closed'))) continue
       try {
         const j = JSON.parse(readFileSync(file, 'utf8')) as { opts?: { conversationId?: string } }
         if (j.opts?.conversationId !== conversationId) continue
@@ -353,6 +355,8 @@ export function apply(ctx: Context, config: Config): void {
     return undefined
   }
 
+  const modeOf = (m: unknown): Mode => (m === 'polished' || m === 'site' ? m : 'realtime')
+
   async function startJob(opts: JobOptions, waiting = false): Promise<LiveJob> {
     const prev = waiting ? undefined : byConversation.get(opts.conversationId)
     if (prev) await jobs.get(prev)?.close('replaced')
@@ -364,7 +368,8 @@ export function apply(ctx: Context, config: Config): void {
     job = new LiveJob(id, opts, jobDeps(dir, opts, () => job, waiting))
     jobs.set(id, job)
     if (!waiting) byConversation.set(opts.conversationId, id)
-    job.autoSubs = true
+    // 'site': the site's own subtitles only, so nothing is transcribed until asked.
+    job.autoSubs = opts.mode !== 'site'
     bus.emit('job', job)
     void job.start()
     return job
@@ -410,14 +415,14 @@ export function apply(ctx: Context, config: Config): void {
       if (route === 'start' && req.method === 'POST') {
         const b = await readJson(req)
         if (typeof b.url !== 'string' || !b.url.trim()) return send(res, 400, { error: 'url required' })
-        if (Array.isArray(b.tgtLangs)) savePrefs({ last: { tgtLangs: (b.tgtLangs as unknown[]).map(String).slice(0, 4), srcLang: typeof b.srcLang === 'string' ? b.srcLang : 'auto', provider: typeof b.provider === 'string' ? b.provider : 'local', mode: b.mode === 'polished' ? 'polished' : 'realtime' } })
+        if (Array.isArray(b.tgtLangs)) savePrefs({ last: { tgtLangs: (b.tgtLangs as unknown[]).map(String).slice(0, 4), srcLang: typeof b.srcLang === 'string' ? b.srcLang : 'auto', provider: typeof b.provider === 'string' ? b.provider : 'local', mode: modeOf(b.mode) } })
         const source: SourceKind = b.source === 'push' || b.source === 'file' ? b.source : 'url'
         await disarm()
         const raw = b.url.trim()
         const job = await startJob({
           source,
           url: source === 'file' && raw.startsWith('~') ? join(homedir(), raw.slice(1)) : raw,
-          mode: b.mode === 'polished' ? 'polished' : 'realtime',
+          mode: modeOf(b.mode),
           srcLang: typeof b.srcLang === 'string' ? b.srcLang : 'auto',
           // Empty = original only (no translation).
           tgtLangs: Array.isArray(b.tgtLangs)
@@ -427,6 +432,17 @@ export function apply(ctx: Context, config: Config): void {
           conversationId: String(b.conversationId ?? 'default'),
         })
         return send(res, 200, job.summary())
+      }
+      if (route === 'close' && req.method === 'POST') {
+        // Leave the video: stop everything for it; its files stay, and it no longer reopens with the conversation.
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        await job.close('closed')
+        const conv = job.summary().conversationId
+        if (byConversation.get(conv) === job.id) byConversation.set(conv, '')
+        try { writeFileSync(join(job.summary().dir, 'closed'), new Date().toISOString()) } catch {}
+        return send(res, 200, { ok: true })
       }
       if (route === 'stop' && req.method === 'POST') {
         const b = await readJson(req)
@@ -485,7 +501,7 @@ export function apply(ctx: Context, config: Config): void {
           if (Array.isArray(b.tgtLangs)) opts.tgtLangs = (b.tgtLangs as unknown[]).map(String).slice(0, 4)
           if (typeof b.srcLang === 'string') opts.srcLang = b.srcLang
           if (typeof b.provider === 'string') opts.provider = b.provider
-          if (b.mode === 'realtime' || b.mode === 'polished') opts.mode = b.mode
+          if (b.mode === 'realtime' || b.mode === 'polished' || b.mode === 'site') opts.mode = b.mode
           const svc = opts.provider ? service(opts.provider) : undefined
           if (svc) { await keys.refresh(); if (!keys.get(svc.id)) return send(res, 400, { error: `no ${svc.label} key` }) }
           savePrefs({ last: { ...lastOptions(), ...opts } as NonNullable<Prefs['last']> })
@@ -496,7 +512,7 @@ export function apply(ctx: Context, config: Config): void {
       if (route === 'arm' && req.method === 'POST') {
         const b = await readJson(req)
         return send(res, 200, await arm({
-          source: 'push', url: 'rtmp', mode: b.mode === 'polished' ? 'polished' : 'realtime',
+          source: 'push', url: 'rtmp', mode: modeOf(b.mode),
           srcLang: typeof b.srcLang === 'string' ? b.srcLang : 'auto',
           tgtLangs: Array.isArray(b.tgtLangs) ? (b.tgtLangs as unknown[]).map(String).slice(0, 4) : [config.defaultTargetLang],
           provider: typeof b.provider === 'string' ? b.provider : 'local', conversationId: String(b.conversationId ?? 'default'),

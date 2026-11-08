@@ -22,6 +22,10 @@ export interface SessionsLike {
   chat(id: string): Source<any> | undefined
   /** Fires when the conversation list changes (opened, created, loaded). */
   subscribe(fn: () => void): () => void
+  /** Rename a conversation (newer DS-Harness). */
+  rename?(id: string, title: string): void
+  /** A conversation's title and folder, when the list has it. */
+  info?(id: string): { title?: string; cwd?: string } | undefined
 }
 
 const PAGE_SESSION = 'dsh-live.pageSession'
@@ -66,10 +70,10 @@ const samePath = (a?: string, b?: string) => !!a && !!b && a.replace(/\/+$/, '')
  * It lives in a "Video" workspace on the video folder, so DeepSeek's own file
  * and shell tools can work on the recordings, clips and frames directly.
  */
-async function pageSession(sessions: SessionsLike, workspaces: WorkspacesLike, title: string): Promise<string> {
+async function pageSession(sessions: SessionsLike, workspaces: WorkspacesLike, title: string, fresh = false): Promise<string> {
   let saved: string | null = null
   try { saved = localStorage.getItem(PAGE_SESSION) } catch {}
-  if (saved && sessions.has(saved)) return saved
+  if (!fresh && saved && sessions.has(saved)) return saved
   const deps = await fetch('/live/api/deps').then(r => r.json())
   if (!deps?.dataDir) throw new Error('the video plugin is not running yet')
   // The video folder may already be a workspace (an earlier install): reuse it rather than create it again.
@@ -119,9 +123,44 @@ export function closePage(sessions: SessionsLike): void {
   if (returnTo && sessions.has(returnTo)) sessions.open(returnTo)
 }
 
+/** The video folder (the "Video" workspace), asked once. */
+let dataDirP: Promise<string | undefined> | undefined
+const videoFolder = () => (dataDirP ??= fetch('/live/api/deps').then(r => r.json()).then(d => d?.dataDir as string | undefined).catch(() => { dataDirP = undefined; return undefined }))
+
+/**
+ * Each video gets a conversation of its own, named after it ("▶ title"), so
+ * the history lists videos rather than a row of "Untitled". This applies to
+ * the conversations in the video folder; a chat elsewhere that opened a video
+ * keeps its own name and switches video in place.
+ */
+export function videoHandlers(sessions: SessionsLike, workspaces: WorkspacesLike | undefined, sessionId: string, fallbackTitle: string) {
+  const own = async () => {
+    const cwd = sessions.info?.(sessionId)?.cwd
+    const dir = await videoFolder()
+    return !!cwd && !!dir && samePath(cwd, dir)
+  }
+  return {
+    onNewVideo: async (link: string): Promise<boolean> => {
+      if (!workspaces || !(await own())) return false
+      try {
+        const id = await pageSession(sessions, workspaces, fallbackTitle, true)
+        await openPage(sessions, { sessionId: id, pending: link, workspaces })
+        return true
+      } catch { return false }
+    },
+    onTitle: (title: string) => {
+      void own().then(yes => {
+        const now = sessions.info?.(sessionId)?.title
+        // Untitled, or named by this page before: name it after the video. A name the user gave stays.
+        if (yes && sessions.rename && (!now || now.startsWith('▶ '))) sessions.rename(sessionId, `▶ ${title}`.slice(0, 80))
+      })
+    },
+  }
+}
+
 /** The video page as a main panel (newer DS-Harness): the app's sidebar and its toggle stay. */
-export function VideoPanel(props: { sessions: SessionsLike; t: (k: LiveKey) => string }) {
-  const { sessions, t } = props
+export function VideoPanel(props: { sessions: SessionsLike; workspaces?: WorkspacesLike; t: (k: LiveKey) => string }) {
+  const { sessions, workspaces, t } = props
   const page = useSyncExternalStore(pageStore.subscribe, pageStore.get)
   const face = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.face(page.sessionId) : undefined)
   const chat = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.chat(page.sessionId) : undefined)
@@ -129,15 +168,15 @@ export function VideoPanel(props: { sessions: SessionsLike; t: (k: LiveKey) => s
   return (
     <div className="dshl-panelwrap">
       <LiveView key={page.sessionId} sessionId={page.sessionId} t={t} page
-        chatFace={face} chatSource={chat}
+        chatFace={face} chatSource={chat} {...videoHandlers(sessions, workspaces, page.sessionId, t('view.live'))}
         pending={page.pending} onPendingDone={() => pageStore.set({ pending: undefined })} />
     </div>
   )
 }
 
 /** Full-window video page (shell.overlay, older DS-Harness): player, subtitles, terms and the chat with DeepSeek. */
-export function VideoPage(props: { sessions: SessionsLike; t: (k: LiveKey) => string }) {
-  const { sessions, t } = props
+export function VideoPage(props: { sessions: SessionsLike; workspaces?: WorkspacesLike; t: (k: LiveKey) => string }) {
+  const { sessions, workspaces, t } = props
   const page = useSyncExternalStore(pageStore.subscribe, pageStore.get)
   // The session's handles appear once it is open: follow the list until they do.
   const face = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.face(page.sessionId) : undefined)
@@ -147,7 +186,7 @@ export function VideoPage(props: { sessions: SessionsLike; t: (k: LiveKey) => st
   return (
     <div className="dshl-pagewrap">
       <LiveView key={page.sessionId} sessionId={page.sessionId} t={t}
-        chatFace={face} chatSource={chat}
+        chatFace={face} chatSource={chat} {...videoHandlers(sessions, workspaces, page.sessionId, t('view.live'))}
         onClose={() => closePage(sessions)}
         pending={page.pending} onPendingDone={() => pageStore.set({ pending: undefined })} />
     </div>

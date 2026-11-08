@@ -32,7 +32,8 @@ export interface SpeechProvider {
   stop(): Promise<void>
 }
 
-export type Mode = 'realtime' | 'polished'
+/** How live subtitles are made: 'site' = only the site's own subtitles (no delay, nothing transcribed); 'realtime' = a few seconds behind; 'polished' = a minute or two behind, fixed with context. */
+export type Mode = 'site' | 'realtime' | 'polished'
 
 export type JobStatus = 'resolving' | 'running' | 'stopping' | 'stopped' | 'error'
 

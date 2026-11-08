@@ -36,6 +36,8 @@ function sessionsOf(ctx: any, extra: { uiWorkspace?: any; uiConversation?: any }
       try { return extra.uiConversation.binding(b).target('chat') } catch { return undefined }
     },
     subscribe: fn => s.list.subscribe(fn),
+    rename: (id, title) => { try { void s.binding(id)?.session?.rename?.(title) } catch {} },
+    info: id => { const x = list().byId?.[id]; return x ? { title: x.title, cwd: x.cwd } : undefined },
   }
 }
 
@@ -74,7 +76,7 @@ export function apply(ctx: any): void {
     id: 'dsh-vidi.page',
     order: 50,
     label: () => t('page.open'),
-    inject: () => ({ sessions: sessions(), t }),
+    inject: () => ({ sessions: sessions(), workspaces: ctx.workspaces, t }),
   }, VideoPage))
 
   // Newer DS-Harness: the page sits in the main column, beside the app's sidebar.
@@ -87,7 +89,7 @@ export function apply(ctx: any): void {
       name: 'main',
       key: PANEL_ID,
       locale: NS,
-      inject: () => ({ sessions: sessions(), t }),
+      inject: () => ({ sessions: sessions(), workspaces: ctx.workspaces, t }),
     }, VideoPanel))
   })
 

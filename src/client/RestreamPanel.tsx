@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Icon } from './icons.tsx'
 import type { LiveKey } from './locales.ts'
 import type { SubStyle } from './subStyle.tsx'
+import { Pick } from './Pick.tsx'
 
 export interface RestreamTarget { id: string; platform: string; server: string; key: string }
 export interface RestreamStatus {
@@ -102,9 +103,8 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
       <div className="dshl-rs">
         <div className="rs-head">{editing.id ? t('rs.edit') : t('rs.add')}</div>
         <label className="rs-field"><span>{t('rs.platform')}</span>
-          <select value={editing.platform} onChange={e => setEditing({ ...editing, platform: e.target.value, server: FIXED[e.target.value] ?? (FIXED[editing.platform] === editing.server ? '' : editing.server) })}>
-            {PLATFORMS.map(p => <option key={p} value={p}>{pname(p)}</option>)}
-          </select>
+          <Pick value={editing.platform} onChange={v => setEditing({ ...editing, platform: v, server: FIXED[v] ?? (FIXED[editing.platform] === editing.server ? '' : editing.server) })}
+            options={PLATFORMS.map(p => ({ value: p, label: pname(p) }))} />
         </label>
         <p className="rs-hint">{t(`rs.h.${editing.platform}` as LiveKey)}</p>
         <label className="rs-field"><span>{t('rs.server')}</span>
