@@ -67,7 +67,12 @@ export function Pick(props: {
   useEffect(() => {
     if (!open) return
     const away = (e: Event) => { if (!list.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) close(false) }
-    const gone = (e: Event) => { if (!list.current?.contains(e.target as Node)) close(false) }
+    // Only when the page or a box holding the button scrolls (not, say, a subtitle list scrolling by itself).
+    const gone = (e: Event) => {
+      const t = e.target as Node | null
+      if (list.current?.contains(t)) return
+      if (e.type === 'resize' || t === document || t === document.documentElement || (t instanceof Node && btn.current && t.contains(btn.current))) close(false)
+    }
     document.addEventListener('pointerdown', away, true)
     window.addEventListener('resize', gone)
     window.addEventListener('scroll', gone, true)

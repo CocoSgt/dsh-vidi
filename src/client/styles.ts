@@ -195,12 +195,18 @@ html[data-platform='darwin'] .dshl-panelwrap .dshl.page .dshl-top { padding-top:
 html[data-platform='darwin'] .dshl.page .dshl-top { -webkit-app-region: drag; app-region: drag; }
 html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .dshl-select, .dshl-pick) { -webkit-app-region: no-drag; app-region: no-drag; }
 .dshl.page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-.dshl.page .dshl-main { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 420px); align-items: stretch; padding-bottom: 16px; }
+.dshl.page .dshl-main { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) var(--side-w, clamp(320px, 30vw, 420px)); align-items: stretch; padding-bottom: 16px; }
 /* Video page: player on top, then the status row, then subtitles/glossary filling what is left; chat on the right. */
 .dshl.page .dshl-col { display: flex; flex-direction: column; min-height: 0; container-type: size; }
 .dshl.page .dshl-col > .dshl-drop { flex: 1; aspect-ratio: auto; min-height: 0; }
 .dshl.page .dshl-stage { flex: none; width: 100%; max-height: max(240px, calc(100cqh - 270px)); }
-.dshl.page .dshl-side { position: static; height: 100%; max-height: none; }
+.dshl.page .dshl-side { position: relative; top: auto; height: 100%; max-height: none; }
+.dshl.page.noside .dshl-main { grid-template-columns: minmax(0, 1fr); }
+.dshl.page.noside .dshl-side { display: none; }
+/* Drag the chat panel's left edge to change its width; the player and subtitles take the rest. */
+.dshl-resize { position: absolute; top: 0; bottom: 0; left: 0; z-index: 3; width: 8px; cursor: col-resize; }
+.dshl-resize::after { content: ''; position: absolute; top: 50%; left: 2px; width: 3px; height: 36px; border-radius: 2px; background: var(--line); transform: translateY(-50%); opacity: 0; transition: opacity .15s; }
+.dshl-resize:hover::after { opacity: 1; }
 /* Workbench open: the video and its subtitles keep a column on the left; the bench takes the rest. */
 .dshl.page.bench .dshl-main { grid-template-columns: clamp(340px, 32vw, 520px) minmax(0, 1fr); }
 .dshl-lag { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: -2px 0 8px; padding: 7px 12px; border-radius: 8px; background: var(--l1, rgba(0,0,0,.04)); color: var(--muted); font-size: 12.5px; }
@@ -221,6 +227,7 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl.page.theater .dshl-stage { max-height: 100cqh; }
 @media (max-width: 1000px) {
   .dshl.page { display: block; overflow: auto; }
+  .dshl-resize { display: none; }
   .dshl.page.bench .dshl-main { grid-template-columns: minmax(0, 1fr); }
   .dshl.page.bench .dshl-side { height: auto; min-height: 0; }
   .dshl-benchbox { overflow: visible; }

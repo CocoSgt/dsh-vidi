@@ -16,8 +16,8 @@ export interface OpenAITranslateOptions {
 
 /** A piece of streamed text and the audio position (s, run timeline) it came with. */
 interface Piece { t: number; text: string }
-/** A finished sentence of one stream. */
-interface Sentence { text: string; start: number; end: number }
+/** A finished sentence of one stream; `wall` = when it finished (clock, ms). */
+interface Sentence { text: string; start: number; end: number; wall: number }
 
 const CJK = /[぀-ヿ㐀-鿿가-힯]/
 /** Sentence ends; for CJK targets also the full-width ones. */
@@ -38,6 +38,8 @@ const QUIET_SEC = 1.6
 class Stream {
   private open: Piece[] = []
   readonly done: Sentence[] = []
+  /** When the last piece arrived (wall clock, ms). */
+  lastWall = 0
   constructor(private readonly cjk: boolean) {}
 
   get text(): string { return this.open.map(p => p.text).join('') }
@@ -57,6 +59,7 @@ class Stream {
   }
 
   private push(p: Piece): void {
+    this.lastWall = Date.now()
     this.open.push(p)
     const text = this.text.trim()
     const len = this.cjk ? Array.from(text).length : text.length
@@ -64,9 +67,29 @@ class Stream {
     if (END.test(text) || (len >= soft && /[,，、;；:：]\s*$/.test(text)) || len >= hard) this.close()
   }
 
+  /** End the sentence at its last comma or full stop (the rest starts the next one); false when it has none. */
+  closeAtPause(): boolean {
+    const text = this.text
+    let cut = -1
+    for (let i = text.length - 2; i > 0; i--) if (/[，。、；：！？,;:!?]/.test(text[i]!)) { cut = i + 1; break }
+    if (cut <= 0) return false
+    const head: Piece[] = [], tail: Piece[] = []
+    let n = 0
+    for (const p of this.open) {
+      if (n + p.text.length <= cut) head.push(p)
+      else if (n >= cut) tail.push(p)
+      else { head.push({ t: p.t, text: p.text.slice(0, cut - n) }); tail.push({ t: p.t, text: p.text.slice(cut - n) }) }
+      n += p.text.length
+    }
+    this.open = head
+    this.close()
+    this.open = tail
+    return true
+  }
+
   close(): void {
     const text = this.text.trim()
-    if (text) this.done.push({ text, start: this.open[0]!.t, end: this.open.at(-1)!.t })
+    if (text) this.done.push({ text, start: this.open[0]!.t, end: this.open.at(-1)!.t, wall: Date.now() })
     this.open = []
   }
 }
@@ -91,6 +114,11 @@ export class OpenAITranslateProvider implements SpeechProvider {
   private reconnects = 0
   /** Audio sent so far (s); a session's positions count from `base`. */
   private sent = 0
+  /** Audio waiting to be sent: the service listens in real time, so bursts (a recording read from its
+   * start) go up at most a little faster than that. */
+  private queue: Buffer[] = []
+  private queued = 0
+  private drain?: ReturnType<typeof setInterval>
   private base = 0
   private src = new Stream(false)
   private tr: Stream
@@ -101,6 +129,8 @@ export class OpenAITranslateProvider implements SpeechProvider {
   private seq = 0
   /** End of the last finished line (s): everything before it is on screen. */
   private readyAt = 0
+  /** Where the last line ends on screen (lines never overlap). */
+  private lastEnd = 0
   /** Arrival delay of text after its audio position, for the page (s). */
   private lag = 0
   private connectedAt = 0
@@ -121,6 +151,7 @@ export class OpenAITranslateProvider implements SpeechProvider {
     await this.connect()
     // Speech that stops without punctuation still becomes a line.
     this.quiet = setInterval(() => this.settle(), 400)
+    this.drain = setInterval(() => this.sendDue(), 100)
   }
 
   private connect(): Promise<void> {
@@ -159,25 +190,46 @@ export class OpenAITranslateProvider implements SpeechProvider {
 
   push(pcm: Buffer): void {
     if (this.stopped) return
-    // Everything goes up, silence included: the service keeps its own pace.
-    this.send({ type: 'session.input_audio_buffer.append', audio: this.up.push(Buffer.from(pcm)).toString('base64') })
-    this.sent += pcm.length / BYTES_PER_SEC
+    this.queue.push(Buffer.from(pcm))
+    this.queued += pcm.length / BYTES_PER_SEC
+    this.sendDue()
   }
 
-  /** Audio sent but not yet in a finished line. */
+  /** Send queued audio, everything including silence, no faster than 1.5× real time since the session began. */
+  private sendDue(): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return
+    const allowed = this.base + ((Date.now() - this.connectedAt) / 1000) * 1.5 + 2
+    while (this.queue.length && this.sent < allowed) {
+      const pcm = this.queue.shift()!
+      this.queued -= pcm.length / BYTES_PER_SEC
+      this.send({ type: 'session.input_audio_buffer.append', audio: this.up.push(pcm).toString('base64') })
+      this.sent += pcm.length / BYTES_PER_SEC
+    }
+  }
+
+  /** Audio received but not yet in a finished line (queued, or sent and still being worked on). */
   backlog(): number {
-    return Math.max(0, this.sent - this.readyAt)
+    return this.queued + Math.max(0, this.sent - this.readyAt)
   }
 
   private onEvent(ev: { type: string; delta?: string; elapsed_ms?: number; error?: { message?: string } }): void {
     if (ev.type === 'session.input_transcript.delta' || ev.type === 'session.output_transcript.delta') {
       const t = this.base + (ev.elapsed_ms ?? 0) / 1000
-      // How long after its audio the text arrived (smoothed), for the page and the logs.
-      const arrived = this.base + (Date.now() - this.connectedAt) / 1000
-      this.lag = this.lag ? this.lag * 0.9 + (arrived - t) * 0.1 : arrived - t
+      // How far the text trails the audio already sent (smoothed), for the page.
+      const behind = Math.max(0, this.sent - t)
+      this.lag = this.lag ? this.lag * 0.9 + behind * 0.1 : behind
       const piece = { t, text: String(ev.delta ?? '') }
       if (ev.type === 'session.input_transcript.delta') this.src.add(piece)
-      else this.tr.add(piece)
+      else {
+        // The translation sometimes comes without punctuation: when it has moved well past the end of a
+        // source sentence it has not been paired with, end its line there, in step with the speaker.
+        const next = this.src.done[this.srcUsed]
+        if (next && this.tr.text.trim() && t - next.end >= 1.2) {
+          // Prefer a comma or full stop already there; without one, only once it is clearly behind.
+          if (!this.tr.closeAtPause() && t - next.end >= 3) this.tr.close()
+        }
+        this.tr.add(piece)
+      }
       this.pair(false)
       this.draft()
     } else if (ev.type === 'error') {
@@ -187,8 +239,8 @@ export class OpenAITranslateProvider implements SpeechProvider {
 
   /** Close streams that went quiet (a pause without punctuation), then pair what is complete. */
   private settle(): void {
-    const now = this.sent
-    for (const s of [this.src, this.tr]) if (s.last !== undefined && now - s.last > QUIET_SEC + this.lag) s.close()
+    // Quiet by the clock (the service works in real time): no new words for a while ends the sentence.
+    for (const s of [this.src, this.tr]) if (s.last !== undefined && Date.now() - s.lastWall > QUIET_SEC * 1000) s.close()
     this.pair(false)
     this.draft()
   }
@@ -200,7 +252,11 @@ export class OpenAITranslateProvider implements SpeechProvider {
    */
   private pair(all: boolean): void {
     while (this.tr.done.length) {
-      const t = this.tr.done.shift()!
+      const t = this.tr.done[0]!
+      // Its source sentence is sometimes finished a moment after the translation: give it 1.5 s.
+      const srcReady = this.srcUsed < this.src.done.length && this.src.done[this.srcUsed]!.end <= t.end + 0.5
+      if (!all && !srcReady && this.src.text.trim() && Date.now() - t.wall < 1500) break
+      this.tr.done.shift()
       // Source sentences the translation has caught up with (it trails the speech), as many as its
       // length calls for: the speaker is often a sentence ahead, and time alone cannot tell.
       const want = Array.from(t.text).length * this.ratio
@@ -224,15 +280,19 @@ export class OpenAITranslateProvider implements SpeechProvider {
 
   private line(t: Sentence | undefined, src: Sentence[]): void {
     const srcText = src.map(s => s.text).join(' ').trim()
-    // The words were spoken a little before the service stamped them.
-    const start = Math.max(0, Math.min(t?.start ?? Infinity, src[0]?.start ?? Infinity) - 0.4)
-    const end = Math.max(t?.end ?? 0, src.at(-1)?.end ?? 0)
+    // On screen while the sentence is spoken: the source words' times (stamped a little after they are
+    // heard), else the translation's moved back by its usual lag. Lines never overlap.
+    const spoken = src.length ? { start: src[0]!.start - 0.6, end: src.at(-1)!.end - 0.2 } : { start: (t?.start ?? 0) - 1.4, end: (t?.end ?? 0) - 0.8 }
+    const start = Math.max(0, this.lastEnd, spoken.start)
+    const end = Math.max(start + 1, spoken.end)
+    this.lastEnd = end
     this.emit?.({
-      key: `ot:${this.seq++}`, start, end: Math.max(end, start + 0.8),
+      key: `ot:${this.seq++}`, start, end,
       // No source sentence finished yet: the translation shows alone, its source comes with the next line.
       src: srcText, tr: t ? { [this.opts.target]: t.text } : undefined, final: true,
     })
-    this.readyAt = Math.max(this.readyAt, end)
+    // Finished once its translation is in.
+    this.readyAt = Math.max(this.readyAt, t?.end ?? end, end)
   }
 
   /** The sentence being translated, as a draft line. */
@@ -241,8 +301,9 @@ export class OpenAITranslateProvider implements SpeechProvider {
     if (!tr) return
     const pending = this.src.done.slice(this.srcUsed).map(s => s.text)
     const srcText = [...pending, this.src.text.trim()].filter(Boolean).join(' ')
-    const start = Math.max(0, Math.min(this.tr.start ?? Infinity, this.src.done[this.srcUsed]?.start ?? this.src.start ?? Infinity) - 0.4)
-    this.emit?.({ key: `ot:${this.seq}`, start, end: Math.max(this.tr.last ?? start, start + 0.8), src: srcText, tr: { [this.opts.target]: tr }, final: false })
+    const from = this.src.done[this.srcUsed]?.start ?? this.src.start
+    const start = Math.max(0, this.lastEnd, from !== undefined ? from - 0.6 : (this.tr.start ?? 0) - 1.4)
+    this.emit?.({ key: `ot:${this.seq}`, start, end: Math.max(start + 1, (this.src.last ?? this.tr.last ?? start) - 0.2), src: srcText, tr: { [this.opts.target]: tr }, final: false })
   }
 
   /** Seconds between audio and its text arriving, as measured (for the page). */
@@ -254,6 +315,7 @@ export class OpenAITranslateProvider implements SpeechProvider {
     // Let the last words come back, then finish everything.
     await new Promise(r => setTimeout(r, 2500))
     if (this.quiet) clearInterval(this.quiet)
+    if (this.drain) clearInterval(this.drain)
     this.src.close(); this.tr.close(); this.pair(true)
     this.stopped = true
     try { this.ws?.close() } catch {}

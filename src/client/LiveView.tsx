@@ -167,6 +167,20 @@ export function LiveView(props: LiveViewInjected) {
   const [subStyle, setSubStyle] = useState<SubStyle>(() => loadStyle(lines))
   const [delay, setDelay] = useState(8)
   const [theater, setTheater] = useState(false)
+  // Video page: the chat panel can be hidden, and its width dragged (both remembered).
+  const [sideOpen, setSideOpenRaw] = useState<boolean>(() => store.get('sideOpen', true))
+  const setSideOpen = (v: boolean) => { setSideOpenRaw(v); store.set('sideOpen', v) }
+  const [sideW, setSideWRaw] = useState<number>(() => store.get('sideW', 380))
+  const mainRef = useRef<HTMLElement>(null)
+  const dragSide = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const box = mainRef.current?.getBoundingClientRect()
+    if (!box) return
+    const move = (ev: PointerEvent) => setSideWRaw(Math.round(Math.min(box.width * 0.6, Math.max(280, box.right - ev.clientX - 8))))
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); setSideWRaw(w => { store.set('sideW', w); return w }) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
   const [tab, setTab] = useState<Tab>('transcript')
   const [query, setQuery] = useState('')
   const [trMode, setTrMode] = useState<'lines' | 'read'>('lines')
@@ -652,7 +666,8 @@ export function LiveView(props: LiveViewInjected) {
   ) : null
 
   return (
-    <div className={`dshl ${theater && !activeBench ? 'theater' : ''} ${pageMode ? 'page' : ''} ${activeBench ? 'bench' : ''}`} data-dsh-own-drop="dsh-vidi"
+    <div className={`dshl ${theater && !activeBench ? 'theater' : ''} ${pageMode ? 'page' : ''} ${activeBench ? 'bench' : ''} ${pageMode && !sideOpen && !activeBench ? 'noside' : ''}`}
+      style={pageMode ? { ['--side-w' as string]: `${sideW}px` } : undefined} data-dsh-own-drop="dsh-vidi"
       // Files dropped here belong to this view: keep them away from the chat composer's page-wide drop handler.
       onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) e.stopPropagation() }}
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.stopPropagation(); e.preventDefault(); if (!active) setDragging(true) } }}
@@ -677,6 +692,7 @@ export function LiveView(props: LiveViewInjected) {
             login={login} onLogin={chooseLogin} browsers={browsers} providers={providers} shared={keysShared} name={engineName}
             onKey={(id, k) => { setProviders(ps => ps.map(p => p.id === id ? { ...p, key: k, ready: k.set } : p)); if (k.set) setError('') }}
             open={settingsOpen} onOpen={setSettingsOpen} t={t} />
+          {pageMode && <button className={`dshl-ctl icon ${sideOpen ? 'on' : ''}`} title={t(sideOpen ? 'side.hide' : 'side.show')} aria-pressed={sideOpen} onClick={() => setSideOpen(!sideOpen)}><Icon.sidePanel /></button>}
         </div>
       </header>
 
@@ -689,7 +705,7 @@ export function LiveView(props: LiveViewInjected) {
       {!hasMain && !pageMode ? (
         <section className="dshl-empty">{emptyBox}</section>
       ) : (
-        <main className="dshl-main">
+        <main className="dshl-main" ref={mainRef}>
           <div className="dshl-col">
             {!hasMain || !job ? emptyBox : <>
             <Player ref={player}
@@ -744,6 +760,7 @@ export function LiveView(props: LiveViewInjected) {
           </div>
 
           <aside className="dshl-side">
+            {pageMode && !activeBench && <div className="dshl-resize" onPointerDown={dragSide} title={t('side.resize')} />}
             {activeBench && view ? <div className="dshl-benchbox"><Guard key={activeBench.id} name={`workbench ${activeBench.id}`} message={t('ext.failed')} onClose={() => setBench(null)} closeLabel={t('ext.close')}>{activeBench.render(view)}</Guard></div> : pageMode ? <ChatPanel face={chatFace} source={chatSource} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} /> : transcriptBox}
           </aside>
         </main>
