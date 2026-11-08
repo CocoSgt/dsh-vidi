@@ -65,6 +65,8 @@ export interface JobOptions {
   provider: string
   /** Conversation (session) the job belongs to. */
   conversationId: string
+  /** Voiceover: subtitle lines spoken with a chosen voice over the picture. */
+  dub?: { on: boolean; lang: string; voice: string; original: 'duck' | 'off' }
 }
 
 export interface JobSummary extends JobOptions {

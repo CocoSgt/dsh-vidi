@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Readable, Writable } from 'node:stream'
+import { dubFilter, SAMPLE_RATE } from './dub.ts'
 import { wrapBalanced } from './wrap.ts'
 
 // ── Destinations (saved per computer; stream keys never go back to the browser) ──
@@ -174,6 +175,8 @@ export interface RestreamSource {
   input(from: number): { args: string[]; at: number }
   /** Rows to draw at media time t (empty: nothing on screen). */
   rowsAt(t: number): { text: string; size: number; main: boolean }[]
+  /** The voiceover, when it is on: mixed voices for a stretch of media time, and what happens to the original sound. */
+  dub?: { mix(from: number, to: number, late: Set<number>): Buffer; original: 'duck' | 'off'; done(): void }
 }
 
 const FPS_SUBS = 5
@@ -204,6 +207,8 @@ export class Restream extends EventEmitter {
   private stuckSince = Date.now()
   /** The encoder's outputs, in order (first on stdout, the next on pipes 4 and 5). */
   private outs: Content[] = []
+  private dubTimer?: ReturnType<typeof setInterval>
+  private dubSent = 0
 
   constructor(private readonly source: RestreamSource, private readonly opts: { from: number; burn: boolean; style: BurnStyle; height: 720 | 1080; bitrateK: number }, targets: Target[], private readonly log: (m: string) => void) {
     super()
@@ -248,16 +253,26 @@ export class Restream extends EventEmitter {
     const b = this.opts.bitrateK
     const video = ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-profile:v', 'high',
       '-b:v', `${b}k`, '-maxrate', `${b}k`, '-bufsize', `${b * 2}k`, '-g', '50', '-keyint_min', '50', '-sc_threshold', '0']
-    const audio = ['-map', '0:a:0?', '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2']
+    // The voiceover comes in raw on pipe 6 and is mixed over the original sound (each output with sound gets a copy).
+    const dub = this.source.dub
+    const sounded = this.outs.filter(o => o !== 'subs')
+    const dubIn = subs ? 2 : 1
+    if (dub && sounded.length) {
+      parts.push(dubFilter('0:a:0', `${dubIn}:a`, dub.original, 'amixed'))
+      parts.push(`[amixed]${sounded.length > 1 ? `asplit=${sounded.length}${sounded.map(o => `[a_${o}]`).join('')}` : `anull[a_${sounded[0]}]`}`)
+    }
+    const audioCodec = ['-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2']
+    const audioOf = (o: Content) => (dub && sounded.length ? ['-map', `[a_${o}]`, ...audioCodec] : ['-map', '0:a:0?', ...audioCodec])
     const fd = (i: number) => (i === 0 ? 1 : i + 3)
     const args = [
       '-hide_banner', '-loglevel', 'error', '-re', ...input,
       ...(subs ? ['-probesize', '65536', '-analyzeduration', '0', '-f', 'image2pipe', '-framerate', String(FPS_SUBS), '-c:v', 'png', '-i', 'pipe:0'] : []),
+      ...(dub && sounded.length ? ['-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', '1', '-i', 'pipe:6'] : []),
       '-filter_complex', parts.join(';'), '-progress', 'pipe:3',
       // The subtitle-only picture carries no sound (the camera's own goes with it in OBS).
-      ...this.outs.flatMap((o, i) => ['-map', `[o_${o}]`, ...video, ...(o === 'subs' ? ['-an'] : audio), '-f', 'mpegts', `pipe:${fd(i)}`]),
+      ...this.outs.flatMap((o, i) => ['-map', `[o_${o}]`, ...video, ...(o === 'subs' ? ['-an'] : audioOf(o)), ...(dub ? ['-shortest'] : []), '-f', 'mpegts', `pipe:${fd(i)}`]),
     ]
-    const enc = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'] })
+    const enc = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'] })
     this.encoder = enc
     this.spawnedAt = Date.now()
     // If DSH itself goes away, take the ffmpeg processes with it (they would keep pushing on their own).
@@ -289,6 +304,7 @@ export class Restream extends EventEmitter {
       void this.stop(reason)
     })
     if (subs) this.feedSubtitles(w, h)
+    if (dub && sounded.length) this.feedVoice()
     for (const p of this.pushes.values()) this.connect(p.target.id)
     // Nothing coming out of the encoder after a while (no picture to read): say so instead of "connecting" forever.
     this.watchdog = setInterval(() => {
@@ -331,6 +347,24 @@ export class Restream extends EventEmitter {
       if (busy) return
       busy = true
       void tick().catch(err => this.log(`restream: subtitles: ${(err as Error).message}`)).finally(() => { busy = false })
+    }, 100)
+  }
+
+  /** The voiceover for media times from the start on, kept a couple of seconds ahead of the encoder (like the subtitles). */
+  private feedVoice(): void {
+    const sin = (this.encoder!.stdio as unknown as Writable[])[6]!
+    sin.on('error', () => {})
+    const late = new Set<number>()
+    const step = 0.2
+    this.dubTimer = setInterval(() => {
+      if (this.stopped) return
+      const ahead = Math.max(4, (Date.now() - this.spawnedAt) / 1000 + 2.5)
+      let guard = 0
+      while (this.dubSent <= ahead && sin.writableLength < 1 << 20 && guard++ < 100) {
+        const from = this.startAt + this.dubSent
+        try { sin.write(this.source.dub!.mix(from, from + step, late)) } catch (err) { this.log(`restream: voiceover: ${(err as Error).message}`); sin.write(Buffer.alloc(Math.round(step * SAMPLE_RATE) * 2)) }
+        this.dubSent += step
+      }
     }, 100)
   }
 
@@ -407,6 +441,8 @@ export class Restream extends EventEmitter {
     clearInterval(this.watchdog)
     process.off('exit', this.killAll)
     clearInterval(this.subsTimer)
+    clearInterval(this.dubTimer)
+    this.source.dub?.done()
     for (const p of this.pushes.values()) {
       clearTimeout(p.timer)
       // Let each push send what it has and close the stream properly; force it after a few seconds.

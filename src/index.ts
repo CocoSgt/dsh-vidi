@@ -33,6 +33,9 @@ import { accessStatus, askAccess, openPrivacySettings, type AccessKind } from '.
 import { updateChecker } from './updates.ts'
 import { EventEmitter } from 'node:events'
 import { WhisperServer } from './whisper.ts'
+import { VoiceLibrary, type DubSettings, type SpeakDeps } from './dub.ts'
+import { speak } from './dub.ts'
+import { vendorOf, voiceRoutes } from './voiceroutes.ts'
 
 export const name = 'dsh-vidi'
 
@@ -227,6 +230,8 @@ export function apply(ctx: Context, config: Config): void {
     subsModel?: { provider: string; model: string }
     /** Stream key for pushes from OBS (rtmp://<this computer>:<port>/live/<key>). */
     pushKey?: string
+    /** Voiceover choices last made (a new video starts with them, switched off). */
+    dub?: Partial<DubSettings>
   }
   const prefs = (): Prefs => {
     try { return { cookies: 'auto', ...JSON.parse(readFileSync(settingsFile, 'utf8')) } } catch { return { cookies: 'auto' } }
@@ -234,6 +239,19 @@ export function apply(ctx: Context, config: Config): void {
   const savePrefs = (patch: Partial<Prefs>) => { try { writeFileSync(settingsFile, JSON.stringify({ ...prefs(), ...patch }, null, 2)) } catch {} }
   /** Subtitle options last used on the page: tools and commands reuse them. */
   const lastOptions = (): NonNullable<Prefs['last']> => prefs().last ?? { tgtLangs: [config.defaultTargetLang], srcLang: 'auto', provider: defaultEngine(), mode: 'polished' }
+
+  // Voices: made from recordings (kept for every video), and how to reach the services that speak.
+  const library = new VoiceLibrary(join(config.dataDir, 'voices'))
+  const speakDeps: SpeakDeps = {
+    key: v => keys.get(v), base: v => keys.bases.get(v), mine: id => library.get(id), log,
+  }
+  /** A voice to start with: the last one used, else one from the first service with a key. */
+  const defaultDub = (langs: string[]): DubSettings => {
+    const p = prefs().dub ?? {}
+    const fallback = keys.get('openai') ? 'openai:marin' : keys.get('siliconflow') ? 'siliconflow:anna' : keys.get('gemini') ? 'gemini:Kore' : keys.get('elevenlabs') ? 'elevenlabs:EXAVITQu4vr4xnSDxMaL' : 'openai:marin'
+    const voice = p.voice && vendorOf(library, p.voice) && keys.get(vendorOf(library, p.voice)!) ? p.voice : fallback
+    return { on: false, lang: p.lang && langs.includes(p.lang) ? p.lang : langs[0] ?? p.lang ?? config.defaultTargetLang, voice, original: p.original ?? 'duck' }
+  }
 
   /** Browser notifications: "show this video" for a session (tools, /video). */
   const bus = new EventEmitter()
@@ -362,6 +380,9 @@ export function apply(ctx: Context, config: Config): void {
       log,
       ingest: { host: lanAddress(), rtmpPort: config.rtmpPort, srtPort: config.srtPort, key: waiting ? pushKey() : undefined },
       cookies: () => prefs().cookies,
+      speak: (voice, text, lang) => speak(speakDeps, voice, text, lang),
+      voiceVendor: voice => vendorOf(library, voice) ?? 'voice',
+      defaultDub,
     }
   }
 
@@ -509,11 +530,17 @@ export function apply(ctx: Context, config: Config): void {
     return job
   }
 
+  const voices = voiceRoutes({
+    dataDir: config.dataDir, speakDeps, library, loadJob, readJson, send, log,
+    dubPrefs: () => prefs().dub ?? {}, saveDubPrefs: p => savePrefs({ dub: { ...prefs().dub, ...p } }),
+  })
+
   const api = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (!trusted(req)) return send(res, 403, { error: 'forbidden host' })
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const route = url.pathname.replace(/^\/live\/api\/?/, '')
     try {
+      if ((route === 'dub' || route.startsWith('dub/') || route === 'voices' || route.startsWith('voices/')) && await voices(route, req, res, url)) return
       if (route === 'overlay') return send(res, 200, { url: `http://127.0.0.1:${config.overlayPort}/overlay`, screen: `http://127.0.0.1:${config.overlayPort}/screen`, screenLan: `http://${lanAddress()}:${config.overlayPort}/screen` })
       if (route === 'deps') {
         const [deps] = await Promise.all([checkDeps(config.whisperModel), keys.refresh()])
@@ -907,6 +934,9 @@ export function apply(ctx: Context, config: Config): void {
         write('state', job.summary())
         write('cues', job.cues)
         write('glossary', job.terms)
+        write('dub', job.dub.view())
+        const onDub = (v: unknown) => write('dub', v)
+        job.on('dub', onDub)
         const onState = (s: unknown) => write('state', s)
         const onCue = (c: unknown) => write('cue', c)
         const onTerms = (t: unknown) => write('glossary', t)
@@ -916,7 +946,7 @@ export function apply(ctx: Context, config: Config): void {
         job.on('cue', onCue)
         job.on('glossary', onTerms)
         const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
-        req.on('close', () => { clearInterval(ping); job.off('state', onState); job.off('cue', onCue); job.off('glossary', onTerms); job.off('cues', onCues) })
+        req.on('close', () => { clearInterval(ping); job.off('dub', onDub); job.off('state', onState); job.off('cue', onCue); job.off('glossary', onTerms); job.off('cues', onCues) })
         return
       }
       if (route === 'upload' && req.method === 'POST') {

@@ -473,6 +473,54 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-submenu .seg button { flex: 1; min-width: 0; height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12.5px; cursor: pointer; }
 .dshl-submenu .seg button.on { background: rgba(255,255,255,.92); color: #111; font-weight: 600; }
 
+/* Voiceover (player menu) */
+.dshl-dubmenu { width: 320px; max-width: 100%; }
+.dshl-dubmenu .opts { position: static; margin: 0 -8px -10px; }
+.dshl-dubmenu .opt { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; padding: 0 6px; color: var(--muted); }
+.dshl-dubmenu .mt { margin: 4px 6px 2px; color: rgba(255,255,255,.45); font-size: 11.5px; line-height: 1.5; }
+.dshl-dubmenu .err { margin: 4px 6px; color: #ff8a8d; font-size: 12px; line-height: 1.45; }
+.dshl-dubmenu .vrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dshl-dubmenu .vrow > :first-child { flex: 1; min-width: 0; }
+.dshl-dubmenu .try { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border: 0; border-radius: 8px; background: var(--l2); color: var(--ink); cursor: pointer; }
+.dshl-dubmenu .try:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+.dshl-dubmenu .try svg { width: 16px; height: 16px; }
+.dshl-dubmenu .spin { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: dshl-spin .8s linear infinite; }
+@keyframes dshl-spin { to { transform: rotate(360deg); } }
+.dshl-switchrow { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 6px 10px; border: 0; background: none; color: inherit; cursor: pointer; }
+.dshl-switchrow:disabled { opacity: .5; cursor: default; }
+.dshl-switchrow .n { font-size: 13.5px; font-weight: 600; }
+.dshl-switchrow .sw { position: relative; width: 34px; height: 20px; border-radius: 999px; background: rgba(255,255,255,.22); transition: background .15s; }
+.dshl-switchrow .sw i { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.dshl-switchrow.on .sw { background: #3d6df2; }
+.dshl-switchrow.on .sw i { transform: translateX(14px); }
+
+/* Making a voice (dialog) */
+.dshl-voicemaker { width: min(440px, 100%) !important; text-align: left !important; }
+.dshl-voicemaker h3 { text-align: center; }
+.dshl-voicemaker .src { display: flex; width: 100%; margin: 6px 0 14px; }
+.dshl-voicemaker .src button { flex: 1; }
+.dshl-voicemaker .src button.on { background: var(--bg); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.dshl-voicemaker .lead { margin: 0 0 10px; text-align: left; }
+.dshl-voicemaker .read { margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: var(--l1); color: var(--ink); font-size: 15px; line-height: 1.75; }
+.dshl-voicemaker .row { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 10px; margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+.dshl-voicemaker .row.top { align-items: start; }
+.dshl-voicemaker .row.top > span { padding-top: 8px; }
+.dshl-voicemaker .dshl-input { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13.5px; resize: vertical; outline: 0; box-sizing: border-box; }
+.dshl-voicemaker .dshl-input:focus { border-color: var(--accent); }
+.dshl-voicemaker > .dshl-btn { width: 100%; height: 40px; }
+.dshl-voicemaker .rec .dot, .dshl-voicemaker .recbar .dot { width: 9px; height: 9px; border-radius: 50%; background: #fff; }
+.dshl-voicemaker .recbar { display: flex; align-items: center; gap: 10px; height: 40px; }
+.dshl-voicemaker .recbar .dot { background: var(--live); animation: dshl-pulse 1.4s ease-in-out infinite; }
+.dshl-voicemaker .recbar .sec { width: 30px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.dshl-voicemaker .recbar .meter { flex: 1; height: 6px; overflow: hidden; border-radius: 999px; background: var(--l2); }
+.dshl-voicemaker .recbar .meter i { display: block; height: 100%; border-radius: inherit; background: var(--ok); transition: width .1s; }
+.dshl-voicemaker .recbar .dshl-btn { height: 36px; }
+.dshl-voicemaker .got { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.dshl-voicemaker .got audio { display: block; width: 100%; height: 36px; margin-bottom: 12px; }
+.dshl-voicemaker .note { margin: 2px 0 0; color: var(--faint); font-size: 12px; text-align: left; }
+.dshl-voicemaker .acts { margin-top: 12px; }
+.dshl-voicemaker .err { margin: 10px 0 0; color: var(--live); font-size: 12.5px; text-align: left; }
+
 /* Download (inside the dark menu) */
 /* Restream (player menu) */
 .dshl-rs { display: grid; gap: 10px; padding: 0 6px; }

@@ -12,6 +12,7 @@ A video tool for DeepSeek Harness: watch live streams, videos and podcasts with 
 - **The subtitle model looks at the video**: polishing uses the page's title, description and comments, and — when the chosen model reads images — a frame of that stretch. It also keeps a glossary of names and terms for the video.
 - **Chat with DeepSeek beside the video**: grab this moment, cut this part, summarise, download the original — all in one conversation, with files saved in the video's folder.
 - **Restream**: push the video with its subtitles drawn into the picture to Bilibili, Douyin, Kuaishou, WeChat Channels, Douyu, Huya, YouTube, Twitch or any RTMP/SRT address — several at once; each platform connects and reconnects on its own.
+- **Voiceover**: the subtitles spoken over the picture in another language — English in, Chinese out, or the other way round — with a voice from OpenAI, SiliconFlow, Gemini or ElevenLabs, or one made from a recording (your own voice read into the microphone, an audio file, or someone talking in the video). The original sound is lowered under it or turned off; restreams and clips carry it too.
 - **Download and export**: the original or a video with subtitle tracks, just the sound (M4A), SRT / VTT subtitles, transcripts by line or paragraph.
 - English and Chinese interface; works on phones.
 

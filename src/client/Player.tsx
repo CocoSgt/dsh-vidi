@@ -13,6 +13,8 @@ export interface PlayerHandle {
   closeMenu(): void
   /** Live: hold the picture while the subtitles catch up (text shown over it), or let it go on (null). */
   hold(text: string | null, onSkip?: () => void): void
+  /** The video element (the voiceover plays along with it). */
+  media(): HTMLVideoElement | null
 }
 
 /** A control-bar menu: an icon button that opens a panel above the bar. */
@@ -132,6 +134,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   useImperativeHandle(ref, () => ({
     seek: (time: number) => { if (video.current) video.current.currentTime = Math.max(0, time) },
     closeMenu: () => setMenu(null),
+    media: () => video.current,
     hold: (text, onSkip) => {
       const el = video.current
       if (!el) return

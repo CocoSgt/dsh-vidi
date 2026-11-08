@@ -14,6 +14,7 @@ import { drawSubtitles, Restream, type BurnStyle, type RestreamStatus, type Targ
 import type { Cue, JobOptions, JobStatus, JobSummary, ProviderCue, SpeechProvider, SubsState } from './types.ts'
 import type { UsageMeter } from './usage.ts'
 import { deviceInput, type DeviceChoice } from './devices.ts'
+import { Dubber, dubFilter, wav, type DubSettings, type DubView } from './dub.ts'
 
 const run = promisify(execFile)
 
@@ -40,6 +41,12 @@ export interface JobDeps {
   ingest: { host: string; rtmpPort: number; srtPort: number; key?: string }
   /** Whose browser login to use for sites that need one. */
   cookies: () => CookieChoice
+  /** Speak a line with a voice (16-bit mono PCM, 24 kHz). */
+  speak: (voice: string, text: string, lang: string) => Promise<Buffer>
+  /** Which service a voice belongs to (for the usage list). */
+  voiceVendor: (voice: string) => string
+  /** Voiceover settings for a video that has none yet (the last ones used). */
+  defaultDub: (langs: string[]) => DubSettings
 }
 
 interface Input {
@@ -172,6 +179,9 @@ export class LiveJob extends EventEmitter {
   constructor(id: string, readonly opts: JobOptions, private readonly deps: JobDeps) {
     super()
     this.id = id
+    // New or changed lines may need their voice (made or made again).
+    this.on('cue', () => this.dubber?.onCue())
+    this.on('cues', () => this.dubber?.onCue())
     mkdirSync(join(deps.dir, 'hls'), { recursive: true })
     this.polisher = new Polisher({
       llm: deps.llm, glossary: deps.glossary, log: m => deps.log(`[${id}] ${m}`),
@@ -682,6 +692,9 @@ export class LiveJob extends EventEmitter {
       const waiting = this.cues.find(c => c.final && targets.some(t => !c.tr?.[t]) && c.start > ready - 60)
       if (waiting) ready = Math.min(ready, waiting.start)
     }
+    // With the voiceover on, a line is ready once its voice is too.
+    const voice = this.dubber?.waitingFrom(ready - 60)
+    if (voice !== undefined) ready = Math.min(ready, voice)
     return Math.max(0, ready)
   }
 
@@ -885,9 +898,50 @@ export class LiveJob extends EventEmitter {
     await this.pauseSubs()
   }
 
+  // ── Voiceover ──
+
+  private dubber?: Dubber
+
+  /** The voiceover (made on first use; its clips stay in the video's folder). */
+  get dub(): Dubber {
+    if (!this.dubber) {
+      const d = new Dubber(this.deps.dir, this.opts.dub ?? this.deps.defaultDub(this.targets()), () => this.cues, () => this.spokenLang(),
+        () => this.opts.mode === 'polished', (v, t, l) => this.deps.speak(v, t, l),
+        (v, sec) => this.deps.usage.addAudio(`voice-${this.deps.voiceVendor(v)}`, sec), m => this.deps.log(`[${this.id}] ${m}`))
+      d.on('change', (v: DubView) => this.emit('dub', v))
+      this.dubber = d
+    }
+    return this.dubber
+  }
+
+  /** Change the voiceover; a push that is running picks it up (restarted where it is when the sound changes shape). */
+  async setDub(patch: Partial<DubSettings>): Promise<DubView> {
+    const before = { ...this.dub.settings }
+    this.dub.configure(patch)
+    this.opts.dub = { ...this.dub.settings }
+    this.persist()
+    const r = this.restreamer
+    if (r?.summary.running && this.restreamOpts && (before.on !== this.dub.settings.on || (this.dub.settings.on && before.original !== this.dub.settings.original))) {
+      const targets = r.targets, at = r.summary.at
+      await r.stop()
+      await this.startRestream(targets, { ...this.restreamOpts, from: at })
+    }
+    return this.dub.view()
+  }
+
+  /** ffmpeg input and filter that put the voiceover on a cut that decodes from media time `start` (undefined: voiceover off). */
+  private async dubForCut(start: number, to: number, file: string, input: number): Promise<{ args: string[]; filter: string } | undefined> {
+    if (!this.opts.dub?.on) return undefined
+    const d = this.dub
+    await d.ensure(start, to)
+    writeFileSync(file, wav(d.mix(start, to)))
+    return { args: ['-i', file], filter: dubFilter('0:a:0', `${input}:a`, d.settings.original, 'aout') }
+  }
+
   // ── Restreaming ──
 
   private restreamer?: Restream
+  private restreamOpts?: { from: number; burn: boolean; style: BurnStyle; height: 720 | 1080 }
 
   get restream(): RestreamStatus | undefined { return this.restreamer?.summary }
 
@@ -906,9 +960,17 @@ export class LiveJob extends EventEmitter {
     if (!this.segments().length) throw new Error('nothing recorded yet')
     // Watched to the end of a video: stream it from the beginning rather than end at once.
     if (this.vod && this.duration && opts.from >= this.duration - 1.5) opts = { ...opts, from: 0 }
+    this.restreamOpts = opts
+    const dub = this.opts.dub?.on ? this.dub : undefined
     const r = new Restream({
       input: from => this.restreamInput(from),
       rowsAt: t => this.rowsAt(t, opts.style),
+      // The voiceover goes out with the picture; voices are made ahead of where the push reads.
+      dub: dub && {
+        mix: (a, b, late) => { dub.setFocus('push', b); return dub.mix(a, b, late) },
+        original: dub.settings.original,
+        done: () => dub.setFocus('push', undefined),
+      },
     }, { ...opts, bitrateK: opts.height === 1080 ? 4500 : 2500 }, targets, m => this.deps.log(`[${this.id}] ${m}`))
     this.restreamer = r
     r.on('status', () => this.emit('state', this.summary()))
@@ -1023,6 +1085,14 @@ export class LiveJob extends EventEmitter {
     } catch { return undefined }
   }
 
+  /** The original sound of [from, to] as a WAV (24 kHz mono). */
+  async audio(from: number, to: number): Promise<Buffer> {
+    const { args, skip } = this.mediaFor(from, to)
+    const { stdout } = await run('ffmpeg', ['-v', 'error', ...args, ...seekAfter(skip), '-t', String(to - from), '-vn', '-ac', '1', '-ar', '24000', '-f', 'wav', 'pipe:1'],
+      { timeout: 120_000, encoding: 'buffer', maxBuffer: 64 << 20 })
+    return stdout
+  }
+
   /** Save one frame at media time `at` (seconds) as JPEG; returns the file path. */
   async frame(at: number): Promise<string> {
     const dir = join(this.deps.dir, 'frames')
@@ -1058,7 +1128,8 @@ export class LiveJob extends EventEmitter {
         maps.push('-map', `${i + 1}:0`)
       })
     }
-    await run('ffmpeg', ['-v', 'error', '-y', ...args, ...subArgs, ...seekAfter(skip), '-t', String(to - from), '-map', '0:v?', '-map', '0:a?', ...maps,
+    const voice = await this.dubForCut(from - skip, to, join(dir, `.${name}.dub.wav`), 1 + maps.length / 2)
+    await run('ffmpeg', ['-v', 'error', '-y', ...args, ...subArgs, ...(voice?.args ?? []), ...(voice ? ['-filter_complex', voice.filter] : []), ...seekAfter(skip), '-t', String(to - from), '-map', '0:v?', '-map', voice ? '[aout]' : '0:a?', ...maps,
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '160k', ...(maps.length ? ['-c:s', 'mov_text'] : []),
       '-movflags', '+faststart', out], { timeout: 600_000 })
     for (const f of readdirSync(dir)) if (f.startsWith(`.${name}.`)) rmSync(join(dir, f), { force: true })
@@ -1114,9 +1185,10 @@ export class LiveJob extends EventEmitter {
     const list = join(tmp, 'subs.ffconcat')
     writeFileSync(list, lines.join('\n') + '\n')
     try {
-      await run('ffmpeg', ['-v', 'error', '-y', ...args, '-f', 'concat', '-safe', '0', '-i', list, ...seekAfter(skip), '-t', String(to - from),
-        '-filter_complex', `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[v];[1:v]format=rgba,setpts=PTS-STARTPTS[s];[v][s]overlay=0:0:eof_action=repeat,format=yuv420p[o]`,
-        '-map', '[o]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', out], { timeout: 900_000 })
+      const voice = await this.dubForCut(from - skip, to, join(tmp, 'dub.wav'), 2)
+      await run('ffmpeg', ['-v', 'error', '-y', ...args, '-f', 'concat', '-safe', '0', '-i', list, ...(voice?.args ?? []), ...seekAfter(skip), '-t', String(to - from),
+        '-filter_complex', `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[v];[1:v]format=rgba,setpts=PTS-STARTPTS[s];[v][s]overlay=0:0:eof_action=repeat,format=yuv420p[o]${voice ? `;${voice.filter}` : ''}`,
+        '-map', '[o]', '-map', voice ? '[aout]' : '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', out], { timeout: 900_000 })
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }

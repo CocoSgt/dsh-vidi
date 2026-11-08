@@ -10,6 +10,8 @@ import { LineChips } from './LineChips.tsx'
 import { SubtitleMenu } from './SubtitleMenu.tsx'
 import type { LiveKey } from './locales.ts'
 import { LoginDialog } from './LoginDialog.tsx'
+import { DubMenu, useVoices, VoiceMaker } from './DubPanel.tsx'
+import { useVoiceover, type DubView } from './dub.ts'
 import { Player, type CueLike, type PlayerHandle, type PlayerMenu } from './Player.tsx'
 import { vidiUi, type VidiView } from './extensions.ts'
 import { RestreamPanel, type RestreamStatus } from './RestreamPanel.tsx'
@@ -276,6 +278,9 @@ export function LiveView(props: LiveViewInjected) {
   const [job, setJob] = useState<Summary | null>(null)
   const [cues, setCues] = useState<CueLike[]>([])
   const [terms, setTerms] = useState<Term[]>([])
+  /** Voiceover of this video (settings and the voices made so far), and the voices on offer. */
+  const [dub, setDub] = useState<DubView | null>(null)
+  const [makingVoice, setMakingVoice] = useState(false)
   const [tasks, setTasks] = useState<Task[]>([])
   const [armed, setArmed] = useState<Armed | null>(null)
   const [error, setError] = useState('')
@@ -330,6 +335,7 @@ export function LiveView(props: LiveViewInjected) {
   const setCamVideo = (v: string) => { setCamVideoRaw(v); store.set('device.video', v) }
   const setCamAudio = (v: string) => { setCamAudioRaw(v); store.set('device.audio', v) }
   const ui: 'en' | 'zh' = t('view.live') === 'Video' ? 'en' : 'zh'
+  const { list: voices, reload: reloadVoices } = useVoices(ui)
   const langOptions = useMemo(() => Object.entries(langs).filter(([k]) => k !== 'auto').map(([k, v]) => [k, langLabel(k, ui, v)] as [string, string]), [langs, ui])
   const langName = useCallback((k: string) => (k === 'src' ? t('sub.source') : langLabel(k, ui, langs[k])), [langs, t, ui])
   // Lines on screen: the job's own lines while one is shown, else the picker.
@@ -379,13 +385,25 @@ export function LiveView(props: LiveViewInjected) {
     }).catch(() => {})
   }), [sessionId])
 
+  // ── Voiceover: played with the picture; voices are made ahead of where it plays ──
+  useVoiceover(() => player.current?.media() ?? null, job?.id, dub)
+  const dubAt = Math.floor(now / 5)
+  useEffect(() => {
+    if (!job?.id || !dub?.on) return
+    void fetch('/live/api/dub/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: job.id, at: now }) }).catch(() => {})
+  }, [job?.id, dub?.on, dubAt])
+  const dubLangs = (job?.tgtLangs ?? []).map(l => ({ value: l, label: langName(l) }))
+  const makeVoice = () => { player.current?.closeMenu(); void reloadVoices(); setMakingVoice(true) }
+
   // ── Live updates for the shown job ──
   useEffect(() => {
     if (!job?.id) return
+    setDub(null)
     const es = new EventSource(`/live/api/events?jobId=${encodeURIComponent(job.id)}`)
     es.addEventListener('state', e => setJob(JSON.parse((e as MessageEvent).data)))
     es.addEventListener('cues', e => setCues(JSON.parse((e as MessageEvent).data)))
     es.addEventListener('glossary', e => setTerms(JSON.parse((e as MessageEvent).data)))
+    es.addEventListener('dub', e => setDub(JSON.parse((e as MessageEvent).data)))
     es.addEventListener('cue', e => {
       const cue: CueLike = JSON.parse((e as MessageEvent).data)
       setCues(prev => {
@@ -1004,6 +1022,11 @@ export function LiveView(props: LiveViewInjected) {
                   ),
                 },
                 {
+                  id: 'dub', icon: <Icon.voice />, title: t('menu.dub'),
+                  label: dub?.on ? `${t('dub.title')} · ${langName(dub.lang)}` : undefined, on: !!dub?.on,
+                  content: <DubMenu jobId={job.id} view={dub} langs={dubLangs} voices={voices} onMake={makeVoice} at={now} t={t} />,
+                },
+                {
                   // How subtitles are made for this video: the mode (live streams) and the speech engine.
                   id: 'how', icon: <Icon.timer />, title: t('how.title'),
                   label: [!job.vod ? t(`mode.${mode}` as LiveKey) : '', engineName(usableEngine())].filter(Boolean).join(' · '),
@@ -1061,6 +1084,14 @@ export function LiveView(props: LiveViewInjected) {
       )}
 
       {dragging && <div className="dshl-dropzone"><div>{t('in.drop')}</div></div>}
+      {makingVoice && voices && (
+        <VoiceMaker jobId={job?.id} at={now} voices={voices} t={t} onClose={() => setMakingVoice(false)}
+          onDone={id => {
+            setMakingVoice(false)
+            void reloadVoices()
+            if (job) void post('dub', { jobId: job.id, voice: id, on: true, at: now }).catch(e => setError((e as Error).message))
+          }} />
+      )}
       {loginFor && (
         <LoginDialog site={loginFor.need.site} browser={loginBrowser} browsers={browsers} onBrowser={chooseLogin} t={t}
           onClose={() => setLoginFor(null)} onRetry={() => { const r = loginFor.retry; setLoginFor(null); r() }} />
@@ -1149,7 +1180,8 @@ const fmtTokens = (n: number, ui: 'en' | 'zh') =>
   ui === 'zh' && n >= 10000 ? `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)}万` : n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n)
 
 /** Engines billed by the minute of audio (no token counts come back): US$ per minute, from the provider's price list. */
-const PER_MINUTE: Record<string, number> = { 'openai-translate': 0.034 }
+/** Rough prices per minute of audio: OpenAI interpretation, and spoken voiceover (OpenAI, Gemini speech). */
+const PER_MINUTE: Record<string, number> = { 'openai-translate': 0.034, 'voice-openai': 0.015, 'voice-gemini': 0.015 }
 const audioCost = (audio: [string, number][]) => audio.reduce((sum, [k, v]) => sum + (PER_MINUTE[k] ?? 0) * v / 60, 0)
 const usd = (v: number) => `$${v.toFixed(2)}`
 
