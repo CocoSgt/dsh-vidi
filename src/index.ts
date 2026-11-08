@@ -3,6 +3,7 @@
  * subtitle translation through the harness model, and the HTTP surface the
  * browser half talks to (/live/api/*, /live/media/*).
  */
+import { execFile } from 'node:child_process'
 import { appendFileSync, createReadStream, readdirSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir, networkInterfaces } from 'node:os'
@@ -365,6 +366,81 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   /** The conversation's video: in memory, or the latest one on disk (after a restart). */
+  /** A video by id: the running one, or brought back from its folder. */
+  function loadJob(id: string): LiveJob | undefined {
+    if (jobs.has(id)) return jobs.get(id)
+    if (!/^[\w-]+$/.test(id)) return undefined
+    const dir = join(config.dataDir, 'jobs', id)
+    const file = join(dir, 'job.json')
+    if (!existsSync(file)) return undefined
+    try {
+      const raw = JSON.parse(readFileSync(file, 'utf8'))
+      let job: LiveJob | undefined
+      job = LiveJob.restore(dir, jobDeps(dir, raw.opts, () => job))
+      if (job) jobs.set(job.id, job)
+      return job
+    } catch { return undefined }
+  }
+
+  /** Past videos for the start page, newest first: those with something to watch. */
+  const historyCache = new Map<string, { mtime: number; item: Record<string, unknown> | null }>()
+  function history(): Record<string, unknown>[] {
+    const root = join(config.dataDir, 'jobs')
+    if (!existsSync(root)) return []
+    const out: Record<string, unknown>[] = []
+    for (const name of readdirSync(root).filter(n => /^[\w-]+$/.test(n)).sort().reverse()) {
+      const dir = join(root, name), file = join(dir, 'job.json')
+      const live = jobs.get(name)
+      if (live && live.summary().status === 'running' && !live.summary().message) {
+        const s = live.summary()
+        out.push({ id: s.id, title: s.title || (s.source === 'url' ? s.url : ''), source: s.source, url: s.source === 'url' ? s.url : undefined, startedAt: s.startedAt, duration: s.vod ? s.duration : s.recorded, live: !s.vod, running: true, conversationId: s.conversationId })
+        continue
+      }
+      let mtime = 0
+      try { mtime = statSync(file).mtimeMs } catch { continue }
+      let hit = historyCache.get(name)
+      if (!hit || hit.mtime !== mtime) {
+        let item: Record<string, unknown> | null = null
+        try {
+          const j = JSON.parse(readFileSync(file, 'utf8')) as { id: string; opts: { source: string; url: string; conversationId: string }; title?: string; vod?: boolean; duration?: number; startedAt?: number; status?: string }
+          const watchable = existsSync(join(dir, 'recording.mp4')) || existsSync(join(dir, 'hls', 'index.m3u8'))
+          if (watchable && j.status !== 'error') {
+            const device = j.opts.source === 'device' ? (() => { try { return JSON.parse(j.opts.url).title as string } catch { return '' } })() : ''
+            // Live recordings saved before their length was known: add up the playlist.
+            let duration = j.duration
+            if (!duration) try { duration = [...readFileSync(join(dir, 'hls', 'index.m3u8'), 'utf8').matchAll(/#EXTINF:([\d.]+)/g)].reduce((n, m) => n + Number(m[1]), 0) || undefined } catch {}
+            item = { id: j.id, title: j.title || device || (j.opts.source === 'url' ? j.opts.url : ''), source: j.opts.source, url: j.opts.source === 'url' ? j.opts.url : undefined, startedAt: j.startedAt, duration, live: !j.vod, running: false, conversationId: j.opts.conversationId }
+          }
+        } catch {}
+        hit = { mtime, item }
+        historyCache.set(name, hit)
+      }
+      if (hit.item) out.push(hit.item)
+    }
+    return out
+  }
+
+  /** A small picture of a video for its history row (made once, kept in its folder). */
+  async function thumbnail(id: string): Promise<string | undefined> {
+    if (!/^[\w-]+$/.test(id)) return undefined
+    const dir = join(config.dataDir, 'jobs', id)
+    const out = join(dir, 'thumb.jpg')
+    if (existsSync(out)) return out
+    for (const cover of ['cover.jpg', 'cover.png']) if (existsSync(join(dir, cover))) return join(dir, cover)
+    const src = existsSync(join(dir, 'recording.mp4')) ? join(dir, 'recording.mp4') : existsSync(join(dir, 'hls', 'index.m3u8')) ? join(dir, 'hls', 'index.m3u8') : undefined
+    if (!src) return undefined
+    // A few seconds in (past a black first frame), decoded then picked, so live segments work too.
+    const ok = await new Promise<boolean>(resolve => {
+      execFile('ffmpeg', ['-v', 'error', '-y', '-i', src, '-ss', '3', '-frames:v', '1', '-vf', 'scale=320:-2', '-q:v', '5', out], { timeout: 20_000 }, err => resolve(!err && existsSync(out)))
+    })
+    if (ok) return out
+    // Shorter than 3 s, or audio only: the first frame, if any.
+    const first = await new Promise<boolean>(resolve => {
+      execFile('ffmpeg', ['-v', 'error', '-y', '-i', src, '-frames:v', '1', '-vf', 'scale=320:-2', '-q:v', '5', out], { timeout: 20_000 }, err => resolve(!err && existsSync(out)))
+    })
+    return first ? out : undefined
+  }
+
   function jobForConversation(conversationId: string): LiveJob | undefined {
     const id = byConversation.get(conversationId)
     if (id === '') return undefined // closed on the page
@@ -727,6 +803,33 @@ export function apply(ctx: Context, config: Config): void {
           browser: s.loginBrowser, localFile: s.source === 'file' ? s.url : undefined,
           saveAs: typeof b.saveAs === 'string' ? b.saveAs.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 150) : 'audio',
         }))
+      }
+      if (route === 'history') {
+        // Past videos for the start page: { items, total }, newest first, a page at a time.
+        const all = history()
+        const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
+        const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 5))
+        return send(res, 200, { items: all.slice(offset, offset + limit), total: all.length })
+      }
+      if (route === 'thumb') {
+        const file = await thumbnail(url.searchParams.get('jobId') ?? '')
+        if (!file) { res.writeHead(404); res.end(); return }
+        res.writeHead(200, { 'content-type': file.endsWith('.png') ? 'image/png' : 'image/jpeg', 'cache-control': 'max-age=3600' })
+        createReadStream(file).pipe(res)
+        return
+      }
+      if (route === 'reopen' && req.method === 'POST') {
+        // Open a past video in this conversation (its own is gone, or it was closed): it stays here from now on.
+        const b = await readJson(req)
+        const job = loadJob(String(b.jobId))
+        const conv = String(b.conversationId ?? '')
+        if (!job || !conv) return send(res, 404, { error: 'no such video' })
+        try { rmSync(join(job.summary().dir, 'closed'), { force: true }) } catch {}
+        const prev = byConversation.get(conv)
+        if (prev && prev !== job.id) { const other = jobs.get(prev); if (other && other.summary().status !== 'running') byConversation.delete(conv) }
+        job.rebind(conv)
+        byConversation.set(conv, job.id)
+        return send(res, 200, { ...job.summary(), cues: job.cues, terms: job.terms })
       }
       if (route === 'preview') {
         // The real-time picture of an own source, as a multipart JPEG stream an <img> plays directly.

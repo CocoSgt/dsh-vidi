@@ -411,6 +411,19 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-menu .dshl-seg button.on { background: rgba(255,255,255,.92); color: #111; box-shadow: none; }
 .dshl-menu .dshl-switch { background: rgba(255,255,255,.22); }
 .dshl-menu .dshl-switch.on { background: var(--accent); }
+.dshl-history { width: 100%; max-width: 680px; margin-top: 40px; text-align: left; }
+.dshl-history .hh { margin: 0 0 8px 4px; color: var(--faint); font-size: 12.5px; }
+.dshl-history .hl { display: grid; gap: 2px; }
+.dshl-history .hi { display: flex; align-items: center; gap: 12px; width: 100%; padding: 6px; border: 0; border-radius: 10px; background: none; color: var(--ink); text-align: left; cursor: pointer; }
+.dshl-history .hi:hover { background: var(--hover); }
+.dshl-history .th { position: relative; flex: none; width: 96px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 6px; background: var(--l2); }
+.dshl-history .th img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.dshl-history .dur { position: absolute; right: 4px; bottom: 3px; padding: 0 4px; border-radius: 3px; background: rgba(0,0,0,.65); color: #fff; font-size: 10.5px; line-height: 16px; font-variant-numeric: tabular-nums; }
+.dshl-history .tx { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.dshl-history .tt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 550; }
+.dshl-history .mm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
+.dshl-history .chip { flex: none; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--live) 14%, transparent); color: var(--live); font-size: 11.5px; font-weight: 600; }
+.dshl-history .more { margin: 8px 0 0 6px; font-size: 12.5px; }
 .dshl-modemenu { display: grid; gap: 4px; width: 300px; max-width: 100%; }
 .dshl-modemenu .mm { display: grid; gap: 3px; padding: 9px 10px; border: 0; border-radius: 8px; background: none; color: inherit; text-align: left; cursor: pointer; }
 .dshl-modemenu .mm:hover { background: rgba(255,255,255,.08); }

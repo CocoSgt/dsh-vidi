@@ -58,6 +58,8 @@ export interface LiveViewInjected {
   onNewVideo?: (link: string) => Promise<boolean>
   /** Video page: the video's title is known — name the conversation after it. */
   onTitle?: (title: string) => void
+  /** Open a past video in its own conversation (false: that conversation is gone, open it here). */
+  onOpenVideo?: (conversationId: string, jobId: string) => Promise<boolean>
   /** A link to open right away (sidebar, paste prompt). */
   pending?: string
   onPendingDone?: () => void
@@ -116,6 +118,50 @@ function useDevices(enabled: boolean): Device[] | null {
 
 type SourceTab = 'link' | 'file' | 'camera' | 'push'
 type AccessKind = 'camera' | 'microphone' | 'screen'
+
+interface PastVideo { id: string; title: string; source: Source; url?: string; startedAt?: number; duration?: number; live?: boolean; running?: boolean; conversationId: string }
+
+/** "3 分钟前", "5 小时前", "2 天前", then the date. */
+function ago(ts: number | undefined, ui: 'en' | 'zh'): string {
+  if (!ts) return ''
+  const s = Math.max(0, (Date.now() - ts) / 1000)
+  if (s < 60) return ui === 'zh' ? '刚刚' : 'just now'
+  const [n, unit] = s < 3600 ? [Math.round(s / 60), ui === 'zh' ? ' 分钟前' : ' min ago'] : s < 86400 ? [Math.round(s / 3600), ui === 'zh' ? ' 小时前' : ' h ago'] : s < 7 * 86400 ? [Math.round(s / 86400), ui === 'zh' ? ' 天前' : ' d ago'] : [0, '']
+  if (unit) return `${n}${unit}`
+  return new Date(ts).toLocaleDateString(ui === 'zh' ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric' })
+}
+
+/** Past videos under the start box: the newest few, more on request. */
+function History({ t, ui, onOpen }: { t: (k: LiveKey) => string; ui: 'en' | 'zh'; onOpen: (v: PastVideo) => void }) {
+  const [items, setItems] = useState<PastVideo[]>([])
+  const [total, setTotal] = useState(0)
+  const load = (offset: number, limit: number) => fetch(`/live/api/history?offset=${offset}&limit=${limit}`).then(r => r.json())
+    .then((j: { items?: PastVideo[]; total?: number }) => { setItems(v => (offset ? [...v, ...(j.items ?? [])] : j.items ?? [])); setTotal(j.total ?? 0) }).catch(() => {})
+  useEffect(() => { void load(0, 5) }, [])
+  if (!items.length) return null
+  const from = (v: PastVideo) => v.source === 'file' ? t('src.file') : v.source === 'device' ? t('src.camera') : v.source === 'push' ? t('src.push') : (siteName(v.url ?? '') || (() => { try { return new URL(v.url ?? '').hostname.replace(/^www\./, '') } catch { return t('src.link') } })())
+  return (
+    <section className="dshl-history">
+      <div className="hh">{t('hist.title')}</div>
+      <div className="hl">
+        {items.map(v => (
+          <button key={v.id} className="hi" onClick={() => onOpen(v)}>
+            <span className="th">
+              <img src={`/live/api/thumb?jobId=${encodeURIComponent(v.id)}`} alt="" onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
+              {v.duration ? <span className="dur">{CLOCK(v.duration)}</span> : null}
+            </span>
+            <span className="tx">
+              <span className="tt">{v.title || (v.source === 'push' ? from(v) : t('hist.untitled'))}</span>
+              <span className="mm">{[v.title || v.source !== 'push' ? from(v) : '', v.live ? t('hist.live') : '', ago(v.startedAt, ui)].filter(Boolean).join(' · ')}</span>
+            </span>
+            {v.running && <span className="chip">{t('hist.running')}</span>}
+          </button>
+        ))}
+      </div>
+      {items.length < total && <button className="dshl-link more" onClick={() => void load(items.length, 10)}>{t('hist.more').replace('{n}', String(total - items.length))}</button>}
+    </section>
+  )
+}
 
 /** The push stream key: copy it, or change it (typed, or a new random one). */
 function KeyRow({ value, t, onChanged }: { value: string; t: (k: LiveKey) => string; onChanged: () => void }) {
@@ -656,11 +702,21 @@ export function LiveView(props: LiveViewInjected) {
   const openPrivacy = (kind: AccessKind) => void post('access', { kind, action: 'settings' }).catch(() => {})
   // A device job that got nothing: the screen (Screen Recording) or the camera / microphone.
   const blockedKind = (): AccessKind => { try { const c = JSON.parse(job?.url ?? '{}'); return cams.find(d => d.id === c.video)?.kind === 'screen' ? 'screen' : 'camera' } catch { return 'camera' } }
+  // A past video from the list: in its own conversation when that still exists, else here.
+  const openPast = async (v: PastVideo) => {
+    setError('')
+    try {
+      if (v.conversationId !== sessionId && props.onOpenVideo && await props.onOpenVideo(v.conversationId, v.id)) return
+      const j = await post('reopen', { jobId: v.id, conversationId: sessionId })
+      setCues(j.cues ?? []); setTerms(j.terms ?? []); setJob(j); setArmed(null)
+    } catch (e) { setError((e as Error).message) }
+  }
   const emptyBox = () => (
     <div className="dshl-drop">
       <h2>{t('empty.title')}</h2>
       <div className="dshl-bar center">{sourceBar}</div>
       <p>{srcTab === 'camera' && devices && !mics.length ? t('src.cam.none') : t(srcTab === 'file' ? 'src.file.body' : srcTab === 'camera' ? 'src.cam.body' : srcTab === 'push' ? 'src.push.body' : 'empty.body')}</p>
+      {pageMode && <History t={t} ui={ui} onOpen={v => void openPast(v)} />}
       {srcTab === 'push' && armed?.rtmp && (
         <div className="dshl-pushinfo">
           <dl>

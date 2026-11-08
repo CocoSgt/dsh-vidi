@@ -105,8 +105,14 @@ export async function openPage(sessions: SessionsLike, opts: { sessionId?: strin
 
 async function showPage(sessions: SessionsLike, opts: { sessionId?: string; pending?: string; workspaces?: WorkspacesLike; title?: string }): Promise<void> {
   const current = sessions.current()
-  // A video whose conversation is gone (deleted, archived away) opens on a fresh page instead of failing.
-  const fresh = () => pageSession(sessions, opts.workspaces!, opts.title ?? 'Video')
+  // The start page: the page's own conversation while it is blank; once a video lives there, a new one.
+  // A video whose conversation is gone (deleted, archived away) also lands here instead of failing.
+  const fresh = async () => {
+    let id = await pageSession(sessions, opts.workspaces!, opts.title ?? 'Video')
+    const used = await fetch(`/live/api/job?conversationId=${encodeURIComponent(id)}`).then(r => r.json()).catch(() => null)
+    if (used) id = await pageSession(sessions, opts.workspaces!, opts.title ?? 'Video', true)
+    return id
+  }
   let sid = opts.sessionId && sessions.has(opts.sessionId) ? opts.sessionId : await fresh()
   if (sid !== current) {
     try { sessions.open(sid) } catch { sid = await fresh(); sessions.open(sid) }
@@ -151,6 +157,13 @@ export function videoHandlers(sessions: SessionsLike, workspaces: WorkspacesLike
         await openPage(sessions, { sessionId: id, pending: link, workspaces })
         return true
       } catch { return false }
+    },
+    /** Open a past video in its own conversation; false when that conversation is gone. */
+    onOpenVideo: async (conversationId: string, jobId: string): Promise<boolean> => {
+      if (!conversationId || !sessions.has(conversationId)) return false
+      await fetch('/live/api/reopen', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId, conversationId }) }).catch(() => {})
+      await openPage(sessions, { sessionId: conversationId, workspaces })
+      return true
     },
     onTitle: (title: string) => {
       void own().then(yes => {
@@ -220,7 +233,8 @@ export function SidebarButton(props: { wide?: boolean; sessions: SessionsLike; w
   const meta = !busy ? '' : item?.subs === 'running' ? (pct !== undefined ? t('side.subs').replace('{p}', String(pct)) : t('side.subsLive'))
     : item?.recording ? t('side.recording') : item?.loading ? t('side.loading') : t('side.downloading')
   const thumb = busy && frame && (!item || frame.jobId === item.jobId) ? frame.dataUrl : undefined
-  const open = () => void openPage(sessions, item ? { sessionId: item.conversationId, workspaces, title: t('view.live') } : { workspaces, title: t('view.live') })
+  // Always the start page (past videos are listed there), so a new video is one step away.
+  const open = () => void openPage(sessions, { workspaces, title: t('view.live') })
   const tip = busy ? `${t('page.open')} · ${item?.title ?? ''} · ${meta}` : t('page.open')
   return (
     <button className={`dshl-sidebtn ${wide ? 'wide' : 'rail'} ${busy ? 'busy' : ''} ${page.open ? 'here' : ''}`} title={tip} onClick={open}

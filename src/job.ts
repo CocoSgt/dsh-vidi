@@ -166,6 +166,13 @@ export class LiveJob extends EventEmitter {
     this.emit('state', this.summary())
   }
 
+  /** Show this video in another conversation (opened again from the history): saved, so it stays there. */
+  rebind(conversationId: string): void {
+    this.opts.conversationId = conversationId
+    this.closed = false
+    this.persist()
+  }
+
   /** job.json: enough to bring the job back after a restart (finished, not recording). */
   private persist(): void {
     if (this.opts.source === 'push' && this.message) return // an idle push listener is not worth keeping
