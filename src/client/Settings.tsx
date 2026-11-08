@@ -11,6 +11,22 @@ export interface Provider { id: string; vendor?: string; model?: string; label?:
 /** Who runs a speech engine (engines of one vendor share its key). */
 const vendorOf = (p: Provider) => p.vendor ?? p.id
 
+/** The usual model makers, listed first whether or not they are set up in DSH yet (ids and names are matched loosely). */
+const MAKERS: { id: string; label: string; re: RegExp }[] = [
+  { id: 'deepseek', label: 'DeepSeek', re: /deepseek/ },
+  { id: 'openai', label: 'OpenAI', re: /openai|chatgpt/ },
+  { id: 'anthropic', label: 'Anthropic', re: /anthropic|claude/ },
+  { id: 'google', label: 'Google', re: /google|gemini/ },
+  { id: 'qwen', label: 'Qwen', re: /qwen|dashscope|aliyun|bailian|tongyi/ },
+  { id: 'glm', label: 'GLM', re: /\bglm|zhipu|bigmodel|z\.ai/ },
+  { id: 'kimi', label: 'Kimi', re: /kimi|moonshot/ },
+  { id: 'doubao', label: 'Doubao', re: /doubao|volc|\bark\b/ },
+  { id: 'minimax', label: 'MiniMax', re: /minimax/ },
+  { id: 'xai', label: 'xAI', re: /\bxai\b|x\.ai|grok/ },
+]
+/** Which maker a DSH model provider belongs to; providers of no listed maker stand on their own. */
+const makerOf = (provider: string, name: string) => MAKERS.find(m => m.re.test(`${provider} ${name}`.toLowerCase()))?.id ?? `p:${provider}`
+
 /**
  * Subtitle models worth suggesting first: the fast, cheap tier of each family
  * (flash / mini / turbo / air / lite / haiku), newest first, and the one DSH
@@ -110,6 +126,22 @@ export function Settings(props: {
     ...(current && !(models?.models ?? []).some(m => m.provider === current.provider) ? [[current.provider, { id: current.provider, name: current.provider }] as const] : []),
     ...(models?.models ?? []).map(m => [m.provider, { id: m.provider, name: m.providerName }] as const),
   ]).values()]
+  // Subtitle model: the maker first (as in DSH's model settings), then its model.
+  const makerProviders = (maker: string) => providersOf.filter(p => (maker.startsWith('p:') ? `p:${p.id}` === maker : makerOf(p.id, p.name) === maker)).map(p => p.id)
+  const [makerPick, setMakerPick] = useState<string | null>(null)
+  const shownMaker = makerPick ?? (current ? makerOf(current.provider, providersOf.find(p => p.id === current.provider)?.name ?? '') : 'deepseek')
+  const makerUnset = makerProviders(shownMaker).length === 0
+  const chooseMaker = (maker: string) => {
+    const ids = makerProviders(maker)
+    if (!ids.length) { setMakerPick(maker); return }
+    setMakerPick(null)
+    // A maker picked: its first recommended model goes with it.
+    const list = (models?.models ?? []).filter(m => ids.includes(m.provider))
+    const fb = models?.fallback && ids.includes(models.fallback.provider) ? models.fallback.model : undefined
+    const rec = recommended(list, fb)
+    const pick = list.find(m => rec.has(m.model)) ?? list[0]
+    if (pick) chooseModel(modelKey(pick))
+  }
   const sees = !!models?.models.find(x => modelKey(x) === modelKey(current))?.image
 
   const saveKey = async (value: string) => {
@@ -132,7 +164,7 @@ export function Settings(props: {
             <span title={t('set.engine.tip')}>{t('set.engine')}</span>
             <span className="duo">
               <Pick value={curVendor} disabled={disabled} onChange={v => { const first = providers.find(p => vendorOf(p) === v); if (first) onEngine(first.id) }}
-                options={vendors.map(p => ({ value: vendorOf(p), label: vendorName(vendorOf(p)), hint: p.ready ? undefined : t(p.online ? 'set.engine.noKey' : 'set.engine.notInstalled'), group: p.online ? t(p.region === 'cn' ? 'set.engine.cn' : 'set.engine.intl') : undefined }))} />
+                options={vendors.map(p => ({ value: vendorOf(p), label: vendorName(vendorOf(p)), hint: p.ready ? undefined : t(p.online ? 'set.engine.noKey' : 'set.engine.notInstalled') }))} />
               <Pick value={engine} disabled={disabled || vendorEngines.length < 2} onChange={onEngine}
                 options={vendorEngines.map((p, i) => ({ value: p.id, label: p.model ?? name(p.id), hint: t(`engine.note.${p.id}` as LiveKey) !== `engine.note.${p.id}` ? t(`engine.note.${p.id}` as LiveKey) : i === 0 && vendorEngines.length > 1 ? t('set.recommended') : undefined }))} />
             </span>
@@ -162,27 +194,30 @@ export function Settings(props: {
           <div className="srow col">
             <span title={t('set.model.tip')}>{t('set.model')}</span>
             <span className="duo">
-              <Pick value={current?.provider ?? ''} placeholder="…" onChange={v => {
-                // A provider picked: its first recommended model goes with it.
-                const list = (models?.models ?? []).filter(m => m.provider === v)
-                const rec = recommended(list, models?.fallback?.provider === v ? models.fallback.model : undefined)
-                const pick = list.find(m => rec.has(m.model)) ?? list[0]
-                if (pick) chooseModel(modelKey(pick))
-              }}
-                options={providersOf.map(p => ({ value: p.id, label: p.name }))} />
-              <Pick value={modelKey(current)} placeholder="…" onChange={chooseModel}
+              <Pick value={shownMaker} placeholder="…" onChange={chooseMaker}
+                options={[
+                  ...MAKERS.map(m => ({ value: m.id, label: t(`maker.${m.id}` as LiveKey) !== `maker.${m.id}` ? t(`maker.${m.id}` as LiveKey) : m.label, hint: makerProviders(m.id).length ? undefined : t('set.model.notSet') })),
+                  ...providersOf.filter(p => makerOf(p.id, p.name).startsWith('p:')).map(p => ({ value: `p:${p.id}`, label: p.name, group: t('set.others') })),
+                ]} />
+              <Pick value={makerUnset ? '' : modelKey(current)} placeholder={makerUnset ? '—' : '…'} disabled={makerUnset} onChange={chooseModel}
                 options={(() => {
-                  const listed = (models?.models ?? []).filter(m => m.provider === current?.provider)
+                  const ids = makerProviders(shownMaker)
+                  const listed = (models?.models ?? []).filter(m => ids.includes(m.provider))
                   // The model in use is always on the list, even when its provider does not list it.
-                  const list = current && !listed.some(m => m.model === current.model) ? [{ provider: current.provider, providerName: current.provider, model: current.model, name: current.model, image: false }, ...listed] : listed
-                  const rec = recommended(list, models?.fallback?.provider === current?.provider ? models?.fallback?.model : undefined)
-                  const tag = (m: ModelRow) => [modelKey(m) === modelKey(models?.fallback) ? t('set.model.dshDefault') : '', m.image ? t('set.model.image') : ''].filter(Boolean).join(' · ') || undefined
+                  const list = current && ids.includes(current.provider) && !listed.some(m => m.provider === current.provider && m.model === current.model)
+                    ? [{ provider: current.provider, providerName: current.provider, model: current.model, name: current.model, image: false }, ...listed] : listed
+                  const fb = models?.fallback && ids.includes(models.fallback.provider) ? models.fallback.model : undefined
+                  const rec = recommended(list, fb)
+                  const several = ids.length > 1
+                  const tag = (m: ModelRow) => [several ? m.providerName : '', modelKey(m) === modelKey(models?.fallback) ? t('set.model.dshDefault') : '', m.image ? t('set.model.image') : ''].filter(Boolean).join(' · ') || undefined
+                  const top = list.filter(m => rec.has(m.model))
                   return [
-                    ...list.filter(m => rec.has(m.model)).map(m => ({ value: modelKey(m), label: m.name, hint: tag(m), group: t('set.recommended') })),
-                    ...list.filter(m => !rec.has(m.model)).map(m => ({ value: modelKey(m), label: m.name, hint: tag(m), group: rec.size ? t('set.allModels') : undefined })),
+                    ...top.map(m => ({ value: modelKey(m), label: m.name, hint: tag(m), group: t('set.recommended') })),
+                    ...list.filter(m => !top.includes(m)).map(m => ({ value: modelKey(m), label: m.name, hint: tag(m), group: top.length ? (several ? m.providerName : t('set.allModels')) : undefined })),
                   ]
                 })()} />
             </span>
+            {makerUnset && <span className="hint">{t('set.model.addInDsh').replace('{v}', MAKERS.find(m => m.id === shownMaker)?.label ?? shownMaker)}</span>}
             <span className="hint">{t(sees ? 'set.model.sees' : 'set.model.text')}</span>
           </div>
           <div className="srow col">
