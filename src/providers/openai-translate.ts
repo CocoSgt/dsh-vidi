@@ -28,6 +28,8 @@ const SOFT_CJK = 22, SOFT_LATIN = 70
 const HARD_CJK = 34, HARD_LATIN = 110
 /** A stream quiet this long ends its sentence (a pause without punctuation). */
 const QUIET_SEC = 1.6
+/** …or this long when it is only a few words so far. */
+const QUIET_SHORT_SEC = 3.5
 
 /**
  * Builds sentences from one text stream. The service stamps every delta
@@ -89,8 +91,17 @@ class Stream {
 
   close(): void {
     const text = this.text.trim()
-    if (text) this.done.push({ text, start: this.open[0]!.t, end: this.open.at(-1)!.t, wall: Date.now() })
+    const prev = this.done.at(-1)
+    // Only punctuation (the full stop of a sentence a pause already ended): it belongs to that sentence.
+    if (text && !/[\p{L}\p{N}]/u.test(text)) { if (prev) { prev.text += text; prev.end = Math.max(prev.end, this.open.at(-1)!.t) } }
+    else if (text) this.done.push({ text, start: this.open[0]!.t, end: this.open.at(-1)!.t, wall: Date.now() })
     this.open = []
+  }
+
+  /** Long enough to stand as a line of its own (when cutting without punctuation). */
+  get substantial(): boolean {
+    const text = this.text.trim()
+    return (this.cjk ? Array.from(text).length : text.length) >= (this.cjk ? 10 : 24)
   }
 }
 
@@ -226,7 +237,7 @@ export class OpenAITranslateProvider implements SpeechProvider {
         const next = this.src.done[this.srcUsed]
         if (next && this.tr.text.trim() && t - next.end >= 1.2) {
           // Prefer a comma or full stop already there; without one, only once it is clearly behind.
-          if (!this.tr.closeAtPause() && t - next.end >= 3) this.tr.close()
+          if (!this.tr.closeAtPause() && t - next.end >= 3 && this.tr.substantial) this.tr.close()
         }
         this.tr.add(piece)
       }
@@ -240,7 +251,8 @@ export class OpenAITranslateProvider implements SpeechProvider {
   /** Close streams that went quiet (a pause without punctuation), then pair what is complete. */
   private settle(): void {
     // Quiet by the clock (the service works in real time): no new words for a while ends the sentence.
-    for (const s of [this.src, this.tr]) if (s.last !== undefined && Date.now() - s.lastWall > QUIET_SEC * 1000) s.close()
+    // A few words and a pause ("The …") are usually a sentence still being spoken: give those longer.
+    for (const s of [this.src, this.tr]) if (s.last !== undefined && Date.now() - s.lastWall > (s.substantial ? QUIET_SEC : QUIET_SHORT_SEC) * 1000) s.close()
     this.pair(false)
     this.draft()
   }
