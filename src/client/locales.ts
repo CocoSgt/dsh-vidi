@@ -153,7 +153,7 @@ export const en = {
 
   // Empty state
   'empty.title': 'Subtitles for any video',
-  'empty.body': 'Paste a link from YouTube, Bilibili and more — videos and live streams.',
+  'empty.body': 'YouTube, Bilibili and other sites, videos and live streams.',
 
   // Status
   'st.resolving': 'Opening…',
@@ -177,10 +177,10 @@ export const en = {
   'src.push': 'OBS stream',
   'src.file.placeholder': 'Path of a video or audio file',
   'src.file.title': 'Open a video on this computer',
-  'src.file.body': 'Drop a video or audio file here.',
+  'src.file.body': 'Choose a file with the folder button, or drop it anywhere on this page.',
   'src.file.pick': 'Choose a file',
   'src.cam.title': 'Talk to the camera',
-  'src.cam.body': 'Pick the picture and the microphone above and press Start: subtitles appear as you speak.',
+  'src.cam.body': 'Pick the picture and the microphone, press Start: subtitles appear as you speak.',
   'src.cam.none': 'No camera or microphone found on this computer.',
   'src.cam.loading': 'Looking for cameras…',
   'src.push.title': 'Stream from OBS',
@@ -590,7 +590,7 @@ export const zh: Record<keyof typeof en, string> = {
   'in.drop': '松手开始',
 
   'empty.title': '给任何视频配字幕',
-  'empty.body': '粘贴 YouTube、B 站等网站的视频或直播链接',
+  'empty.body': '支持 YouTube、B 站等网站的视频和直播',
 
   'st.resolving': '正在打开…',
   'st.login': '正在用 {b} 的登录状态…如果系统弹窗询问，点「始终允许」',
@@ -612,10 +612,10 @@ export const zh: Record<keyof typeof en, string> = {
   'src.push': 'OBS 推流',
   'src.file.placeholder': '视频或音频文件的路径',
   'src.file.title': '打开这台电脑上的视频',
-  'src.file.body': '把视频或音频文件拖到这里。',
+  'src.file.body': '点文件夹按钮选择，或者直接把文件拖进来。',
   'src.file.pick': '选择文件',
   'src.cam.title': '对着摄像头说话',
-  'src.cam.body': '在上面选好画面和麦克风，点开始，字幕边说边出。',
+  'src.cam.body': '选好画面和麦克风，点开始，字幕边说边出。',
   'src.cam.none': '这台电脑上没有找到摄像头或麦克风。',
   'src.cam.loading': '正在找摄像头…',
   'src.push.title': '用 OBS 推流过来',

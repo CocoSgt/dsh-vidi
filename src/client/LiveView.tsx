@@ -250,8 +250,9 @@ export function LiveView(props: LiveViewInjected) {
 
   const active = !!job && (job.status === 'resolving' || job.status === 'running' || job.status === 'stopping')
   // One source at a time: a link, a file, a camera on this computer, or a stream pushed from OBS.
-  const [srcTab, setSrcTabRaw] = useState<SourceTab>(() => store.get('source', 'link'))
-  const setSrcTab = (v: SourceTab) => { setSrcTabRaw(v); store.set('source', v); setError('') }
+  // Always a link to begin with (the usual case); the switch is right next to it.
+  const [srcTab, setSrcTabRaw] = useState<SourceTab>('link')
+  const setSrcTab = (v: SourceTab) => { setSrcTabRaw(v); setError('') }
   const devices = useDevices(srcTab === 'camera')
   const [camVideo, setCamVideoRaw] = useState<string>(() => store.get('device.video', ''))
   const [camAudio, setCamAudioRaw] = useState<string>(() => store.get('device.audio', ''))
@@ -625,11 +626,11 @@ export function LiveView(props: LiveViewInjected) {
     await askDeviceAccess(camV !== 'none' && cams.find(d => d.id === camV)?.kind === 'camera')
     void start(JSON.stringify({ video: camV === 'none' ? undefined : camV, audio: camA, title }), 'device')
   }
-  const emptyBox = (
+  const emptyBox = () => (
     <div className="dshl-drop">
-      <h2>{t(srcTab === 'file' ? 'src.file.title' : srcTab === 'camera' ? 'src.cam.title' : srcTab === 'push' ? 'src.push.title' : 'empty.title')}</h2>
+      <h2>{t('empty.title')}</h2>
+      <div className="dshl-bar center">{sourceBar}</div>
       <p>{srcTab === 'camera' && devices && !mics.length ? t('src.cam.none') : t(srcTab === 'file' ? 'src.file.body' : srcTab === 'camera' ? 'src.cam.body' : srcTab === 'push' ? 'src.push.body' : 'empty.body')}</p>
-      {srcTab === 'file' && <button className="dshl-btn" onClick={() => fileInput.current?.click()}><Icon.folder /> {t('src.file.pick')}</button>}
       {srcTab === 'push' && armed?.rtmp && (
         <div className="dshl-pushinfo">
           <dl>
@@ -743,6 +744,44 @@ export function LiveView(props: LiveViewInjected) {
       {engineNow && !engineNow.online && <button className="dshl-link" onClick={() => setSettingsOpen(true)}>{t('lag.settings')}</button>}</div>
   ) : null
 
+  // Where the video comes from and how: in the middle of the empty page, in the top bar once a video is open.
+  const sourceBar = (
+    <>
+      <Pick className="srcpick" value={srcTab} onChange={v => setSrcTab(v as SourceTab)} title={t('src.tip')}
+        options={(['link', 'file', 'camera', 'push'] as const).map(k => ({ value: k, label: t(`src.${k}` as LiveKey) }))} />
+      <input ref={fileInput} type="file" accept="video/*,audio/*,.mkv,.ts,.flv" hidden
+        onChange={e => { const f = e.target.files?.[0]; if (f) void onFile(f); e.target.value = '' }} />
+      {(srcTab === 'link' || srcTab === 'file') && <>
+        <label className="dshl-field">
+          <input type="text" value={input} placeholder={t(srcTab === 'file' ? 'src.file.placeholder' : 'in.placeholder')} onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') void start() }} />
+          {srcTab === 'file' && <button className="ghost" title={t('in.file.tip')} onClick={() => fileInput.current?.click()}>
+            {uploading !== null ? <span className="pct">{t('in.uploading').replace('{p}', String(uploading))}</span> : <Icon.folder />}
+          </button>}
+        </label>
+        <button className="dshl-btn primary" onClick={() => start()} disabled={!classify(input)}>{t('in.open')}</button>
+      </>}
+      {srcTab === 'camera' && <>
+        <div className="dshl-devbar">
+          {devices === null ? <span className="dshl-muted">{t('src.cam.loading')}</span> : mics.length ? <>
+            <Pick value={camV} options={videoOptions} onChange={setCamVideo} title={t('dev.video')} />
+            <Pick value={camA} options={mics.map(d => ({ value: d.id, label: d.name }))} onChange={setCamAudio} title={t('dev.audio')} />
+          </> : <span className="dshl-muted">{t('src.cam.none')}</span>}
+        </div>
+        <button className="dshl-btn primary" onClick={() => void startDevice()} disabled={!camA}>{t('dev.start')}</button>
+      </>}
+      {srcTab === 'push' && (
+        <div className="dshl-field static" title={t('src.push.body')}>
+          <span>{t(armed?.rtmp ? 'src.push.bar' : active ? 'src.push.busy' : 'src.push.wait')}</span>
+        </div>
+      )}
+      <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={changeMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
+        login={login} onLogin={chooseLogin} browsers={browsers} providers={providers} shared={keysShared} name={engineName}
+        onKey={(id, k) => { setProviders(ps => ps.map(p => p.id === id ? { ...p, key: k, ready: k.set } : p)); if (k.set) setError('') }}
+        open={settingsOpen} onOpen={setSettingsOpen} t={t} />
+    </>
+  )
+
   return (
     <div className={`dshl ${theater && !activeBench ? 'theater' : ''} ${pageMode ? 'page' : ''} ${activeBench ? 'bench' : ''} ${pageMode && !sideOpen && !activeBench ? 'noside' : ''}`}
       style={pageMode ? { ['--side-w' as string]: `${sideW}px` } : undefined} data-dsh-own-drop="dsh-vidi"
@@ -752,44 +791,15 @@ export function LiveView(props: LiveViewInjected) {
       onDragLeave={e => { e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false) }}
       onDrop={e => { if (!e.dataTransfer.types.includes('Files')) return; e.preventDefault(); e.stopPropagation(); setDragging(false); const f = e.dataTransfer.files[0]; if (f && !active) void onFile(f) }}>
 
-      <header className="dshl-top">
-        <div className="dshl-bar">
-          {onClose && <button className="dshl-btn icon back" onClick={onClose} title={t('page.back')}><Icon.arrow /></button>}
-          <Pick className="srcpick" value={srcTab} onChange={v => setSrcTab(v as SourceTab)} title={t('src.tip')}
-            options={(['link', 'file', 'camera', 'push'] as const).map(k => ({ value: k, label: t(`src.${k}` as LiveKey) }))} />
-          <input ref={fileInput} type="file" accept="video/*,audio/*,.mkv,.ts,.flv" hidden
-            onChange={e => { const f = e.target.files?.[0]; if (f) void onFile(f); e.target.value = '' }} />
-          {(srcTab === 'link' || srcTab === 'file') && <>
-            <label className="dshl-field">
-              <input type="text" value={input} placeholder={t(srcTab === 'file' ? 'src.file.placeholder' : 'in.placeholder')} onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') void start() }} />
-              {srcTab === 'file' && <button className="ghost" title={t('in.file.tip')} onClick={() => fileInput.current?.click()}>
-                {uploading !== null ? <span className="pct">{t('in.uploading').replace('{p}', String(uploading))}</span> : <Icon.folder />}
-              </button>}
-            </label>
-            <button className="dshl-btn primary" onClick={() => start()} disabled={!classify(input)}>{t('in.open')}</button>
-          </>}
-          {srcTab === 'camera' && <>
-            <div className="dshl-devbar">
-              {devices === null ? <span className="dshl-muted">{t('src.cam.loading')}</span> : mics.length ? <>
-                <Pick value={camV} options={videoOptions} onChange={setCamVideo} title={t('dev.video')} />
-                <Pick value={camA} options={mics.map(d => ({ value: d.id, label: d.name }))} onChange={setCamAudio} title={t('dev.audio')} />
-              </> : <span className="dshl-muted">{t('src.cam.none')}</span>}
-            </div>
-            <button className="dshl-btn primary" onClick={() => void startDevice()} disabled={!camA}>{t('dev.start')}</button>
-          </>}
-          {srcTab === 'push' && (
-            <div className="dshl-field static" title={t('src.push.body')}>
-              <span>{t(armed?.rtmp ? 'src.push.bar' : active ? 'src.push.busy' : 'src.push.wait')}</span>
-            </div>
-          )}
-          <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={changeMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
-            login={login} onLogin={chooseLogin} browsers={browsers} providers={providers} shared={keysShared} name={engineName}
-            onKey={(id, k) => { setProviders(ps => ps.map(p => p.id === id ? { ...p, key: k, ready: k.set } : p)); if (k.set) setError('') }}
-            open={settingsOpen} onOpen={setSettingsOpen} t={t} />
-          {pageMode && <button className={`dshl-ctl icon ${sideOpen ? 'on' : ''}`} title={t(sideOpen ? 'side.hide' : 'side.show')} aria-pressed={sideOpen} onClick={() => setSideOpen(!sideOpen)}><Icon.sidePanel /></button>}
-        </div>
-      </header>
+      {(hasMain || onClose) && (
+        <header className="dshl-top">
+          <div className="dshl-bar">
+            {onClose && <button className="dshl-btn icon back" onClick={onClose} title={t('page.back')}><Icon.arrow /></button>}
+            {hasMain && sourceBar}
+            {pageMode && hasMain && <button className={`dshl-ctl icon ${sideOpen ? 'on' : ''}`} title={t(sideOpen ? 'side.hide' : 'side.show')} aria-pressed={sideOpen} onClick={() => setSideOpen(!sideOpen)}><Icon.sidePanel /></button>}
+          </div>
+        </header>
+      )}
 
       {missing.length > 0 && <div className="dshl-note warn">{t('note.install')} {missing.map(d => <code key={d.name}>{d.hint}</code>)}</div>}
       {needsModel && <div className="dshl-note">{t('note.noModel')}</div>}
@@ -797,12 +807,12 @@ export function LiveView(props: LiveViewInjected) {
         <div className="dshl-note warn"><span>{error || (job?.message === 'device-blocked' ? t('dev.blocked') : job?.message)}</span>{job && !active && <button className="dshl-link" onClick={() => start(job.url, job.source)}>{t('st.retry')}</button>}</div>
       )}
 
-      {!hasMain && !pageMode ? (
-        <section className="dshl-empty">{emptyBox}</section>
+      {!hasMain ? (
+        <section className="dshl-empty">{emptyBox()}</section>
       ) : (
         <main className="dshl-main" ref={mainRef}>
           <div className="dshl-col">
-            {!hasMain || !job ? emptyBox : <>
+            {!hasMain || !job ? emptyBox() : <>
             <Player ref={player}
               src={job.status === 'resolving' || job.status === 'error' ? null : `/live/media/${encodeURIComponent(job.id)}/${job.hls ?? 'hls'}/index.m3u8`}
               quality={job.source === 'url' && job.heights?.length ? { heights: job.heights.filter(h => h <= 2160), current: job.height ?? 720, onChange: h => void post('quality', { jobId: job.id, height: h }).then(setJob).catch(() => {}) } : undefined}

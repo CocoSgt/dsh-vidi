@@ -147,6 +147,10 @@ const CSS = `
 
 /* ── Empty state ── */
 .dshl-empty { padding: 28px 20px; }
+.dshl.page .dshl-empty { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; overflow: auto; }
+.dshl.page .dshl-empty > .dshl-drop { border: 0; padding-top: 0; }
+.dshl-drop > .dshl-bar.center { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 680px; margin: 22px 0 12px; text-align: left; }
+.dshl-drop > .dshl-bar.center + p { font-size: 13px; color: var(--faint); }
 .dshl-drop { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; max-width: 760px; margin: 0 auto; padding: 56px 24px 48px;
   border: 1.5px dashed var(--line); border-radius: 16px; text-align: center; }
 .dshl-col > .dshl-drop { max-width: none; min-height: 320px; aspect-ratio: 16 / 9; padding: 32px 24px; border-radius: 12px; }
