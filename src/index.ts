@@ -28,6 +28,7 @@ import type { JobDeps } from './job.ts'
 import { registerTools } from './tools.ts'
 import { metered, UsageMeter } from './usage.ts'
 import { listDevices } from './devices.ts'
+import { accessStatus, askAccess, openPrivacySettings, type AccessKind } from './access.ts'
 import { updateChecker } from './updates.ts'
 import { EventEmitter } from 'node:events'
 import { WhisperServer } from './whisper.ts'
@@ -551,6 +552,15 @@ export function apply(ctx: Context, config: Config): void {
       if (route === 'update' && req.method === 'POST') {
         // Install the newer version through DSH's plugin manager (desktop: takes effect after a restart).
         return send(res, 200, await updates.install())
+      }
+      if (route === 'access') {
+        // Camera / microphone permission of this app: read it, ask for it (system dialog), or open the settings page.
+        if (req.method !== 'POST') return send(res, 200, await accessStatus())
+        const b = await readJson(req)
+        const kind = String(b.kind) as AccessKind
+        if (b.action === 'settings') return send(res, 200, { opened: openPrivacySettings(kind) })
+        if (kind !== 'camera' && kind !== 'microphone') return send(res, 400, { error: 'camera or microphone' })
+        return send(res, 200, { state: await askAccess(kind) })
       }
       if (route === 'devices') {
         // Cameras, screens and microphones on this computer (for "use my camera").

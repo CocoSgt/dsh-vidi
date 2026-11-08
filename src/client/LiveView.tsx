@@ -102,7 +102,7 @@ function upload(file: File, onProgress: (p: number) => void): Promise<string> {
 }
 
 /** A value to copy: plain text (not an input look-alike) and a text button. */
-interface Device { id: string; name: string; kind: 'camera' | 'screen' | 'mic' }
+interface Device { id: string; name: string; kind: 'camera' | 'screen' | 'mic'; preferred?: boolean }
 
 /** Cameras, screens and microphones on the computer Vidi runs on (null while loading). */
 function useDevices(enabled: boolean): Device[] | null {
@@ -114,17 +114,8 @@ function useDevices(enabled: boolean): Device[] | null {
   return devices
 }
 
-/**
- * Ask for the camera / microphone from the page first when the page runs on the same computer: the system
- * then asks the user once for this app, and the capture that follows is allowed.
- */
-async function askDeviceAccess(video: boolean): Promise<void> {
-  const local = location.protocol === 'dsh-app:' || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
-  if (!local || !navigator.mediaDevices?.getUserMedia) return
-  try { const s = await navigator.mediaDevices.getUserMedia({ audio: true, video }); s.getTracks().forEach(tr => tr.stop()) } catch {}
-}
-
 type SourceTab = 'link' | 'file' | 'camera' | 'push'
+type AccessKind = 'camera' | 'microphone' | 'screen'
 
 /** The push stream key: copy it, or change it (typed, or a new random one). */
 function KeyRow({ value, t, onChanged }: { value: string; t: (k: LiveKey) => string; onChanged: () => void }) {
@@ -257,7 +248,9 @@ export function LiveView(props: LiveViewInjected) {
   // Always a link to begin with (the usual case); the switch is right next to it.
   const [srcTab, setSrcTabRaw] = useState<SourceTab>('link')
   const setSrcTab = (v: SourceTab) => { setSrcTabRaw(v); setError('') }
-  const devices = useDevices(srcTab === 'camera')
+  const devices = useDevices(srcTab === 'camera' || job?.source === 'device')
+  const [accessIssue, setAccessIssue] = useState<AccessKind[] | null>(null)
+  const [asking, setAsking] = useState(false)
   const [camVideo, setCamVideoRaw] = useState<string>(() => store.get('device.video', ''))
   const [camAudio, setCamAudioRaw] = useState<string>(() => store.get('device.audio', ''))
   const setCamVideo = (v: string) => { setCamVideoRaw(v); store.set('device.video', v) }
@@ -618,8 +611,8 @@ export function LiveView(props: LiveViewInjected) {
   const hasMain = !!job && !(job.status === 'error' && !job.files.length)
   // Camera: remembered choices that are gone (unplugged) fall back to the first one.
   const cams = (devices ?? []).filter(d => d.kind !== 'mic'), mics = (devices ?? []).filter(d => d.kind === 'mic')
-  const camV = camVideo === 'none' || cams.some(d => d.id === camVideo) ? camVideo : (cams.find(d => d.kind === 'camera')?.id ?? 'none')
-  const camA = mics.some(d => d.id === camAudio) ? camAudio : (mics[0]?.id ?? '')
+  const camV = camVideo === 'none' || cams.some(d => d.id === camVideo) ? camVideo : (cams.find(d => d.preferred)?.id ?? cams.find(d => d.kind === 'camera')?.id ?? 'none')
+  const camA = mics.some(d => d.id === camAudio) ? camAudio : (mics.find(d => d.preferred)?.id ?? mics[0]?.id ?? '')
   const videoOptions = [
     ...cams.map(d => ({ value: d.id, label: d.kind === 'screen' ? t('dev.screen').replace('{n}', String(Number(/\d+/.exec(d.name)?.[0] ?? 0) + 1)) : d.name, group: t(d.kind === 'screen' ? 'dev.screens' : 'dev.cameras') })),
     { value: 'none', label: t('dev.noVideo'), group: t('dev.other') },
@@ -627,9 +620,25 @@ export function LiveView(props: LiveViewInjected) {
   const startDevice = async () => {
     if (!camA) return
     const title = camV === 'none' ? (mics.find(d => d.id === camA)?.name ?? '') : (videoOptions.find(o => o.value === camV)?.label ?? '')
-    await askDeviceAccess(camV !== 'none' && cams.find(d => d.id === camV)?.kind === 'camera')
+    // The app needs the system's permission first: ask (the system dialog), or say where to switch it on.
+    const kinds: AccessKind[] = ['microphone', ...(cams.find(d => d.id === camV)?.kind === 'camera' ? ['camera' as const] : [])]
+    setAccessIssue(null)
+    try {
+      let st = await (await fetch('/live/api/access')).json() as Record<string, string>
+      for (const k of kinds) {
+        if (st[k] !== 'not-determined') continue
+        setAsking(true)
+        st = { ...st, [k]: (await post('access', { kind: k, action: 'ask' })).state }
+      }
+      setAsking(false)
+      const blocked = kinds.filter(k => st[k] === 'denied' || st[k] === 'restricted')
+      if (blocked.length) { setAccessIssue(blocked); return }
+    } catch { setAsking(false) }
     void start(JSON.stringify({ video: camV === 'none' ? undefined : camV, audio: camA, title }), 'device')
   }
+  const openPrivacy = (kind: AccessKind) => void post('access', { kind, action: 'settings' }).catch(() => {})
+  // A device job that got nothing: the screen (Screen Recording) or the camera / microphone.
+  const blockedKind = (): AccessKind => { try { const c = JSON.parse(job?.url ?? '{}'); return cams.find(d => d.id === c.video)?.kind === 'screen' ? 'screen' : 'camera' } catch { return 'camera' } }
   const emptyBox = () => (
     <div className="dshl-drop">
       <h2>{t('empty.title')}</h2>
@@ -772,7 +781,7 @@ export function LiveView(props: LiveViewInjected) {
             <Pick value={camA} options={mics.map(d => ({ value: d.id, label: d.name }))} onChange={setCamAudio} title={t('dev.audio')} />
           </> : <span className="dshl-muted">{t('src.cam.none')}</span>}
         </div>
-        <button className="dshl-btn primary" onClick={() => void startDevice()} disabled={!camA}>{t('dev.start')}</button>
+        <button className="dshl-btn primary" onClick={() => void startDevice()} disabled={!camA || asking}>{asking ? t('dev.asking') : t('dev.start')}</button>
       </>}
       {srcTab === 'push' && (
         <div className="dshl-field static" title={t('src.push.body')}>
@@ -807,8 +816,15 @@ export function LiveView(props: LiveViewInjected) {
 
       {missing.length > 0 && <div className="dshl-note warn">{t('note.install')} {missing.map(d => <code key={d.name}>{d.hint}</code>)}</div>}
       {needsModel && <div className="dshl-note">{t('note.noModel')}</div>}
-      {(error || job?.status === 'error') && (
-        <div className="dshl-note warn"><span>{error || (job?.message === 'device-blocked' ? t('dev.blocked') : job?.message)}</span>{job && !active && <button className="dshl-link" onClick={() => start(job.url, job.source)}>{t('st.retry')}</button>}</div>
+      {accessIssue && (
+        <div className="dshl-note warn"><span>{t('dev.denied').replace('{d}', accessIssue.map(k => t(`dev.k.${k}` as LiveKey)).join(t('dev.and')))}</span>
+          <button className="dshl-link" onClick={() => openPrivacy(accessIssue[0]!)}>{t('dev.openSettings')}</button>
+          <button className="dshl-link" onClick={() => void startDevice()}>{t('st.retry')}</button></div>
+      )}
+      {!accessIssue && (error || job?.status === 'error') && (
+        <div className="dshl-note warn"><span>{error || (job?.message === 'device-blocked' ? t('dev.blocked') : job?.message)}</span>
+          {job?.message === 'device-blocked' && <button className="dshl-link" onClick={() => openPrivacy(blockedKind())}>{t('dev.openSettings')}</button>}
+          {job && !active && <button className="dshl-link" onClick={() => start(job.url, job.source)}>{t('st.retry')}</button>}</div>
       )}
 
       {!hasMain ? (

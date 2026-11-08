@@ -12,6 +12,8 @@ export interface Device {
   id: string
   name: string
   kind: 'camera' | 'screen' | 'mic'
+  /** The one to use unless the user picks another: the computer's own camera, the system's default microphone. */
+  preferred?: boolean
 }
 
 /** Which devices to open: a camera or screen, a microphone, or both. */
@@ -41,7 +43,8 @@ export async function listDevices(): Promise<Device[]> {
       else out.push({ id, name: name.replace(/^Capture screen (\d+)$/, 'Screen $1'), kind: /^Capture screen/.test(name) ? 'screen' : 'camera' })
     }
     // Virtual sound cards (streaming apps, meeting apps) are not microphones.
-    return out.filter(d => !(d.kind === 'mic' && /speakers|audio device|blackhole|soundflower|loopback/i.test(d.name)))
+    const list = out.filter(d => !(d.kind === 'mic' && /speakers|audio device|streaming|virtual|blackhole|soundflower|loopback/i.test(d.name)))
+    return preferLocal(list, await defaultInput())
   }
   if (process.platform === 'win32') {
     const text = await ffmpegList(['-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'])
@@ -68,6 +71,37 @@ export async function listDevices(): Promise<Device[]> {
     }),
     { id: 'default', name: 'Default microphone', kind: 'mic' as const },
   ]
+}
+
+/** The system's default input device (macOS), by name. */
+function defaultInput(): Promise<string | undefined> {
+  return new Promise(resolve => {
+    execFile('system_profiler', ['SPAudioDataType', '-json'], { timeout: 8000 }, (err, out) => {
+      if (err) return resolve(undefined)
+      try {
+        const items = (JSON.parse(String(out)).SPAudioDataType?.[0]?._items ?? []) as Record<string, string>[]
+        resolve(items.find(i => i.coreaudio_default_audio_input_device === 'spaudio_yes')?._name)
+      } catch { resolve(undefined) }
+    })
+  })
+}
+
+/**
+ * Mark (and list first) this computer's own camera and the default microphone, ahead of a phone's camera
+ * through Continuity ("“Name”的相机", "Name's Camera") or a desk-view camera.
+ */
+function preferLocal(list: Device[], defaultMic?: string): Device[] {
+  const phone = (d: Device) => /^[“"].*[”"]/.test(d.name) || /['’]s (camera|microphone)/i.test(d.name)
+  const deskView = (d: Device) => /桌上视角|desk view/i.test(d.name)
+  const cams = list.filter(d => d.kind === 'camera')
+  const cam = cams.find(d => !phone(d) && !deskView(d) && /macbook|imac|facetime|built-in|内建|display/i.test(d.name))
+    ?? cams.find(d => !phone(d) && !deskView(d)) ?? cams[0]
+  const mics = list.filter(d => d.kind === 'mic')
+  const mic = mics.find(d => d.name === defaultMic) ?? mics.find(d => !phone(d)) ?? mics[0]
+  for (const d of [cam, mic]) if (d) d.preferred = true
+  const rank = (d: Device) => (d.preferred ? 0 : phone(d) || deskView(d) ? 2 : 1)
+  const group = { camera: 0, screen: 1, mic: 2 }
+  return [...list].sort((a, b) => group[a.kind] - group[b.kind] || rank(a) - rank(b))
 }
 
 /** ffmpeg input for the chosen devices: arguments plus which streams carry the picture and the sound. */
