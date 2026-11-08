@@ -611,6 +611,10 @@ export function apply(ctx: Context, config: Config): void {
         if (!job) return send(res, 404, { error: 'no such job' })
         if (b.action === 'pause') await job.pauseSubs()
         else {
+          // Another engine or mode while subtitles run: stop and go on from there with the new choice.
+          const cur = job.summary()
+          const changes = (typeof b.provider === 'string' && b.provider !== cur.provider) || (typeof b.mode === 'string' && modeOf(b.mode) !== cur.mode)
+          if (changes && cur.subs?.state === 'running') await job.pauseSubs()
           const opts: Partial<JobOptions> = {}
           if (Array.isArray(b.tgtLangs)) opts.tgtLangs = (b.tgtLangs as unknown[]).map(String).slice(0, 4)
           if (typeof b.srcLang === 'string') opts.srcLang = b.srcLang
@@ -817,6 +821,15 @@ export function apply(ctx: Context, config: Config): void {
         res.writeHead(200, { 'content-type': file.endsWith('.png') ? 'image/png' : 'image/jpeg', 'cache-control': 'max-age=3600' })
         createReadStream(file).pipe(res)
         return
+      }
+      if (route === 'lines' && req.method === 'POST') {
+        // The user's own line breaks: { jobId, action: 'merge', id } joins a line with the next;
+        // { jobId, action: 'split', id, key, at } cuts it where they pointed.
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        const ok = b.action === 'merge' ? job.mergeCue(Number(b.id)) : b.action === 'split' ? job.splitCue(Number(b.id), String(b.key ?? 'src'), Number(b.at)) : false
+        return send(res, ok ? 200 : 400, ok ? { ok: true } : { error: 'cannot change that line' })
       }
       if (route === 'reopen' && req.method === 'POST') {
         // Open a past video in this conversation (its own is gone, or it was closed): it stays here from now on.

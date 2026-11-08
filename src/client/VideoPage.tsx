@@ -159,10 +159,11 @@ export function videoHandlers(sessions: SessionsLike, workspaces: WorkspacesLike
       } catch { return false }
     },
     /** Open a past video in its own conversation; false when that conversation is gone. */
-    onOpenVideo: async (conversationId: string, jobId: string): Promise<boolean> => {
+    onOpenVideo: async (conversationId: string, jobId: string, pending?: string): Promise<boolean> => {
       if (!conversationId || !sessions.has(conversationId)) return false
-      await fetch('/live/api/reopen', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId, conversationId }) }).catch(() => {})
-      await openPage(sessions, { sessionId: conversationId, workspaces })
+      // With a link: open the conversation and start that link there (a live stream, live again).
+      if (!pending) await fetch('/live/api/reopen', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId, conversationId }) }).catch(() => {})
+      await openPage(sessions, { sessionId: conversationId, workspaces, pending })
       return true
     },
     onTitle: (title: string) => {

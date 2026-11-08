@@ -424,6 +424,21 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-history .mm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
 .dshl-history .chip { flex: none; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--live) 14%, transparent); color: var(--live); font-size: 11.5px; font-weight: 600; }
 .dshl-history .more { margin: 8px 0 0 6px; font-size: 12.5px; }
+.dshl-modemenu .mh { margin: 6px 4px 2px; color: rgba(255,255,255,.55); font-size: 11.5px; }
+.dshl-modemenu .mh:first-child { margin-top: 0; }
+.dshl-modemenu .dshl-select { width: 100%; }
+.dshl-modemenu .mt { margin: 2px 4px 0; color: rgba(255,255,255,.45); font-size: 11.5px; }
+.dshl-line { position: relative; }
+.dshl-line .tools { position: absolute; top: 4px; right: 4px; display: none; gap: 2px; padding: 2px; border-radius: 7px; background: var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+.dshl-line:hover .tools, .dshl-line:focus-within .tools { display: flex; }
+.dshl-line .tools .ghost { display: grid; place-items: center; width: 26px; height: 24px; border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; }
+.dshl-line .tools svg { width: 15px; height: 15px; }
+.dshl-line .tools .ghost:hover { background: var(--hover); color: var(--ink); }
+.dshl-line.splitting { cursor: default; background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.dshl-line .cutline .ch { cursor: col-resize; border-left: 1px solid transparent; }
+.dshl-line .cutline .ch:hover { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.dshl-line .hint { color: var(--faint); font-size: 12px; }
+.dshl-history .replay { flex: none; font-size: 12.5px; }
 .dshl-modemenu { display: grid; gap: 4px; width: 300px; max-width: 100%; }
 .dshl-modemenu .mm { display: grid; gap: 3px; padding: 9px 10px; border: 0; border-radius: 8px; background: none; color: inherit; text-align: left; cursor: pointer; }
 .dshl-modemenu .mm:hover { background: rgba(255,255,255,.08); }

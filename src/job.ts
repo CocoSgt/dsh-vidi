@@ -75,6 +75,31 @@ const seekAfter = (skip: number): string[] => (skip > 0.01 ? ['-ss', skip.toFixe
 
 const SOI = Buffer.from([0xff, 0xd8]), EOI = Buffer.from([0xff, 0xd9])
 
+const CJK_CHAR = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uff00-\uffef\u3000-\u303f]/
+/** Two pieces of one language as one line: no space between CJK text, a space between words otherwise. */
+function joinText(a: string, b: string): string {
+  const x = a.trim(), y = b.trim()
+  if (!x || !y) return x || y
+  return CJK_CHAR.test(x.at(-1)!) || CJK_CHAR.test(y[0]!) ? x + y : `${x} ${y}`
+}
+
+/** Where to cut a text near `ratio` of its length: after a pause mark if one is close, else between words. */
+function cutNear(cs: string[], ratio: number): number {
+  const n = cs.length
+  if (n < 2) return n
+  const target = Math.round(n * ratio)
+  let best = -1, bestScore = Infinity
+  for (let i = 1; i < n; i++) {
+    const prev = cs[i - 1]!, here = cs[i]!
+    const pause = /[，。、；：！？,.;:!?]/.test(prev)
+    const word = here === ' ' || CJK_CHAR.test(prev) || CJK_CHAR.test(here)
+    if (!pause && !word) continue
+    const score = Math.abs(i - target) - (pause ? n * 0.12 : 0)
+    if (score < bestScore) { bestScore = score; best = i }
+  }
+  return best > 0 ? best : Math.max(1, Math.min(n - 1, target))
+}
+
 export class LiveJob extends EventEmitter {
   /** Real-time picture (own sources): the newest JPEG frame, and whether frames are coming. */
   lastFrame?: Buffer
@@ -127,7 +152,7 @@ export class LiveJob extends EventEmitter {
       brief: () => this.brief, siteText: (a, b) => this.siteText(a, b), targets: () => this.targets(),
       still: at => this.still(at),
       onLine: (cue, src, tr, speaker) => {
-        if (!this.cues.includes(cue)) return // replaced by a later run
+        if (!this.cues.includes(cue) || cue.edited) return // replaced by a later run, or shaped by the user
         this.deps.glossary.notice(src)
         cue.src = src
         if (speaker) cue.speaker = speaker
@@ -692,6 +717,60 @@ export class LiveJob extends EventEmitter {
     this.drafts.clear()
     appendFileSync(join(this.deps.dir, 'cues.jsonl'), gone.map(c => JSON.stringify({ id: c.id, dropped: true })).join('\n') + '\n')
     this.emit('cues', this.cues)
+  }
+
+  /** Join a finished line with the next one (the user's own line breaks). */
+  mergeCue(id: number): boolean {
+    const i = this.cues.findIndex(c => c.id === id)
+    const a = this.cues[i], b = this.cues[i + 1]
+    if (!a || !b || !a.final || !b.final) return false
+    a.src = joinText(a.src, b.src)
+    const keys = new Set([...Object.keys(a.tr ?? {}), ...Object.keys(b.tr ?? {})])
+    if (keys.size) a.tr = Object.fromEntries([...keys].map(k => [k, joinText(a.tr?.[k] ?? '', b.tr?.[k] ?? '')]))
+    a.end = Math.max(a.end, b.end)
+    a.polished = !!a.polished && !!b.polished
+    a.edited = true
+    this.cues.splice(i + 1, 1)
+    appendFileSync(join(this.deps.dir, 'cues.jsonl'), JSON.stringify({ id: b.id, dropped: true }) + '\n')
+    this.record(a)
+    this.emit('cues', this.cues)
+    return true
+  }
+
+  /**
+   * Split a finished line in two where the user pointed: `key` is the text they pointed in ('src' or a
+   * language) and `at` the character position. The other texts are cut at the matching place (at a
+   * pause or a word nearby), and the time in proportion.
+   */
+  splitCue(id: number, key: string, at: number): boolean {
+    const i = this.cues.findIndex(c => c.id === id)
+    const a = this.cues[i]
+    if (!a || !a.final) return false
+    const text = key === 'src' ? a.src : a.tr?.[key]
+    if (!text) return false
+    const chars = Array.from(text)
+    const cut = Math.max(1, Math.min(chars.length - 1, Math.round(at)))
+    const ratio = cut / chars.length
+    const pieces = (t: string, own: boolean): [string, string] => {
+      const cs = Array.from(t)
+      const k = own ? cut : cutNear(cs, ratio)
+      return [cs.slice(0, k).join('').trim(), cs.slice(k).join('').trim()]
+    }
+    const [srcA, srcB] = pieces(a.src, key === 'src')
+    if (!srcA || !srcB) return false
+    const trA: Record<string, string> = {}, trB: Record<string, string> = {}
+    for (const [k, v] of Object.entries(a.tr ?? {})) { const [x, y] = pieces(v, k === key); trA[k] = x; trB[k] = y }
+    const mid = a.start + (a.end - a.start) * ratio
+    const b: Cue = { id: this.nextId++, start: mid, end: a.end, src: srcB, tr: Object.keys(trB).length ? trB : undefined, lang: a.lang, final: true, polished: a.polished, speaker: a.speaker, edited: true }
+    a.src = srcA
+    if (Object.keys(trA).length) a.tr = trA
+    a.end = mid
+    a.edited = true
+    this.cues.splice(i + 1, 0, b)
+    this.record(a)
+    this.record(b)
+    this.emit('cues', this.cues)
+    return true
   }
 
   /** Append a finished cue (with its translation, if any) to cues.jsonl. */

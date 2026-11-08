@@ -59,7 +59,7 @@ export interface LiveViewInjected {
   /** Video page: the video's title is known — name the conversation after it. */
   onTitle?: (title: string) => void
   /** Open a past video in its own conversation (false: that conversation is gone, open it here). */
-  onOpenVideo?: (conversationId: string, jobId: string) => Promise<boolean>
+  onOpenVideo?: (conversationId: string, jobId: string, pending?: string) => Promise<boolean>
   /** A link to open right away (sidebar, paste prompt). */
   pending?: string
   onPendingDone?: () => void
@@ -132,7 +132,7 @@ function ago(ts: number | undefined, ui: 'en' | 'zh'): string {
 }
 
 /** Past videos under the start box: the newest few, more on request. */
-function History({ t, ui, onOpen }: { t: (k: LiveKey) => string; ui: 'en' | 'zh'; onOpen: (v: PastVideo) => void }) {
+function History({ t, ui, onOpen }: { t: (k: LiveKey) => string; ui: 'en' | 'zh'; onOpen: (v: PastVideo, replay?: boolean) => void }) {
   const [items, setItems] = useState<PastVideo[]>([])
   const [total, setTotal] = useState(0)
   const load = (offset: number, limit: number) => fetch(`/live/api/history?offset=${offset}&limit=${limit}`).then(r => r.json())
@@ -145,7 +145,8 @@ function History({ t, ui, onOpen }: { t: (k: LiveKey) => string; ui: 'en' | 'zh'
       <div className="hh">{t('hist.title')}</div>
       <div className="hl">
         {items.map(v => (
-          <button key={v.id} className="hi" onClick={() => onOpen(v)}>
+          <div key={v.id} role="button" tabIndex={0} className="hi" onClick={() => onOpen(v)} onKeyDown={e => { if (e.key === 'Enter') onOpen(v) }}
+            title={v.live && v.source === 'url' && !v.running ? t('hist.goLive') : undefined}>
             <span className="th">
               <img src={`/live/api/thumb?jobId=${encodeURIComponent(v.id)}`} alt="" onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
               {v.duration ? <span className="dur">{CLOCK(v.duration)}</span> : null}
@@ -155,7 +156,8 @@ function History({ t, ui, onOpen }: { t: (k: LiveKey) => string; ui: 'en' | 'zh'
               <span className="mm">{[v.title || v.source !== 'push' ? from(v) : '', v.live ? t('hist.live') : '', ago(v.startedAt, ui)].filter(Boolean).join(' · ')}</span>
             </span>
             {v.running && <span className="chip">{t('hist.running')}</span>}
-          </button>
+            {v.live && v.source === 'url' && !v.running && <button className="dshl-link replay" onClick={e => { e.stopPropagation(); onOpen(v, true) }}>{t('hist.replay')}</button>}
+          </div>
         ))}
       </div>
       {items.length < total && <button className="dshl-link more" onClick={() => void load(items.length, 10)}>{t('hist.more').replace('{n}', String(total - items.length))}</button>}
@@ -485,6 +487,12 @@ export function LiveView(props: LiveViewInjected) {
   }
   const pauseSubs = async () => { if (job) setJob(await post('subs', { jobId: job.id, action: 'pause' }).catch(() => job)) }
   /** Switching modes while a video is open takes effect right away: no delay stops transcribing, the others (re)start it. */
+  // Another speech engine for this video: subtitles go on from where they are with it.
+  const switchEngine = async (id: string) => {
+    setEngine(id)
+    if (!job || subs.state === 'off' || job.status === 'error') return
+    try { setJob(await post('subs', { ...options(), provider: id, jobId: job.id, action: 'start' })) } catch (e) { setError((e as Error).message) }
+  }
   const changeMode = (m: LiveMode) => {
     if (m === mode) return
     setMode(m)
@@ -703,8 +711,14 @@ export function LiveView(props: LiveViewInjected) {
   // A device job that got nothing: the screen (Screen Recording) or the camera / microphone.
   const blockedKind = (): AccessKind => { try { const c = JSON.parse(job?.url ?? '{}'); return cams.find(d => d.id === c.video)?.kind === 'screen' ? 'screen' : 'camera' } catch { return 'camera' } }
   // A past video from the list: in its own conversation when that still exists, else here.
-  const openPast = async (v: PastVideo) => {
+  const openPast = async (v: PastVideo, replay = false) => {
     setError('')
+    // A live stream picks up live again (a new recording in the same conversation); the recording stays in the list.
+    if (!replay && v.live && v.source === 'url' && v.url && !v.running) {
+      if (v.conversationId !== sessionId && props.onOpenVideo && await props.onOpenVideo(v.conversationId, v.id, v.url)) return
+      void start(v.url, 'url')
+      return
+    }
     try {
       if (v.conversationId !== sessionId && props.onOpenVideo && await props.onOpenVideo(v.conversationId, v.id)) return
       const j = await post('reopen', { jobId: v.id, conversationId: sessionId })
@@ -716,7 +730,7 @@ export function LiveView(props: LiveViewInjected) {
       <h2>{t('empty.title')}</h2>
       <div className="dshl-bar center">{sourceBar}</div>
       <p>{srcTab === 'camera' && devices && !mics.length ? t('src.cam.none') : t(srcTab === 'file' ? 'src.file.body' : srcTab === 'camera' ? 'src.cam.body' : srcTab === 'push' ? 'src.push.body' : 'empty.body')}</p>
-      {pageMode && <History t={t} ui={ui} onOpen={v => void openPast(v)} />}
+      {pageMode && <History t={t} ui={ui} onOpen={(v, replay) => void openPast(v, replay)} />}
       {srcTab === 'push' && armed?.rtmp && (
         <div className="dshl-pushinfo">
           <dl>
@@ -755,6 +769,15 @@ export function LiveView(props: LiveViewInjected) {
   const activeBench = pageMode && job ? extBenches.find(b => b.id === bench) : undefined
   const view: VidiView | undefined = job ? { job, cues, sessionId, now, seek: s => player.current?.seek(s), style: subStyle, lines: shownLines, ui, bench: activeBench?.id ?? null, openBench: setBench } : undefined
   /** Subtitle lines and glossary: under the player on the video page, beside it in a conversation. */
+  // The user's own line breaks: join a line with the next, or cut one where they point.
+  const [splitting, setSplitting] = useState<{ id: number; key: string } | null>(null)
+  const lineKey = (k: string) => (k === 'src' || k === spokenBase ? 'src' : k)
+  const mergeLine = async (id: number) => { try { await post('lines', { jobId: job!.id, action: 'merge', id }) } catch (e) { setError((e as Error).message) } }
+  const splitLine = async (id: number, key: string, at: number) => {
+    setSplitting(null)
+    if (at <= 0) return
+    try { await post('lines', { jobId: job!.id, action: 'split', id, key, at }) } catch (e) { setError((e as Error).message) }
+  }
   const transcriptBox = (
     <>
       <div className="dshl-sidetabs" role="tablist">
@@ -785,15 +808,38 @@ export function LiveView(props: LiveViewInjected) {
           {trMode === 'lines' ? (
             <div className="dshl-lines" ref={linesBox} onWheel={() => { userScrolled.current = Date.now() }} onTouchMove={() => { userScrolled.current = Date.now() }}>
               {shown.length === 0 && <div className="dshl-muted pad">{emptyLines}</div>}
-              {shown.map(c => (
-                <button className={`dshl-line ${c.id === activeId ? 'active' : ''} ${c.polished ? 'ok' : 'raw'}`} key={c.id} onClick={() => player.current?.seek(c.start)}
+              {shown.map((c, idx) => splitting?.id === c.id ? (
+                // Pick where the line breaks: every gap between characters is a place to cut.
+                <div className="dshl-line splitting" key={c.id}>
+                  <span className="ts">{CLOCK(c.start)}</span>
+                  <span className="txt">
+                    <span className="main cutline">{Array.from((splitting.key === 'src' ? c.src : c.tr?.[splitting.key]) ?? '').map((ch, i) => (
+                      <span key={i} className="ch" onClick={() => void splitLine(c.id, splitting.key, i)}>{ch}</span>
+                    ))}</span>
+                    <span className="hint">{t('lines.splitHint')} <button className="dshl-link" onClick={() => setSplitting(null)}>{t('player.cancel')}</button></span>
+                  </span>
+                  <span />
+                </div>
+              ) : (
+                <div role="button" tabIndex={0} className={`dshl-line ${c.id === activeId ? 'active' : ''} ${c.polished ? 'ok' : 'raw'}`} key={c.id} onClick={() => player.current?.seek(c.start)}
+                  onKeyDown={e => { if (e.key === 'Enter') player.current?.seek(c.start) }}
                   title={c.polished ? t('tr.polished') : t('tr.raw')}>
                   <span className="ts">{CLOCK(c.start)}</span>
                   <span className="txt">
                     {shownLines.map((k, i) => { const v = lineText(c, k); return v ? <span className={i === 0 ? 'main' : 'sub'} key={k}>{v}</span> : null })}
                   </span>
                   <span className="mark" aria-hidden="true">{c.polished && <Icon.check />}</span>
-                </button>
+                  {c.final && (
+                    <span className="tools" onClick={e => e.stopPropagation()}>
+                      {idx < shown.length - 1 && shown[idx + 1]?.final && <button className="ghost" title={t('lines.merge')} onClick={() => void mergeLine(c.id)}><Icon.merge /></button>}
+                      {(() => {
+                        // Cut in the first line shown with text (the original when no translation is there).
+                        const k = shownLines.find(x => (lineText(c, x) ?? '').length > 1) ?? 'src'
+                        return Array.from(lineText(c, k) ?? c.src).length > 1 && <button className="ghost" title={t('lines.split')} onClick={() => setSplitting({ id: c.id, key: lineKey(k) })}><Icon.scissors /></button>
+                      })()}
+                    </span>
+                  )}
+                </div>
               ))}
             </div>
           ) : (
@@ -930,19 +976,28 @@ export function LiveView(props: LiveViewInjected) {
                     </>
                   ),
                 },
-                ...(!job.vod && job.status === 'running' ? [{
-                  id: 'mode', icon: <Icon.timer />, title: t('set.mode'), label: t(`mode.${mode}` as LiveKey),
+                {
+                  // How subtitles are made for this video: the mode (live streams) and the speech engine.
+                  id: 'how', icon: <Icon.timer />, title: t('how.title'),
+                  label: [!job.vod ? t(`mode.${mode}` as LiveKey) : '', engineName(usableEngine())].filter(Boolean).join(' · '),
                   content: (
                     <div className="dshl-modemenu">
-                      {(['live', 'realtime', 'polished'] as const).map(m => (
-                        <button key={m} className={`mm ${mode === m ? 'on' : ''}`} onClick={() => changeMode(m)}>
-                          <span className="n">{t(`mode.${m}` as LiveKey)}{mode === m && <Icon.check />}</span>
-                          <span className="d">{t(`mode.${m}.tip` as LiveKey)}</span>
-                        </button>
-                      ))}
+                      {!job.vod && <>
+                        <div className="mh">{t('set.mode')}</div>
+                        {(['live', 'realtime', 'polished'] as const).map(m => (
+                          <button key={m} className={`mm ${mode === m ? 'on' : ''}`} onClick={() => changeMode(m)}>
+                            <span className="n">{t(`mode.${m}` as LiveKey)}{mode === m && <Icon.check />}</span>
+                            <span className="d">{t(`mode.${m}.tip` as LiveKey)}</span>
+                          </button>
+                        ))}
+                      </>}
+                      <div className="mh">{t('set.engine')}</div>
+                      <Pick value={usableEngine()} onChange={id => void switchEngine(id)}
+                        options={providers.filter(p => p.ready).map(p => ({ value: p.id, label: engineName(p.id), hint: p.model }))} />
+                      <p className="mt">{t('how.more')}</p>
                     </div>
                   ),
-                }] : []),
+                },
                 {
                   id: 'restream', icon: <Icon.push />, title: t('menu.restream'),
                   label: job.restream?.running ? t('rs.live') : undefined, on: !!job.restream?.running,

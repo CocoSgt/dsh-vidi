@@ -15,6 +15,8 @@ export interface Cue {
   polished?: boolean
   /** Who says it (inferred during polishing; may be wrong). */
   speaker?: string
+  /** The user merged or split this line: later polishing leaves it as it is. */
+  edited?: boolean
 }
 
 /** What a speech provider hands back: cue text without an id yet. */
