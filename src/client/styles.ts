@@ -284,6 +284,9 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
   outline: 1px solid rgba(255,255,255,.28); box-shadow: 0 6px 24px rgba(0,0,0,.5); cursor: pointer; transition: bottom .25s; }
 .dshl-stage.idle .dshl-vbox.pip, .dshl-stage.idle .dshl-livecam.pip { bottom: 14px; }
 .dshl-stage .pip .dshl-sub { transform: translateX(-50%) !important; }
+.dshl-rs .rs-mode { display: grid; gap: 6px; margin: 10px 0 4px; }
+.dshl-rs .rs-mode .seg { display: flex; }
+.dshl-rs .rs-mode .seg button { flex: 1; }
 .dshl-piplabel { position: absolute; top: 6px; left: 6px; z-index: 3; padding: 2px 7px; border-radius: 5px; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; pointer-events: none; }
 .dshl-stage.idle { cursor: none; }
 .dshl-holdnote { position: absolute; top: 14px; left: 50%; z-index: 4; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; transform: translateX(-50%);

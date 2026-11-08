@@ -39,8 +39,21 @@ const host = (s: string) => s.replace(/^[a-z]+:\/\//i, '').split('/')[0] ?? s
  * platform's own streaming tool), subtitles drawn in or not, picture size,
  * then start. While running, each destination shows its own state.
  */
-export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; now: number; style: SubStyle; t: (k: LiveKey) => string }) {
-  const { jobId, status, now, style, t } = props
+type LiveMode = 'live' | 'realtime' | 'polished'
+
+/** Live: which subtitle mode the push-out follows, and where in the recording that puts it. */
+export interface PushTiming {
+  mode: LiveMode
+  onMode: (m: LiveMode) => void
+  /** Media time to push from in this mode. */
+  fromFor: (m: LiveMode) => number
+  /** Seconds the push-out runs behind real time in this mode. */
+  behindFor: (m: LiveMode) => number
+}
+
+export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; now: number; style: SubStyle; timing?: PushTiming; t: (k: LiveKey) => string }) {
+  const { jobId, status, now, style, timing, t } = props
+  const fromNow = () => (timing ? timing.fromFor(timing.mode) : now)
   const running = !!status?.running
   const [targets, setTargets] = useState<RestreamTarget[]>([])
   const [picked, setPicked] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('dsh-live.rsPicked') ?? '[]') } catch { return [] } })
@@ -87,13 +100,25 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
   }
   const start = async () => {
     setBusy(true); setError('')
-    try { await post('restream', { jobId, action: 'start', targets: picked.filter(id => targets.some(x => x.id === id)), from: now, burn, height, style }) } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+    try { await post('restream', { jobId, action: 'start', targets: picked.filter(id => targets.some(x => x.id === id)), from: fromNow(), burn, height, style }) } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   const stop = async (targetId?: string) => {
     setBusy(true)
     try { await post('restream', { jobId, action: 'stop', targetId }) } catch {} finally { setBusy(false) }
   }
-  const add = async (id: string) => { await post('restream', { jobId, action: 'start', targets: [id], from: now, burn, height, style }).catch(e => setError((e as Error).message)) }
+  const add = async (id: string) => { await post('restream', { jobId, action: 'start', targets: [id], from: fromNow(), burn, height, style }).catch(e => setError((e as Error).message)) }
+  // Another mode while pushing: start the push-out again at that mode's delay (viewers see a short reconnect).
+  const switchMode = async (m: LiveMode) => {
+    if (!timing || m === timing.mode) return
+    timing.onMode(m)
+    if (!running) return
+    const ids = status!.targets.map(x => x.id)
+    setBusy(true); setError('')
+    try {
+      await post('restream', { jobId, action: 'stop' })
+      await post('restream', { jobId, action: 'start', targets: ids, from: timing.fromFor(m), burn, height, style })
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
 
   const stateOf = (id: string) => (running ? status!.targets.find(x => x.id === id) : undefined)
   const chosen = picked.filter(id => targets.some(x => x.id === id))
@@ -159,6 +184,17 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
       </div>
       {running && status!.targets.some(x => x.state === 'error' || x.state === 'retrying') && (
         <p className="rs-err">{status!.targets.filter(x => x.message && x.state !== 'live').map(x => `${pname(x.platform)}：${x.message}`).join('；')}</p>
+      )}
+      {timing && (
+        <div className="rs-mode">
+          <span className="rs-sub">{t('rs.mode')}</span>
+          <span className="seg">
+            {(['live', 'realtime', 'polished'] as const).map(m => (
+              <button key={m} className={timing.mode === m ? 'on' : ''} disabled={busy} onClick={() => void switchMode(m)}>{t(`mode.${m}` as LiveKey)}</button>
+            ))}
+          </span>
+          <p className="rs-hint">{t(`rs.mode.${timing.mode}` as LiveKey).replace('{s}', String(Math.max(1, Math.round(timing.behindFor(timing.mode)))))}</p>
+        </div>
       )}
       {!running && (
         <div className="rs-opts">

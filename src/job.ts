@@ -79,6 +79,8 @@ export class LiveJob extends EventEmitter {
   /** Real-time picture (own sources): the newest JPEG frame, and whether frames are coming. */
   lastFrame?: Buffer
   previewOn = false
+  /** Closed by the user: no longer offered anywhere (its files stay). */
+  closed = false
   readonly id: string
   status: JobStatus = 'resolving'
   message?: string
@@ -370,7 +372,7 @@ export class LiveJob extends EventEmitter {
     const args = [
       '-hide_banner', '-loglevel', 'warning', '-nostdin', ...input.args,
       // Playback + recording.
-      ...picture, '-map', input.audio, '-c:a', 'aac', '-b:a', '128k',
+      ...picture, '-map', input.audio, ...(input.fps ? ['-af', 'aresample=async=1:min_hard_comp=0.1:first_pts=0'] : []), '-c:a', 'aac', '-b:a', '128k',
       '-f', 'hls', '-hls_time', '2', '-hls_list_size', '0', '-hls_playlist_type', 'event', '-hls_flags', 'independent_segments',
       '-hls_segment_filename', join(hls, 'seg_%05d.ts'), join(hls, 'index.m3u8'),
     ]

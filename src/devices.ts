@@ -109,9 +109,7 @@ export function deviceInput(c: DeviceChoice, q: string[]): { args: string[]; aud
   if (!c.audio) throw new Error('choose a microphone')
   if (process.platform === 'darwin') {
     return {
-      // The camera's own frame times can stand still (every frame stamped alike), so no segment ever completes:
-      // stamp frames with the clock instead.
-      args: [...q, '-use_wallclock_as_timestamps', '1', '-f', 'avfoundation', '-framerate', '30', ...(c.video ? (/^Capture screen/.test(c.video) ? ['-capture_cursor', '1'] : ['-video_size', '1280x720']) : []), '-i', `${c.video ?? 'none'}:${c.audio}`],
+      args: [...q, '-f', 'avfoundation', '-framerate', '30', ...(c.video ? (/^Capture screen/.test(c.video) ? ['-capture_cursor', '1'] : ['-video_size', '1280x720']) : []), '-i', `${c.video ?? 'none'}:${c.audio}`],
       audio: '0:a:0', video: c.video ? '0:v:0' : undefined,
     }
   }

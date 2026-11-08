@@ -475,6 +475,7 @@ export function apply(ctx: Context, config: Config): void {
         const job = jobs.get(String(b.jobId))
         if (!job) return send(res, 404, { error: 'no such job' })
         await job.close('closed')
+        job.closed = true
         const conv = job.summary().conversationId
         if (byConversation.get(conv) === job.id) byConversation.set(conv, '')
         try { writeFileSync(join(job.summary().dir, 'closed'), new Date().toISOString()) } catch {}
@@ -508,7 +509,8 @@ export function apply(ctx: Context, config: Config): void {
       }
       if (route === 'activity') {
         // What is still working (for the sidebar entry): recordings, fetches, subtitle runs, downloads.
-        const items = [...jobs.values()].map(j => j.summary()).filter(s => (s.status === 'running' && !s.message) || s.status === 'resolving' || s.subs?.state === 'running')
+        // A video the user closed is gone from view, even while its last subtitles finish.
+        const items = [...jobs.values()].filter(j => !j.closed).map(j => j.summary()).filter(s => (s.status === 'running' && !s.message) || s.status === 'resolving' || s.subs?.state === 'running')
           .map(s => ({
             jobId: s.id, conversationId: s.conversationId, title: s.title,
             recording: s.status === 'running' && !s.vod, loading: (s.status === 'running' || s.status === 'resolving') && !!s.vod,

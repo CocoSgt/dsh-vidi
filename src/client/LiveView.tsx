@@ -610,6 +610,17 @@ export function LiveView(props: LiveViewInjected) {
 
   // A failure that recorded nothing (a blocked camera, a dead link) stays on the start page with its message.
   const hasMain = !!job && !(job.status === 'error' && !job.files.some(f => /\.(mp4|m4a|srt|vtt)$/.test(f)))
+  // Live: the push-out follows a subtitle mode. No delay = near the live edge; in step = where finished lines
+  // reach; polished = where polished lines reach (or the first pass, when polishing has fallen far behind).
+  const liveEdge = job?.recorded ?? now
+  const pushFrom = (m: LiveMode) => {
+    const firstPass = subs.ready ?? subs.at
+    const at = m === 'live' ? liveEdge - 2 : m === 'realtime' ? firstPass : Math.max(lastPolished, firstPass - 150)
+    return Math.max(0, Math.min(at, liveEdge))
+  }
+  const pushTiming = job && !job.vod && job.status === 'running'
+    ? { mode, onMode: changeMode, fromFor: pushFrom, behindFor: (m: LiveMode) => liveEdge - pushFrom(m) }
+    : undefined
   // Back on the start page after a failure: show the source it was opened with, ready to retry.
   useEffect(() => {
     if (job && !hasMain) setSrcTabRaw(job.source === 'device' ? 'camera' : job.source === 'push' ? 'push' : job.source === 'file' ? 'file' : 'link')
@@ -866,7 +877,7 @@ export function LiveView(props: LiveViewInjected) {
                 {
                   id: 'restream', icon: <Icon.push />, title: t('menu.restream'),
                   label: job.restream?.running ? t('rs.live') : undefined, on: !!job.restream?.running,
-                  content: <RestreamPanel jobId={job.id} status={job.restream} now={now} style={subStyle} t={t} />,
+                  content: <RestreamPanel jobId={job.id} status={job.restream} now={now} style={subStyle} timing={pushTiming} t={t} />,
                 },
                 ...extMenus.map(m => ({ id: `ext:${m.id}`, icon: m.icon, title: m.title(ui), content: view ? <Guard name={`menu ${m.id}`} message={t('ext.failed')}>{m.render(view, () => player.current?.closeMenu())}</Guard> : null })),
                 {

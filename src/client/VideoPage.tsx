@@ -105,8 +105,12 @@ export async function openPage(sessions: SessionsLike, opts: { sessionId?: strin
 
 async function showPage(sessions: SessionsLike, opts: { sessionId?: string; pending?: string; workspaces?: WorkspacesLike; title?: string }): Promise<void> {
   const current = sessions.current()
-  const sid = opts.sessionId ?? await pageSession(sessions, opts.workspaces!, opts.title ?? 'Video')
-  if (sid !== current) sessions.open(sid)
+  // A video whose conversation is gone (deleted, archived away) opens on a fresh page instead of failing.
+  const fresh = () => pageSession(sessions, opts.workspaces!, opts.title ?? 'Video')
+  let sid = opts.sessionId && sessions.has(opts.sessionId) ? opts.sessionId : await fresh()
+  if (sid !== current) {
+    try { sessions.open(sid) } catch { sid = await fresh(); sessions.open(sid) }
+  }
   if (panelHost) {
     // Opening a conversation shows its chat; then put the video page in its place.
     pageStore.set({ open: true, sessionId: sid, returnTo: undefined, pending: opts.pending })
@@ -216,7 +220,7 @@ export function SidebarButton(props: { wide?: boolean; sessions: SessionsLike; w
   const meta = !busy ? '' : item?.subs === 'running' ? (pct !== undefined ? t('side.subs').replace('{p}', String(pct)) : t('side.subsLive'))
     : item?.recording ? t('side.recording') : item?.loading ? t('side.loading') : t('side.downloading')
   const thumb = busy && frame && (!item || frame.jobId === item.jobId) ? frame.dataUrl : undefined
-  const open = () => void openPage(sessions, item ? { sessionId: item.conversationId } : { workspaces, title: t('view.live') })
+  const open = () => void openPage(sessions, item ? { sessionId: item.conversationId, workspaces, title: t('view.live') } : { workspaces, title: t('view.live') })
   const tip = busy ? `${t('page.open')} · ${item?.title ?? ''} · ${meta}` : t('page.open')
   return (
     <button className={`dshl-sidebtn ${wide ? 'wide' : 'rail'} ${busy ? 'busy' : ''} ${page.open ? 'here' : ''}`} title={tip} onClick={open}
