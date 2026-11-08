@@ -24,7 +24,7 @@ interface Summary {
   id: string; status: 'resolving' | 'running' | 'stopping' | 'stopped' | 'error'; message?: string; title?: string
   source: Source; url: string; mode: string; srcLang: string; tgtLangs: string[]; provider: string; files: string[]
   startedAt: number; ingest?: { rtmp?: string; srt?: string; key?: string }
-  vod?: boolean; duration?: number; recorded?: number; loginBrowser?: string; needsLogin?: NeedsLogin
+  vod?: boolean; duration?: number; recorded?: number; preview?: boolean; loginBrowser?: string; needsLogin?: NeedsLogin
   subs?: { state: 'off' | 'running' | 'paused' | 'done'; at: number; ready?: number; latency?: number }
   usage?: Usage
   restream?: RestreamStatus
@@ -844,6 +844,7 @@ export function LiveView(props: LiveViewInjected) {
               quality={job.source === 'url' && job.heights?.length ? { heights: job.heights.filter(h => h <= 2160), current: job.height ?? 720, onChange: h => void post('quality', { jobId: job.id, height: h }).then(setJob).catch(() => {}) } : undefined}
               live={job.status === 'running'} vod={job.vod} duration={job.duration} subsAt={subs.state === 'off' ? undefined : subs.at}
               waitingText={job.status === 'resolving' ? statusText : t('player.waiting')}
+              preview={job.preview && job.status === 'running' ? `/live/api/preview?jobId=${encodeURIComponent(job.id)}` : undefined}
               cues={cues} trail={mode === 'live' && !job.vod} siteCues={shownSite} spoken={spokenBase} style={subStyle} delay={job.vod ? delay : mode === 'polished' ? Math.max(delay, 75) : mode === 'live' ? 3 : delay} onDelay={setDelay} showDelay={job.status === 'running' && !job.vod}
               onSnapshot={saveSnapshot} onClip={makeClip} onThumb={rememberFrame}
               theater={theater} onTheater={() => setTheater(v => !v)} onTime={setNow} t={t}

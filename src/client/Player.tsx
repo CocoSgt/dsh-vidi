@@ -31,6 +31,12 @@ interface Props {
   cues: CueLike[]
   /** Live, picture first: keep showing the newest line that came in late. */
   trail?: boolean
+  /**
+   * Own camera / pushed stream: the real-time picture (multipart JPEG URL). It fills the player with the
+   * newest words as they are recognised; the recording, which waits for subtitles like anything pushed on,
+   * plays in a small window. Clicking a window swaps the two.
+   */
+  preview?: string
   /** Language spoken in the video: a line in that language shows the original. */
   spoken?: string
   /** The site's own subtitle tracks that are switched on (key 'site:<lang>'). */
@@ -75,13 +81,17 @@ const fmt = (s: number) => {
  * stage, so subtitles (sized in container units) and menus come along.
  */
 export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref) {
-  const { trail, src, live, vod, duration, subsAt, waitingText, cues, siteCues, spoken, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], onSnapshot, onClip, onThumb, quality, t } = props
+  const { preview, trail, src, live, vod, duration, subsAt, waitingText, cues, siteCues, spoken, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], onSnapshot, onClip, onThumb, quality, t } = props
   const stage = useRef<HTMLDivElement>(null)
   const video = useRef<HTMLVideoElement>(null)
   const hls = useRef<Hls | null>(null)
   const [ready, setReady] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [muted, setMuted] = useState(false)
+  const [bigLive, setBigLive] = useState(true)
+  const liveBig = !!preview && bigLive
+  // While the camera is the big view the recording stays silent: hearing yourself seconds late is confusing.
+  useEffect(() => { const el = video.current; if (el && liveBig) { el.muted = true; setMuted(true) } }, [liveBig])
   const [volume, setVolume] = useState(1)
   const [now, setNow] = useState(0)
   const [edge, setEdge] = useState(0)
@@ -237,6 +247,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
     const pos = h?.liveSyncPosition ?? (edge - delay)
     if (pos != null && isFinite(pos)) el.currentTime = pos
     void el.play()
+    setBigLive(true)
   }, [edge, delay])
   const applyDelay = useCallback((v: number) => {
     onDelay(v)
@@ -286,13 +297,21 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   const current = cues.filter(c => c.start - 0.2 <= now && now <= c.end + 1.2).at(-1)
     ?? (trail ? cues.filter(c => c.start <= now && c.end > now - 8).at(-1) : undefined)
   // What each line shows now; a translation identical to the original is not repeated.
+  const textsOf = (cue: CueLike | undefined): LineTexts => {
+    const out: LineTexts = {}
+    if (!cue) return out
+    out.src = noStop(cue.src)
+    for (const [k, v] of Object.entries(cue.tr ?? {})) if (v && v.trim() !== cue.src.trim()) out[k] = noStop(v)
+    if (spoken) out[spoken] = out.src
+    return out
+  }
+  // Real-time view: the newest line, still being heard included, while it is fresh.
+  const newest = cues.at(-1)
+  const liveCue = newest && (!newest.final || (subsAt ?? 0) - newest.end < 6) ? newest : undefined
+  const liveTexts: LineTexts = ccOn ? textsOf(liveCue) : {}
   const texts: LineTexts = {}
   if (ccOn) {
-    if (current) {
-      texts.src = noStop(current.src)
-      for (const [k, v] of Object.entries(current.tr ?? {})) if (v && v.trim() !== current.src.trim()) texts[k] = noStop(v)
-      if (spoken) texts[spoken] = texts.src
-    }
+    if (current) Object.assign(texts, textsOf(current))
     for (const [k, list] of Object.entries(siteCues ?? {})) texts[k] = list.find(c => c.start - 0.2 <= now && now <= c.end + 0.3)?.text
   }
 
@@ -358,13 +377,26 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   return (
     <div ref={stage} className={`dshl-stage ${full ? 'full' : ''} ${pageFull ? 'pagefull' : ''} ${controlsHidden ? 'idle' : ''}`} tabIndex={0}
       onMouseMove={poke} onMouseLeave={() => setIdle(true)} onDoubleClick={e => { if (!(e.target as HTMLElement).closest('.dshl-controls, .dshl-menu')) toggleFull() }}>
-      <video ref={video} playsInline onClick={togglePlay} />
-      {!ready && <div className="dshl-overlay"><div className="dshl-spinner" />{waitingText}</div>}
-      {ready && held && (
+      <div className={`dshl-vbox ${liveBig ? 'pip' : ''}`} onClick={liveBig ? () => setBigLive(false) : undefined} title={liveBig ? t('own.toDelayed') : undefined}>
+        <video ref={video} playsInline onClick={liveBig ? undefined : togglePlay} />
+        {liveBig && <SubtitleOverlay texts={texts} style={style} draft={current ? !current.final : false} />}
+        {liveBig && <span className="dshl-piplabel">{t('own.delayed')}</span>}
+      </div>
+      {preview && (
+        <div className={`dshl-livecam ${liveBig ? '' : 'pip'}`} onClick={liveBig ? undefined : () => setBigLive(true)} title={liveBig ? undefined : t('own.toLive')}>
+          <img src={preview} alt="" />
+          {!liveBig && <SubtitleOverlay texts={liveTexts} style={style} draft={liveCue ? !liveCue.final : false} />}
+          {!liveBig && <span className="dshl-piplabel">{t('own.live')}</span>}
+        </div>
+      )}
+      {!ready && !liveBig && <div className="dshl-overlay"><div className="dshl-spinner" />{waitingText}</div>}
+      {ready && held && !liveBig && (
         <div className="dshl-holdnote"><i className="dshl-spinner sm" /><span>{held.text}</span>
           {held.skip && <button className="dshl-link" onClick={() => held.skip?.()}>{t('hold.skip')}</button>}</div>
       )}
-      <SubtitleOverlay texts={texts} style={style} draft={current ? !current.final : false} />
+      {liveBig
+        ? <SubtitleOverlay texts={liveTexts} style={style} draft={liveCue ? !liveCue.final : false} />
+        : <SubtitleOverlay texts={texts} style={style} draft={current ? !current.final : false} />}
       {toast && (
         <div className="dshl-toast">
           {toast.busy && <i className="dshl-spinner sm" />}<span>{toast.text}</span>
@@ -373,8 +405,8 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
         </div>
       )}
       {ready && live && !vod && (
-        <button className={`dshl-livebadge ${atLive ? 'on' : ''}`} onClick={goLive} title={t('player.goLive')}>
-          <Icon.live /> {atLive ? t('player.live') : t('player.behind').replace('{s}', fmt(behind))}
+        <button className={`dshl-livebadge ${atLive || liveBig ? 'on' : ''}`} onClick={goLive} title={t('player.goLive')}>
+          <Icon.live /> {atLive || liveBig ? t('player.live') : t('player.behind').replace('{s}', fmt(behind))}
         </button>
       )}
       {openMenu && (() => {
@@ -410,7 +442,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
           {subsAt !== undefined && subsAt > 0 && <i className="subs" title={t('player.subsAt').replace('{t}', fmt(subsAt))} />}
           {clipIn !== null && <i className="clip" style={{ left: pct(Math.min(clipIn, now)), width: `calc(${pct(Math.max(clipIn, now))} - ${pct(Math.min(clipIn, now))})` }} />}
           <input type="range" min={0} max={Math.max(total, 1)} step={0.1} value={Math.min(now, total)}
-            onChange={e => { if (video.current) video.current.currentTime = Math.min(Number(e.target.value), edge) }} aria-label="seek" />
+            onChange={e => { if (video.current) video.current.currentTime = Math.min(Number(e.target.value), edge); setBigLive(false) }} aria-label="seek" />
         </div>
         <div className="dshl-ctrlrow">
           <button className="ic" onClick={togglePlay} title={`${playing ? t('player.pause') : t('player.play')} (Space)`}>{playing ? <Icon.pause /> : <Icon.play />}</button>

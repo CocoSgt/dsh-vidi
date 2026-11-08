@@ -82,6 +82,8 @@ export interface JobSummary extends JobOptions {
   duration?: number
   /** Live: seconds recorded so far. */
   recorded?: number
+  /** Own camera / pushed stream: a real-time picture is served at /live/api/preview (JPEG frames). */
+  preview?: boolean
   /** Browser whose saved login is being used (the OS may ask permission to read it). */
   loginBrowser?: string
   /** Set when the site needs a login no browser session provided. */

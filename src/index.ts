@@ -726,6 +726,22 @@ export function apply(ctx: Context, config: Config): void {
           saveAs: typeof b.saveAs === 'string' ? b.saveAs.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 150) : 'audio',
         }))
       }
+      if (route === 'preview') {
+        // The real-time picture of an own source, as a multipart JPEG stream an <img> plays directly.
+        const job = jobs.get(url.searchParams.get('jobId') ?? '')
+        if (!job) return send(res, 404, { error: 'no such job' })
+        res.writeHead(200, { 'content-type': 'multipart/x-mixed-replace; boundary=vidiframe', 'cache-control': 'no-store', connection: 'keep-alive' })
+        const write = (f: Buffer) => {
+          if (res.writableLength > 2_000_000) return // a slow viewer skips frames instead of falling behind
+          res.write(`--vidiframe\r\nContent-Type: image/jpeg\r\nContent-Length: ${f.length}\r\n\r\n`)
+          res.write(f)
+          res.write('\r\n')
+        }
+        if (job.lastFrame) write(job.lastFrame)
+        job.on('frame', write)
+        req.on('close', () => job.off('frame', write))
+        return
+      }
       if (route === 'job') {
         const jid = url.searchParams.get('jobId')
         const job = jid ? jobs.get(jid) : jobForConversation(url.searchParams.get('conversationId') ?? '')

@@ -73,7 +73,12 @@ interface Input {
 /** Drop the first `skip` seconds after decoding (an output -ss; empty when there is nothing to drop). */
 const seekAfter = (skip: number): string[] => (skip > 0.01 ? ['-ss', skip.toFixed(3)] : [])
 
+const SOI = Buffer.from([0xff, 0xd8]), EOI = Buffer.from([0xff, 0xd9])
+
 export class LiveJob extends EventEmitter {
+  /** Real-time picture (own sources): the newest JPEG frame, and whether frames are coming. */
+  lastFrame?: Buffer
+  previewOn = false
   readonly id: string
   status: JobStatus = 'resolving'
   message?: string
@@ -137,7 +142,7 @@ export class LiveJob extends EventEmitter {
       ...this.opts, id: this.id, status: this.status, message: this.message, title: this.title,
       startedAt: this.startedAt, dir: this.deps.dir, cueCount: this.cues.length,
       files: existsSync(this.deps.dir) ? readdirSync(this.deps.dir).filter(f => /\.(mp4|m4a|srt|vtt|txt|md|json|jsonl)$/.test(f)) : [],
-      ingest: this.ingest, vod: this.vod, duration: this.duration, recorded: this.vod ? undefined : this.recordedSec(), loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
+      ingest: this.ingest, vod: this.vod, duration: this.duration, recorded: this.vod ? undefined : this.recordedSec(), preview: this.previewOn, loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
       hls: this.hlsName, height: this.height, heights: this.heights, restream: this.restream,
       subs: { ...this.subs, ready: this.readyAt(), latency: this.provider?.latency?.() }, usage: this.deps.usage.summary(), site: this.siteTracks, spoken: this.spokenLang(),
     }
@@ -369,7 +374,33 @@ export class LiveJob extends EventEmitter {
       '-f', 'hls', '-hls_time', '2', '-hls_list_size', '0', '-hls_playlist_type', 'event', '-hls_flags', 'independent_segments',
       '-hls_segment_filename', join(hls, 'seg_%05d.ts'), join(hls, 'index.m3u8'),
     ]
-    const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    // Own sources (a camera here, a stream pushed from OBS): also a real-time picture for the page, as JPEG
+    // frames, so the speaker sees themselves at once while the recording (and anything pushed on) waits for subtitles.
+    const preview = (this.opts.source === 'device' || this.opts.source === 'push') && !!input.video
+    if (preview) args.push('-map', input.video!, '-an', '-vf', 'scale=-2:540,fps=15', '-c:v', 'mjpeg', '-q:v', '6', '-f', 'image2pipe', 'pipe:3')
+    const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe', preview ? 'pipe' : 'ignore'] })
+    this.previewOn = false
+    if (preview) {
+      let tail = Buffer.alloc(0)
+      ;(ff.stdio[3] as NodeJS.ReadableStream).on('data', (chunk: Buffer) => {
+        if (this.ffmpeg !== ff) return
+        let buf = tail.length ? Buffer.concat([tail, chunk]) : chunk
+        // Back-to-back JPEGs: each ends at FF D9 (scan data never holds that pair).
+        for (;;) {
+          const start = buf.indexOf(SOI)
+          if (start < 0) { buf = Buffer.alloc(0); break }
+          const end = buf.indexOf(EOI, start + 2)
+          if (end < 0) { buf = buf.subarray(start); break }
+          const frame = Buffer.from(buf.subarray(start, end + 2))
+          buf = buf.subarray(end + 2)
+          this.lastFrame = frame
+          if (!this.previewOn) { this.previewOn = true; this.emit('state', this.summary()) }
+          this.emit('frame', frame)
+        }
+        // Never hold more than a few frames' worth when something goes wrong.
+        tail = buf.length > 4_000_000 ? Buffer.alloc(0) : Buffer.from(buf)
+      })
+    }
     this.ffmpeg = ff
     // A camera / microphone that sends nothing is almost always blocked by the system's privacy settings:
     // say so after a while instead of loading forever.
@@ -398,6 +429,7 @@ export class LiveJob extends EventEmitter {
       if (this.opts.source === 'push' && !rejected && /Unexpected stream/.test(d.toString())) { rejected = true; ff.kill('SIGKILL') }
     })
     ff.on('exit', code => {
+      if (this.previewOn && this.ffmpeg === ff) { this.previewOn = false; this.lastFrame = undefined }
       // Replaced (quality switch) or stopped on purpose: the caller handles what comes next.
       if (this.ffmpeg !== ff) return
       this.ffmpeg = undefined

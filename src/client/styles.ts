@@ -276,6 +276,15 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-stage.full { width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; }
 .dshl-stage.pagefull { position: fixed; inset: 0; z-index: 2147483000; width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; }
 .dshl-stage video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+/* Own camera: the recording sits in a box that becomes a small window while the real-time picture is large. */
+.dshl-vbox { position: absolute; inset: 0; container-type: inline-size; }
+.dshl-livecam { position: absolute; inset: 0; z-index: 1; container-type: inline-size; background: #000; }
+.dshl-livecam img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.dshl-vbox.pip, .dshl-livecam.pip { inset: auto 14px 74px auto; z-index: 3; width: 28%; min-width: 180px; height: auto; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px;
+  outline: 1px solid rgba(255,255,255,.28); box-shadow: 0 6px 24px rgba(0,0,0,.5); cursor: pointer; transition: bottom .25s; }
+.dshl-stage.idle .dshl-vbox.pip, .dshl-stage.idle .dshl-livecam.pip { bottom: 14px; }
+.dshl-stage .pip .dshl-sub { transform: translateX(-50%) !important; }
+.dshl-piplabel { position: absolute; top: 6px; left: 6px; z-index: 3; padding: 2px 7px; border-radius: 5px; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; pointer-events: none; }
 .dshl-stage.idle { cursor: none; }
 .dshl-holdnote { position: absolute; top: 14px; left: 50%; z-index: 4; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; transform: translateX(-50%);
   background: rgba(20,20,22,.78); color: #f2f2f3; font-size: 12.5px; white-space: nowrap; backdrop-filter: blur(8px); }
