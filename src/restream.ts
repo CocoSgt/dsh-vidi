@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Readable, Writable } from 'node:stream'
+import { wrapBalanced } from './wrap.ts'
 
 // ── Destinations (saved per computer; stream keys never go back to the browser) ──
 
@@ -98,17 +99,7 @@ export async function drawSubtitles(rows: { text: string; size: number; main: bo
   const blocks = rows.map(r => {
     const px = Math.round((r.size / 100) * w)
     g.font = `${r.main ? 600 : 500} ${px}px ${FONT}`
-    const lines: string[] = []
-    let cur = ''
-    for (const ch of Array.from(r.text)) {
-      const next = cur + ch
-      if (cur && g.measureText(next).width > maxW - px * 0.9) {
-        // Break at the last space for Latin text, else here.
-        const sp = cur.lastIndexOf(' ')
-        if (sp > cur.length * 0.5 && /[A-Za-z]/.test(ch)) { lines.push(cur.slice(0, sp)); cur = cur.slice(sp + 1) + ch } else { lines.push(cur); cur = ch.trimStart() }
-      } else cur = next
-    }
-    if (cur.trim()) lines.push(cur)
+    const lines = wrapBalanced(r.text, maxW - px * 0.9, t => g.measureText(t).width)
     return { px, main: r.main, lines }
   })
   const lineH = (px: number) => px * 1.55

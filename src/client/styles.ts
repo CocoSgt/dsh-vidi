@@ -271,6 +271,8 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-sub .src { color: #e8e8e8; }
 .dshl-sub .draft { color: #b8b8b8; font-style: italic; }
 .dshl-sub div + div { margin-top: .3em; }
+/* A line that wraps is split into even halves, not a full line and one orphaned character. */
+.dshl-sub div { line-break: strict; }
 .dshl-stage:not(.idle) .dshl-sub[data-pos=bottom] { transform: translate(-50%, -64px); }
 .dshl-stage:not(.idle) .dshl-sub[data-pos=top] { transform: translate(-50%, 34px); }
 

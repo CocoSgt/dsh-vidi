@@ -1,3 +1,5 @@
+import { Fragment, useLayoutEffect, useRef, useState } from 'react'
+import { wrapBalanced } from '../wrap.ts'
 
 /** One subtitle line: 'src' (original) or a target language code. */
 export interface SubLine { key: string; show: boolean; /** Font size as % of player width. */ size: number }
@@ -59,15 +61,38 @@ function visibleRows(texts: LineTexts, style: SubStyle) {
   })
 }
 
+let measurer: CanvasRenderingContext2D | null | undefined
+
 export function SubtitleOverlay({ texts, style, draft }: { texts: LineTexts; style: SubStyle; draft?: boolean }) {
   const rows = visibleRows(texts, style)
-  if (!rows.length) return null
+  // Lines are broken here, like the burned-in subtitles: even lengths, at a pause when one is near,
+  // never a lone character (the browser's own wrapping leaves one now and then).
+  const box = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth))
+    ro.observe(el)
+    setWidth(el.clientWidth)
+    return () => ro.disconnect()
+  }, [])
+  const lines = (text: string, size: number, weight: number): string[] => {
+    if (measurer === undefined) measurer = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d')
+    if (!width || !measurer || !box.current) return [text]
+    const px = (size / 100) * (width / 0.92)
+    measurer.font = `${weight} ${px}px ${getComputedStyle(box.current).fontFamily}`
+    // Room inside the line's padding, with a little slack for letter spacing.
+    return wrapBalanced(text, (width - px * 0.9) * 0.97, t => measurer!.measureText(t).width)
+  }
   const edge = style.position === 'top' ? { top: `${style.offset}%` } : { bottom: `${style.offset}%` }
   return (
-    <div className="dshl-sub" data-pos={style.position} style={{ ...edge, ['--subbg' as string]: String(style.bg) }}>
+    <div ref={box} className="dshl-sub" data-pos={style.position} style={{ ...edge, ['--subbg' as string]: String(style.bg) }}>
       {rows.map((l, i) => (
         <div key={l.key}>
-          <span className={`${i === 0 ? 'tgt' : 'src'} ${l.key === 'src' && draft ? 'draft' : ''} ${l.key.startsWith('site:') ? 'site' : ''}`} style={{ fontSize: `${l.size}cqw` }}>{texts[l.key]}</span>
+          <span className={`${i === 0 ? 'tgt' : 'src'} ${l.key === 'src' && draft ? 'draft' : ''} ${l.key.startsWith('site:') ? 'site' : ''}`} style={{ fontSize: `${l.size}cqw` }}>
+            {lines(texts[l.key]!.trim(), l.size, i === 0 ? 600 : 400).map((ln, k) => <Fragment key={k}>{k > 0 && <br />}{ln}</Fragment>)}
+          </span>
         </div>
       ))}
     </div>
@@ -85,13 +110,7 @@ export function drawSubtitles(g: CanvasRenderingContext2D, W: number, H: number,
   const blocks = rows.map((l, i) => {
     const px = (l.size / 100) * W
     g.font = `${i === 0 ? 600 : 400} ${px}px ${family}`
-    const words = [...String(texts[l.key])]
-    const lines: string[] = []
-    let cur = ''
-    for (const ch of words) {
-      if (g.measureText(cur + ch).width > W * 0.88 && cur) { lines.push(cur); cur = ch.trimStart() } else cur += ch
-    }
-    if (cur) lines.push(cur)
+    const lines = wrapBalanced(String(texts[l.key]), W * 0.88, t => g.measureText(t).width)
     return { px, weight: i === 0 ? 600 : 400, lines, color: i === 0 ? '#ffffff' : '#e6e6e6' }
   })
   const lineH = (px: number) => px * 1.55
