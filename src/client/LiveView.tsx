@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { createPortal } from 'react-dom'
 import { frameStore, onOpenRequest } from './bus.ts'
 import { ChatPanel, type SessionFaceLike } from './ChatPanel.tsx'
+import { Guard } from './Guard.tsx'
 import { Icon } from './icons.tsx'
 import { langLabel } from './langs.ts'
 import { LineChips } from './LineChips.tsx'
@@ -561,7 +562,7 @@ export function LiveView(props: LiveViewInjected) {
         </div>
       )}
 
-      {job && view && extPanels.filter(p => p.id === tab).map(p => <div key={p.id} className="dshl-panel dshl-ext">{p.render(view)}</div>)}
+      {job && view && extPanels.filter(p => p.id === tab).map(p => <div key={p.id} className="dshl-panel dshl-ext"><Guard name={`tab ${p.id}`} message={t('ext.failed')}>{p.render(view)}</Guard></div>)}
       {tab === 'glossary' && job && <GlossaryPanel jobId={job.id} terms={terms} targets={job.tgtLangs} langName={langName} t={t} onTerms={setTerms} />}
     </>
   )
@@ -635,7 +636,7 @@ export function LiveView(props: LiveViewInjected) {
                   label: job.restream?.running ? t('rs.live') : undefined, on: !!job.restream?.running,
                   content: <RestreamPanel jobId={job.id} status={job.restream} now={now} style={subStyle} t={t} />,
                 },
-                ...extMenus.map(m => ({ id: `ext:${m.id}`, icon: m.icon, title: m.title(ui), content: view ? m.render(view, () => player.current?.closeMenu()) : null })),
+                ...extMenus.map(m => ({ id: `ext:${m.id}`, icon: m.icon, title: m.title(ui), content: view ? <Guard name={`menu ${m.id}`} message={t('ext.failed')}>{m.render(view, () => player.current?.closeMenu())}</Guard> : null })),
                 {
                   id: 'download', icon: <Icon.download />, title: t('menu.download'), content: (
                     <DownloadPanel job={job} lines={shownLines} tasks={tasks.filter(x => x.dirId === job.id)} sessionId={sessionId}
@@ -657,7 +658,7 @@ export function LiveView(props: LiveViewInjected) {
           </div>
 
           <aside className="dshl-side">
-            {activeBench && view ? <div className="dshl-benchbox">{activeBench.render(view)}</div> : pageMode ? <ChatPanel face={chatFace} source={chatSource} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} /> : transcriptBox}
+            {activeBench && view ? <div className="dshl-benchbox"><Guard key={activeBench.id} name={`workbench ${activeBench.id}`} message={t('ext.failed')} onClose={() => setBench(null)} closeLabel={t('ext.close')}>{activeBench.render(view)}</Guard></div> : pageMode ? <ChatPanel face={chatFace} source={chatSource} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} /> : transcriptBox}
           </aside>
         </main>
       )}

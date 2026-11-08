@@ -186,6 +186,10 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, s
 .dshl.page .dshl-side { position: static; height: 100%; max-height: none; }
 /* Workbench open: the video and its subtitles keep a column on the left; the bench takes the rest. */
 .dshl.page.bench .dshl-main { grid-template-columns: clamp(340px, 32vw, 520px) minmax(0, 1fr); }
+.dshl-guard { display: grid; gap: 8px; margin: 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, #d1434b 35%, var(--line)); border-radius: 10px; color: var(--ink); font-size: 13px; }
+.dshl-guard p { margin: 0; line-height: 1.6; }
+.dshl-guard code { color: var(--muted); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.dshl-guard div { display: flex; gap: 8px; }
 .dshl-benchbox { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .dshl-under { display: flex; flex-direction: column; flex: 1; min-height: 210px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--l1); }
 .dshl-under .dshl-sidetabs { align-items: center; padding: 0 12px 0 10px; }
