@@ -23,7 +23,7 @@ interface Summary {
   id: string; status: 'resolving' | 'running' | 'stopping' | 'stopped' | 'error'; message?: string; title?: string
   source: Source; url: string; mode: string; srcLang: string; tgtLangs: string[]; provider: string; files: string[]
   startedAt: number; ingest?: { rtmp?: string; srt?: string; key?: string }
-  vod?: boolean; duration?: number; loginBrowser?: string; needsLogin?: NeedsLogin
+  vod?: boolean; duration?: number; recorded?: number; loginBrowser?: string; needsLogin?: NeedsLogin
   subs?: { state: 'off' | 'running' | 'paused' | 'done'; at: number; ready?: number; latency?: number }
   usage?: Usage
   restream?: RestreamStatus
@@ -383,18 +383,20 @@ export function LiveView(props: LiveViewInjected) {
     props.onTitle(job.title)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.id, job?.title])
-  // How fast transcription moves compared with the clock (live streams): below 1× the subtitles fall further behind.
-  const rateLog = useRef<{ wall: number; at: number }[]>([])
-  const [rate, setRate] = useState<number | null>(null)
+  // Live: is transcription keeping up with the recording? Only a gap that keeps growing counts (the stream itself
+  // arrives in bursts, so the pace against the clock wobbles even when nothing is behind). `behindRec` is that gap.
+  const rateLog = useRef<{ wall: number; gap: number }[]>([])
+  const [behindRec, setBehindRec] = useState<number | null>(null)
   useEffect(() => {
-    if (!job || job.vod || job.status !== 'running' || subs.state !== 'running') { rateLog.current = []; setRate(null); return }
+    if (!job || job.vod || job.status !== 'running' || subs.state !== 'running' || job.recorded === undefined) { rateLog.current = []; setBehindRec(null); return }
     const log = rateLog.current
-    log.push({ wall: Date.now(), at: subs.at })
+    const gap = Math.max(0, job.recorded - subs.at)
+    log.push({ wall: Date.now(), gap })
     while (log.length > 2 && log[0]!.wall < Date.now() - 120_000) log.shift()
-    const first = log[0]!, last = log.at(-1)!
-    setRate(last.wall - first.wall > 45_000 ? (last.at - first.at) / ((last.wall - first.wall) / 1000) : null)
+    const first = log[0]!
+    setBehindRec(Date.now() - first.wall > 45_000 && gap > 20 && gap - first.gap > 8 ? gap : null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subs.at, subs.state, job?.status, job?.id])
+  }, [subs.at, subs.state, job?.recorded, job?.status, job?.id])
   // Listening but nobody has spoken yet (music, an ad break, a countdown): say so instead of looking stuck.
   const emptyLines = subs.state === 'running' && cues.length === 0 && subs.at > 15 ? t('tr.listening').replace('{t}', CLOCK(subs.at)) : t('tr.empty')
   const startSubs = async (from?: number, withMode?: LiveMode) => {
@@ -685,12 +687,12 @@ export function LiveView(props: LiveViewInjected) {
 
   // Live notes under the player: no site subtitles in no-delay mode; subtitles behind the picture; transcription slower than the stream.
   const live = !!job && job.status === 'running' && !job.vod
-  const slow = live && rate !== null && rate < 0.95
+  const slow = live && behindRec !== null
   const engineNow = providers.find(x => x.id === usableEngine())
   const liveNote = siteOnly && job && job.status !== 'resolving' && !(job.site?.length) ? (
     <div className="dshl-lag"><span>{t('site.none')}</span><button className="dshl-link" onClick={() => changeMode('polished')}>{t('site.switch')}</button></div>
   ) : slow ? (
-    <div className="dshl-lag warn"><span>{t(engineNow && !engineNow.online ? 'lag.slowLocal' : 'lag.slow').replace('{x}', rate!.toFixed(2))}</span>
+    <div className="dshl-lag warn"><span>{t(engineNow && !engineNow.online ? 'lag.slowLocal' : 'lag.slow').replace('{s}', String(Math.round(behindRec!)))}</span>
       {engineNow && !engineNow.online && <button className="dshl-link" onClick={() => setSettingsOpen(true)}>{t('lag.settings')}</button>}</div>
   ) : null
 
@@ -883,6 +885,11 @@ function SubsStarter(props: {
 const fmtTokens = (n: number, ui: 'en' | 'zh') =>
   ui === 'zh' && n >= 10000 ? `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)}万` : n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n)
 
+/** Engines billed by the minute of audio (no token counts come back): US$ per minute, from the provider's price list. */
+const PER_MINUTE: Record<string, number> = { 'openai-translate': 0.034 }
+const audioCost = (audio: [string, number][]) => audio.reduce((sum, [k, v]) => sum + (PER_MINUTE[k] ?? 0) * v / 60, 0)
+const usd = (v: number) => `$${v.toFixed(2)}`
+
 /** Total tokens for this video; hover or click for per-model input / output / cache. */
 function UsagePill({ usage, t, ui }: { usage?: Usage; t: (k: LiveKey) => string; ui: 'en' | 'zh' }) {
   const [open, setOpen] = useState(false)
@@ -892,7 +899,9 @@ function UsagePill({ usage, t, ui }: { usage?: Usage; t: (k: LiveKey) => string;
   const n = (v: number) => fmtTokens(v, ui)
   return (
     <span className="dshl-usage" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-      <button className="dshl-pill" onClick={() => setOpen(v => !v)}>{t('usage.tokens').replace('{n}', n(total))}</button>
+      <button className="dshl-pill" onClick={() => setOpen(v => !v)}>
+        {[total ? t('usage.tokens').replace('{n}', n(total)) : '', audioCost(audio) >= 0.01 ? usd(audioCost(audio)) : ''].filter(Boolean).join(' · ')}
+      </button>
       {open && (
         <div className="dshl-pop right up usage">
           <h3>{t('usage.title')}</h3>
@@ -912,7 +921,20 @@ function UsagePill({ usage, t, ui }: { usage?: Usage; t: (k: LiveKey) => string;
               </tbody>
             </table>
           ) : <p className="dshl-muted">{t('usage.none')}</p>}
-          {audio.map(([k, v]) => <p key={k} className="dshl-muted small">{t('usage.audio').replace('{s}', engineLabel(t, k)).replace('{t}', CLOCK(v))}</p>)}
+          {audio.length > 0 && (
+            <table className="audio">
+              <thead><tr><th>{t('usage.byAudio')}</th><th>{t('usage.duration')}</th><th>{t('usage.cost')}</th></tr></thead>
+              <tbody>
+                {audio.map(([k, v]) => (
+                  <tr key={k}>
+                    <td>{engineLabel(t, k)}</td>
+                    <td>{CLOCK(v)}</td>
+                    <td title={PER_MINUTE[k] ? t('usage.rate').replace('{p}', String(PER_MINUTE[k])) : undefined}>{PER_MINUTE[k] ? '≈ ' + usd(PER_MINUTE[k]! * v / 60) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </span>

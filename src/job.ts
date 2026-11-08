@@ -134,7 +134,7 @@ export class LiveJob extends EventEmitter {
       ...this.opts, id: this.id, status: this.status, message: this.message, title: this.title,
       startedAt: this.startedAt, dir: this.deps.dir, cueCount: this.cues.length,
       files: existsSync(this.deps.dir) ? readdirSync(this.deps.dir).filter(f => /\.(mp4|m4a|srt|vtt|txt|md|json|jsonl)$/.test(f)) : [],
-      ingest: this.ingest, vod: this.vod, duration: this.duration, loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
+      ingest: this.ingest, vod: this.vod, duration: this.duration, recorded: this.vod ? undefined : this.recordedSec(), loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
       hls: this.hlsName, height: this.height, heights: this.heights, restream: this.restream,
       subs: { ...this.subs, ready: this.readyAt(), latency: this.provider?.latency?.() }, usage: this.deps.usage.summary(), site: this.siteTracks, spoken: this.spokenLang(),
     }
@@ -389,6 +389,13 @@ export class LiveJob extends EventEmitter {
 
   private get m3u8(): string {
     return join(this.deps.dir, this.hlsName, 'index.m3u8')
+  }
+
+  /** Seconds recorded so far (live), from the playlist; re-read at most once a second. */
+  private recCache = { at: 0, sec: 0 }
+  private recordedSec(): number {
+    if (Date.now() - this.recCache.at > 1000) { const last = this.segments().at(-1); this.recCache = { at: Date.now(), sec: last ? last.start + last.dur : 0 } }
+    return this.recCache.sec
   }
 
   /** Recorded segments so far: start time on the playback timeline and duration. */

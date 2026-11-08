@@ -620,6 +620,8 @@ body > .dshl-menu { z-index: 2147483002; }
 .dshl-pop.usage td { padding: 4px 0 4px 10px; border-top: 1px solid var(--line-soft); text-align: right; }
 .dshl-pop.usage th:first-child, .dshl-pop.usage td:first-child { max-width: 140px; padding-left: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .dshl-pop.usage p { margin: 8px 0 0; }
+.dshl-pop.usage table + table { margin-top: 12px; }
+.dshl-pop.usage table.audio td:first-child { max-width: 180px; }
 @media (max-width: 600px) { .dshl-pop.settings.right { position: fixed; top: 58px; left: 12px; right: 12px; width: auto; max-width: none; } }
 
 /* ── Login dialog ── */

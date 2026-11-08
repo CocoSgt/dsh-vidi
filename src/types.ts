@@ -80,6 +80,8 @@ export interface JobSummary extends JobOptions {
   vod?: boolean
   /** Length in seconds, when known. */
   duration?: number
+  /** Live: seconds recorded so far. */
+  recorded?: number
   /** Browser whose saved login is being used (the OS may ask permission to read it). */
   loginBrowser?: string
   /** Set when the site needs a login no browser session provided. */
