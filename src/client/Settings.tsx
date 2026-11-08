@@ -18,9 +18,15 @@ const vendorOf = (p: Provider) => p.vendor ?? p.id
  */
 function recommended(models: { model: string; name: string }[], fallback?: string): Set<string> {
   const ver = (n: string) => Number(/(\d+(?:\.\d+)?)/.exec(n)?.[1] ?? 0)
-  const fast = models.filter(m => /flash|mini|turbo|\bair\b|-air|lite|haiku/i.test(`${m.model} ${m.name}`) && !/embed|tts|audio|image|vision-preview|realtime/i.test(m.model))
-  const picks = fast.sort((a, b) => ver(b.model) - ver(a.model)).slice(0, 2).map(m => m.model)
-  if (fallback && models.some(m => m.model === fallback)) picks.unshift(fallback)
+  // Whole words only ("Gemini" is not a "mini").
+  const tier = /(^|[-_\s./])(flash|mini|turbo|air|lite|haiku)($|[-_\s./\d])/i
+  const usable = models.filter(m => !/embed|tts|audio|image-|realtime|rerank/i.test(m.model))
+  const fast = usable.filter(m => tier.test(m.model) || tier.test(m.name))
+  // No fast tier at this provider: its newest model.
+  // Versions read from the shown name first (ids like "glm-x-preview-k" carry none).
+  const v = (m: { model: string; name: string }) => ver(m.name) || ver(m.model)
+  const picks = (fast.length ? fast : usable).slice().sort((a, b) => v(b) - v(a)).slice(0, fast.length ? 2 : 1).map(m => m.model)
+  if (fallback && models.some(m => m.model === fallback) && !picks.includes(fallback)) picks.unshift(fallback)
   return new Set(picks)
 }
 
