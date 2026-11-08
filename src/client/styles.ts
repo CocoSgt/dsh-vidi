@@ -308,11 +308,11 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-stage:not(.idle) .dshl-sub[data-pos=bottom] { transform: translate(-50%, -64px); }
 .dshl-stage:not(.idle) .dshl-sub[data-pos=top] { transform: translate(-50%, 34px); }
 
-.dshl-livebadge { position: absolute; top: 12px; left: 12px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 0; border-radius: 6px;
-  background: rgba(0,0,0,.55); color: #fff; font-size: 12px; font-weight: 600; letter-spacing: .04em; cursor: pointer; transition: opacity .25s; }
-.dshl-livebadge svg { color: #9a9a9a; }
-.dshl-livebadge.on { background: var(--live); }
-.dshl-livebadge.on svg { color: #fff; animation: dshl-pulse 1.6s ease-in-out infinite; }
+.dshl-livebadge { position: absolute; top: 12px; left: 12px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border: 0; border-radius: 999px;
+  background: rgba(0,0,0,.42); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: #fff !important; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; line-height: 1; cursor: pointer; transition: opacity .25s, background .15s; }
+.dshl-livebadge:hover { background: rgba(0,0,0,.6); }
+.dshl-livebadge svg { width: 10px; height: 10px; flex: none; color: rgba(255,255,255,.5); }
+.dshl-livebadge.on svg { color: #ff4d4f; filter: drop-shadow(0 0 3px rgba(255,77,79,.8)); animation: dshl-pulse 1.6s ease-in-out infinite; }
 
 .dshl-toast { position: absolute; top: 12px; left: 50%; z-index: 6; display: inline-flex; align-items: center; gap: 10px; max-width: calc(100% - 24px); padding: 8px 14px;
   border-radius: 10px; background: rgba(20,20,22,.86); color: #fff; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.3); transform: translateX(-50%); }
