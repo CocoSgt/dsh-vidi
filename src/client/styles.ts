@@ -285,7 +285,12 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, s
 .dshl-ctrlrow .pill svg { flex: none; width: 18px; height: 18px; }
 .dshl-ctrlrow .pill .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshl-ctrlrow .pill .caret { flex: none; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; opacity: .8; transform: translateY(1px) rotate(-135deg); }
-@container (max-width: 640px) { .dshl-ctrlrow .pill .txt, .dshl-ctrlrow .pill .caret { display: none; } .dshl-ctrlrow .pill { padding: 0 6px; } }
+@container (max-width: 640px) {
+  .dshl-ctrlrow .pill .txt, .dshl-ctrlrow .pill .caret { display: none; } .dshl-ctrlrow .pill { padding: 0 6px; }
+  /* Narrow player (a workbench beside it, a phone): fewer words, no volume slider (the mute button stays). */
+  .dshl-ctrlrow .vol, .dshl-ctrlrow .theater { display: none; }
+  .dshl-ctrlrow .ic { width: 32px; height: 32px; }
+}
 @container (max-width: 520px) {
   .dshl-ctrlrow { gap: 2px; }
   .dshl-ctrlrow .vol, .dshl-ctrlrow .mute, .dshl-ctrlrow .theater { display: none; }
@@ -301,7 +306,8 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, s
 .dshl-subsbtn:hover { filter: brightness(1.08); }
 .dshl-subsbtn.running { background: linear-gradient(to right, rgba(127,176,255,.45) var(--p, 0%), rgba(255,255,255,.14) var(--p, 0%)); font-weight: 500; }
 .dshl-subsbtn.running .dot { width: 7px; height: 7px; border-radius: 50%; background: #ff5a5f; animation: dshl-pulse 1.6s ease-in-out infinite; }
-.dshl-subsbtn.running .act { display: none; }
+.dshl-subsbtn.running .act, .dshl-subsbtn .short { display: none; }
+@container (max-width: 640px) { .dshl-subsbtn .now { display: none; } .dshl-subsbtn.running:not(:hover) .short { display: inline; } }
 .dshl-subsbtn.running:hover .now { display: none; }
 .dshl-subsbtn.running:hover .act { display: inline; }
 .dshl-subsbtn.running:hover .dot { width: 8px; height: 8px; border-radius: 1px; background: #fff; animation: none; }

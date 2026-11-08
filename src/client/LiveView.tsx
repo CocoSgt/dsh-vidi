@@ -683,6 +683,7 @@ function SubsButton(props: { state: 'off' | 'running' | 'paused' | 'done'; at: n
       style={{ ['--p' as string]: `${pct ?? 0}%` }}>
       <i className="dot" />
       <span className="now">{pct !== undefined ? t('subs.progress').replace('{p}', String(pct)) : t('subs.progressLive').replace('{t}', CLOCK(at))}</span>
+      <span className="short">{pct !== undefined ? `${pct}%` : CLOCK(at)}</span>
       <span className="act">{t('subs.pause')}</span>
     </button>
   )

@@ -67,6 +67,9 @@ interface Input {
  *
  * Events: 'state' (JobSummary), 'cue' (Cue — new or revised).
  */
+/** Drop the first `skip` seconds after decoding (an output -ss; empty when there is nothing to drop). */
+const seekAfter = (skip: number): string[] => (skip > 0.01 ? ['-ss', skip.toFixed(3)] : [])
+
 export class LiveJob extends EventEmitter {
   readonly id: string
   status: JobStatus = 'resolving'
@@ -732,11 +735,18 @@ export class LiveJob extends EventEmitter {
 
   // ── Media helpers for tools and extensions ──
 
-  /** Best available picture source for time range [from, to]: original download, finished recording, or recorded segments. */
-  private mediaFor(from: number, to: number): { args: string[]; offset: number } {
+  /**
+   * Best available picture source for time range [from, to]: original
+   * download, finished recording, or recorded segments. `args` are the input
+   * arguments; `skip` is how much to drop after decoding (output -ss). Files
+   * seek exactly on input; live segments do not (a seek lands between
+   * keyframes — YouTube live has one every 5 s — and decodes nothing), so they
+   * are read from the start of the first segment and trimmed after decoding.
+   */
+  private mediaFor(from: number, to: number): { args: string[]; skip: number } {
     const original = readdirSync(this.deps.dir).find(n => /^original\.(mp4|mkv|webm)$/.test(n))
-    if (original) return { args: ['-ss', String(from), '-i', join(this.deps.dir, original)], offset: 0 }
-    if (this.captureDone && existsSync(join(this.deps.dir, 'recording.mp4'))) return { args: ['-ss', String(from), '-i', join(this.deps.dir, 'recording.mp4')], offset: 0 }
+    if (original) return { args: ['-ss', String(from), '-i', join(this.deps.dir, original)], skip: 0 }
+    if (this.captureDone && existsSync(join(this.deps.dir, 'recording.mp4'))) return { args: ['-ss', String(from), '-i', join(this.deps.dir, 'recording.mp4')], skip: 0 }
     // Still recording: splice the segments that cover the range.
     const segs = this.segments()
     const files = readFileSync(this.m3u8, 'utf8').split('\n').filter(l => l && !l.startsWith('#'))
@@ -745,14 +755,15 @@ export class LiveJob extends EventEmitter {
     if (last < 0) last = segs.length - 1
     if (!segs.length || first > last) throw new Error('that part has not been recorded yet')
     const list = files.slice(first, last + 1).map(f => join(this.deps.dir, this.hlsName, f)).join('|')
-    return { args: ['-ss', String(from - segs[first]!.start), '-i', `concat:${list}`], offset: 0 }
+    return { args: ['-i', `concat:${list}`], skip: Math.max(0, from - segs[first]!.start) }
   }
 
   /** One small JPEG of the picture at media time `at`, for the model to look at (undefined for audio-only or on failure). */
   async still(at: number): Promise<Buffer | undefined> {
     try {
-      const { args } = this.mediaFor(at, at + 1)
-      const { stdout } = await run('ffmpeg', ['-v', 'error', ...args, '-frames:v', '1', '-vf', 'scale=768:-2', '-q:v', '5', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'],
+      const { args, skip } = this.mediaFor(at, at + 1)
+      // JPEG wants full-range colour (ffmpeg 8 refuses the TV range most video uses).
+      const { stdout } = await run('ffmpeg', ['-v', 'error', ...args, ...seekAfter(skip), '-frames:v', '1', '-vf', 'scale=768:-2', '-pix_fmt', 'yuvj420p', '-q:v', '5', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'],
         { timeout: 30_000, encoding: 'buffer', maxBuffer: 8 << 20 })
       return stdout.length > 1000 ? stdout : undefined
     } catch { return undefined }
@@ -763,8 +774,9 @@ export class LiveJob extends EventEmitter {
     const dir = join(this.deps.dir, 'frames')
     mkdirSync(dir, { recursive: true })
     const out = join(dir, `frame_${at.toFixed(1).replace('.', '_')}.jpg`)
-    const { args } = this.mediaFor(at, at + 1)
-    await run('ffmpeg', ['-v', 'error', '-y', ...args, '-frames:v', '1', '-q:v', '2', out], { timeout: 60_000 })
+    const { args, skip } = this.mediaFor(at, at + 1)
+    await run('ffmpeg', ['-v', 'error', '-y', ...args, ...seekAfter(skip), '-frames:v', '1', '-pix_fmt', 'yuvj420p', '-q:v', '2', out], { timeout: 60_000 })
+    if (!existsSync(out)) throw new Error('no picture at that moment')
     return out
   }
 
@@ -778,11 +790,12 @@ export class LiveJob extends EventEmitter {
     mkdirSync(dir, { recursive: true })
     const name = `clip_${from.toFixed(1)}-${to.toFixed(1)}`.replace(/\./g, '_')
     const out = join(dir, `${name}.mp4`)
-    const { args } = this.mediaFor(from, to)
+    const { args, skip } = this.mediaFor(from, to)
     const subArgs: string[] = []
     const maps: string[] = []
     if (langs?.length) {
-      const inRange = this.cues.filter(c => c.final && c.end > from && c.start < to).map(c => ({ ...c, start: Math.max(0, c.start - from), end: Math.min(to, c.end) - from }))
+      // Subtitle times count from where decoding starts (skip seconds before `from`).
+      const inRange = this.cues.filter(c => c.final && c.end > from && c.start < to).map(c => ({ ...c, start: Math.max(0, c.start - from) + skip, end: Math.min(to, c.end) - from + skip }))
       const tracks = langs.length > 1 ? [langs, ...langs.map(l => [l])] : [langs]
       tracks.forEach((ls, i) => {
         const f = join(dir, `.${name}.${i}.srt`)
@@ -791,7 +804,7 @@ export class LiveJob extends EventEmitter {
         maps.push('-map', `${i + 1}:0`)
       })
     }
-    await run('ffmpeg', ['-v', 'error', '-y', ...args, ...subArgs, '-t', String(to - from), '-map', '0:v?', '-map', '0:a?', ...maps,
+    await run('ffmpeg', ['-v', 'error', '-y', ...args, ...subArgs, ...seekAfter(skip), '-t', String(to - from), '-map', '0:v?', '-map', '0:a?', ...maps,
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '160k', ...(maps.length ? ['-c:s', 'mov_text'] : []),
       '-movflags', '+faststart', out], { timeout: 600_000 })
     for (const f of readdirSync(dir)) if (f.startsWith(`.${name}.`)) rmSync(join(dir, f), { force: true })
@@ -821,8 +834,17 @@ export class LiveJob extends EventEmitter {
       if (last && last.key === key) last.end = Math.min(to, t + 0.1)
       else spans.push({ start: t, end: Math.min(to, t + 0.1), key, rows })
     }
+    const { args, skip } = this.mediaFor(from, to)
     const pictures = new Map<string, string>()
     const lines = ['ffconcat version 1.0']
+    // Decoding may start before `from` (live segments): nothing on screen for that stretch, trimmed afterwards.
+    if (skip > 0) {
+      const blank = await drawSubtitles([], style, w, h)
+      if (!blank) throw new Error('subtitles could not be drawn on this computer')
+      const file = join(tmp, 'blank.png')
+      writeFileSync(file, blank)
+      lines.push(`file '${file.replace(/'/g, "'\\''")}'`, `duration ${skip.toFixed(3)}`)
+    }
     for (const s of spans) {
       let file = pictures.get(s.key)
       if (!file) {
@@ -837,9 +859,8 @@ export class LiveJob extends EventEmitter {
     lines.push(`file '${pictures.get(spans.at(-1)!.key)!.replace(/'/g, "'\\''")}'`)
     const list = join(tmp, 'subs.ffconcat')
     writeFileSync(list, lines.join('\n') + '\n')
-    const { args } = this.mediaFor(from, to)
     try {
-      await run('ffmpeg', ['-v', 'error', '-y', ...args, '-f', 'concat', '-safe', '0', '-i', list, '-t', String(to - from),
+      await run('ffmpeg', ['-v', 'error', '-y', ...args, '-f', 'concat', '-safe', '0', '-i', list, ...seekAfter(skip), '-t', String(to - from),
         '-filter_complex', `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[v];[1:v]format=rgba,setpts=PTS-STARTPTS[s];[v][s]overlay=0:0:eof_action=repeat,format=yuv420p[o]`,
         '-map', '[o]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', out], { timeout: 900_000 })
     } finally {
