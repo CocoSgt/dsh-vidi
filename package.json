@@ -1,6 +1,6 @@
 {
   "name": "dsh-vidi",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "A video tool for DeepSeek Harness: watch live streams, videos and podcasts with real-time subtitles in any language, then clip and download",
   "type": "module",
   "license": "PolyForm-Noncommercial-1.0.0",

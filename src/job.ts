@@ -366,12 +366,23 @@ export class LiveJob extends EventEmitter {
         if (this.segments().length) { clearInterval(wait); this.setStatus('running') }
       }, 400)
     }
-    ff.stderr!.on('data', (d: Buffer) => appendFileSync(join(this.deps.dir, 'ffmpeg.log'), d))
+    // ffmpeg's RTMP listener only warns about a stream with another key and records it anyway: cut such a sender off.
+    let rejected = false
+    ff.stderr!.on('data', (d: Buffer) => {
+      appendFileSync(join(this.deps.dir, 'ffmpeg.log'), d)
+      if (this.opts.source === 'push' && !rejected && /Unexpected stream/.test(d.toString())) { rejected = true; ff.kill('SIGKILL') }
+    })
     ff.on('exit', code => {
       // Replaced (quality switch) or stopped on purpose: the caller handles what comes next.
       if (this.ffmpeg !== ff) return
       this.ffmpeg = undefined
       if (this.status !== 'running') return
+      // A push listener that has received nothing yet (a sender with the wrong key, a dropped attempt): listen again.
+      if (this.opts.source === 'push' && this.message && (rejected || !this.segments().length)) {
+        if (rejected) rmSync(hls, { recursive: true, force: true })
+        setTimeout(() => { if (this.status === 'running' && !this.ffmpeg) this.spawnFfmpeg(input) }, 500)
+        return
+      }
       void this.finishCapture(code === 0 ? 'ended' : this.ffmpegError(code), code === 0 || this.segments().length > 0)
     })
   }

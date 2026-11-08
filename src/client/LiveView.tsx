@@ -101,6 +101,35 @@ function upload(file: File, onProgress: (p: number) => void): Promise<string> {
 }
 
 /** A value to copy: plain text (not an input look-alike) and a text button. */
+/** The push stream key: copy it, or change it (typed, or a new random one). */
+function KeyRow({ value, t, onChanged }: { value: string; t: (k: LiveKey) => string; onChanged: () => void }) {
+  const [edit, setEdit] = useState<string | null>(null)
+  const [err, setErr] = useState('')
+  const [done, setDone] = useState(false)
+  const save = async (body: Record<string, unknown>) => {
+    if (typeof body.key === 'string' && !/^[A-Za-z0-9_-]{3,40}$/.test(body.key.trim())) { setErr(t('push.badKey')); return }
+    try { await post('pushkey', body); setEdit(null); setErr(''); onChanged() } catch (e) { setErr((e as Error).message) }
+  }
+  return (
+    <>
+      <dt>{t('push.key')}</dt>
+      <dd>
+        {edit === null ? <>
+          <span className="val">{value}</span>
+          <button className="dshl-link" onClick={() => { void navigator.clipboard.writeText(value); setDone(true); setTimeout(() => setDone(false), 1500) }}>{done ? t('push.copied') : t('push.copy')}</button>
+          <button className="dshl-link" onClick={() => setEdit(value)}>{t('push.change')}</button>
+        </> : <>
+          <input className="dshl-keyedit" value={edit} spellCheck={false} autoFocus onFocus={e => e.target.select()} onChange={e => setEdit(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void save({ key: edit }); if (e.key === 'Escape') setEdit(null) }} />
+          <button className="dshl-link" onClick={() => void save({ key: edit })}>{t('push.save')}</button>
+          <button className="dshl-link" onClick={() => void save({ random: true })}>{t('push.random')}</button>
+          <button className="dshl-link" onClick={() => { setEdit(null); setErr('') }}>{t('player.cancel')}</button>
+        </>}
+        {err && <span className="err">{err}</span>}
+      </dd>
+    </>
+  )
+}
+
 function CopyRow({ label, value, copy, copied }: { label: string; value: string; copy: string; copied: string }) {
   const [done, setDone] = useState(false)
   return (
@@ -556,7 +585,7 @@ export function LiveView(props: LiveViewInjected) {
           <div className="title"><Icon.push /> {t('push.title')} <span>{t('push.hint')}</span></div>
           <dl>
             <CopyRow label={t('push.server')} value={armed.rtmp} copy={t('push.copy')} copied={t('push.copied')} />
-            {armed.key && <CopyRow label={t('push.key')} value={armed.key} copy={t('push.copy')} copied={t('push.copied')} />}
+            {armed.key && <KeyRow value={armed.key} t={t} onChanged={() => void post('arm', options()).then((a: Armed & { busy?: boolean }) => setArmed(a.busy ? null : a)).catch(() => {})} />}
           </dl>
         </div>
       )}

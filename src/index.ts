@@ -221,6 +221,8 @@ export function apply(ctx: Context, config: Config): void {
     last?: Pick<JobOptions, 'tgtLangs' | 'srcLang' | 'provider' | 'mode'>
     /** Subtitle model (translation, polishing, glossary); unset = DeepSeek, else DSH's default. */
     subsModel?: { provider: string; model: string }
+    /** Stream key for pushes from OBS (rtmp://<this computer>:<port>/live/<key>). */
+    pushKey?: string
   }
   const prefs = (): Prefs => {
     try { return { cookies: 'auto', ...JSON.parse(readFileSync(settingsFile, 'utf8')) } } catch { return { cookies: 'auto' } }
@@ -296,7 +298,16 @@ export function apply(ctx: Context, config: Config): void {
    * page owns it.
    */
   let armed: { conversationId: string; key: string; job: LiveJob } | undefined
-  const PUSH_KEY = 'dsh'
+  // The push stream key: chosen by the user; a fresh install gets a random one, an existing one keeps the
+  // old "dsh" so OBS setups made before keep working.
+  const hadSettings = existsSync(settingsFile)
+  const pushKey = (): string => {
+    const saved = prefs().pushKey
+    if (saved) return saved
+    const key = hadSettings ? 'dsh' : Math.random().toString(36).slice(2, 10)
+    savePrefs({ pushKey: key })
+    return key
+  }
 
   async function disarm(): Promise<void> {
     const a = armed
@@ -345,7 +356,7 @@ export function apply(ctx: Context, config: Config): void {
       usage,
       glossary,
       log,
-      ingest: { host: lanAddress(), rtmpPort: config.rtmpPort, srtPort: config.srtPort, key: waiting ? PUSH_KEY : undefined },
+      ingest: { host: lanAddress(), rtmpPort: config.rtmpPort, srtPort: config.srtPort, key: waiting ? pushKey() : undefined },
       cookies: () => prefs().cookies,
     }
   }
@@ -530,6 +541,16 @@ export function apply(ctx: Context, config: Config): void {
           void job.startSubs(typeof b.from === 'number' ? b.from : undefined, opts)
         }
         return send(res, 200, job.summary())
+      }
+      if (route === 'pushkey' && req.method === 'POST') {
+        // { key } sets it, { random: true } makes a new one; the waiting listener restarts with it.
+        if ([...jobs.values()].some(j => j.opts.source === 'push' && j.status === 'running' && !j.message)) return send(res, 409, { error: 'a stream is coming in; change the key after it ends' })
+        const b = await readJson(req)
+        const key = b.random ? Math.random().toString(36).slice(2, 10) : String(b.key ?? '').trim()
+        if (!/^[A-Za-z0-9_-]{3,40}$/.test(key)) return send(res, 400, { error: 'use 3–40 letters, digits, - or _' })
+        savePrefs({ pushKey: key })
+        await disarm()
+        return send(res, 200, { key })
       }
       if (route === 'arm' && req.method === 'POST') {
         const b = await readJson(req)

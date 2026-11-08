@@ -159,6 +159,10 @@ const CSS = `
 .dshl-pushinfo dl { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 16px; margin: 0; }
 .dshl-pushinfo dt { color: var(--faint); font-size: 12px; }
 .dshl-pushinfo dd { display: flex; align-items: center; gap: 14px; min-width: 0; margin: 0; }
+.dshl-keyedit { width: 140px; height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dshl-keyedit:focus { outline: none; border-color: var(--accent); }
+.dshl-pushinfo dd:has(.err) { flex-wrap: wrap; row-gap: 4px; }
+.dshl-pushinfo dd .err { flex-basis: 100%; color: #d1434b; font-size: 12px; }
 .dshl-pushinfo .val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; user-select: all; }
 .dshl-pushinfo .dshl-link { flex: none; font-size: 12.5px; }
 
