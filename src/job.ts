@@ -49,6 +49,8 @@ interface Input {
   audio: string
   /** Map spec for the video stream, or undefined for audio-only sources. */
   video?: string
+  /** Frames per second to record at, when the source cannot tell (a camera). */
+  fps?: number
   /** Image shown as the picture of an audio-only source (instead of the waveform alone). */
   cover?: string
   /** Video codec, when known; anything but H.264 is re-encoded for the browser. */
@@ -246,7 +248,9 @@ export class LiveJob extends EventEmitter {
       // A camera / screen and a microphone on this computer, captured directly ({ video, audio, title } as JSON).
       const c = JSON.parse(url) as DeviceChoice & { title?: string }
       this.title = c.title || 'Camera'
-      return { ...deviceInput(c, q), vcodec: 'rawvideo' }
+      // A camera does not report its frame rate up front; without one the recording takes its microsecond clock
+      // for the rate and every frame lands on the same instant. Record at a steady 30 fps.
+      return { ...deviceInput(c, q), vcodec: 'rawvideo', fps: 30 }
     }
     if (source === 'push') {
       const key = this.deps.ingest.key ?? this.id.slice(-4)
@@ -342,7 +346,7 @@ export class LiveJob extends EventEmitter {
     // A podcast cover: centred on the dark background with a slim waveform under it.
     const coverIn = input.args.filter(a => a === '-i').length
     const picture = input.video
-      ? ['-map', input.video, ...(h264 ? ['-c:v', 'copy'] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-vf', 'scale=-2:min(720\\,ih)', '-pix_fmt', 'yuv420p', '-g', '50'])]
+      ? ['-map', input.video, ...(h264 ? ['-c:v', 'copy'] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-vf', 'scale=-2:min(720\\,ih)', '-pix_fmt', 'yuv420p', '-g', '50', ...(input.fps ? ['-r', String(input.fps), '-tune', 'zerolatency'] : [])])]
       : input.cover ? ['-loop', '1', '-framerate', '25', '-i', input.cover, '-filter_complex', [
           'color=c=0x0f1420:s=1280x720:r=25[bg]',
           `[${coverIn}:v]scale=-2:460,format=rgba[c]`,
