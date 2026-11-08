@@ -164,7 +164,7 @@ export class LiveJob extends EventEmitter {
       writeFileSync(join(this.deps.dir, 'job.json'), JSON.stringify({
         id: this.id, opts: this.opts, title: this.title, vod: this.vod, duration: this.duration, siteLang: this.siteLang,
         height: this.height, hlsName: this.hlsName, heights: this.heights,
-        startedAt: this.startedAt, subs: this.subs, status: this.status,
+        startedAt: this.startedAt, subs: this.subs, status: this.status, ...(this.status === 'error' ? { message: this.message } : {}),
       }, null, 2))
     } catch {}
   }
@@ -179,7 +179,8 @@ export class LiveJob extends EventEmitter {
       job.duration = j.duration
       job.captureDone = true
       job.status = j.status === 'error' ? 'error' : 'stopped'
-      job.message = 'restored'
+      // A failure keeps saying why (e.g. the camera was blocked); a finished video just came back.
+      job.message = j.status === 'error' && (j as { message?: string }).message ? (j as { message?: string }).message : 'restored'
       const seen = new Map<number, Cue>()
       if (existsSync(join(dir, 'cues.jsonl'))) {
         for (const line of readFileSync(join(dir, 'cues.jsonl'), 'utf8').split('\n')) {

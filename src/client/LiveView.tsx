@@ -608,7 +608,13 @@ export function LiveView(props: LiveViewInjected) {
   const missing = deps.filter(d => !d.ok && (d.name === 'ffmpeg' || (d.name === 'yt-dlp') || ((engine || 'local') === 'local' && d.name.startsWith('whisper'))))
   const needsModel = !hasTranslator && shownLines.some(l => l !== 'src')
 
-  const hasMain = !!job && !(job.status === 'error' && !job.files.length)
+  // A failure that recorded nothing (a blocked camera, a dead link) stays on the start page with its message.
+  const hasMain = !!job && !(job.status === 'error' && !job.files.some(f => /\.(mp4|m4a|srt|vtt)$/.test(f)))
+  // Back on the start page after a failure: show the source it was opened with, ready to retry.
+  useEffect(() => {
+    if (job && !hasMain) setSrcTabRaw(job.source === 'device' ? 'camera' : job.source === 'push' ? 'push' : job.source === 'file' ? 'file' : 'link')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.id, hasMain])
   // Camera: remembered choices that are gone (unplugged) fall back to the first one.
   const cams = (devices ?? []).filter(d => d.kind !== 'mic'), mics = (devices ?? []).filter(d => d.kind === 'mic')
   const camV = camVideo === 'none' || cams.some(d => d.id === camVideo) ? camVideo : (cams.find(d => d.preferred)?.id ?? cams.find(d => d.kind === 'camera')?.id ?? 'none')
@@ -822,7 +828,7 @@ export function LiveView(props: LiveViewInjected) {
           <button className="dshl-link" onClick={() => void startDevice()}>{t('st.retry')}</button></div>
       )}
       {!accessIssue && (error || job?.status === 'error') && (
-        <div className="dshl-note warn"><span>{error || (job?.message === 'device-blocked' ? t('dev.blocked') : job?.message)}</span>
+        <div className="dshl-note warn"><span>{error || (job?.message === 'device-blocked' ? t('dev.blocked') : job?.message === 'restored' ? t('st.failedEarlier') : job?.message)}</span>
           {job?.message === 'device-blocked' && <button className="dshl-link" onClick={() => openPrivacy(blockedKind())}>{t('dev.openSettings')}</button>}
           {job && !active && <button className="dshl-link" onClick={() => start(job.url, job.source)}>{t('st.retry')}</button>}</div>
       )}
