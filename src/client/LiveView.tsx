@@ -104,40 +104,27 @@ function upload(file: File, onProgress: (p: number) => void): Promise<string> {
 /** A value to copy: plain text (not an input look-alike) and a text button. */
 interface Device { id: string; name: string; kind: 'camera' | 'screen' | 'mic' }
 
-/** Subtitle a camera (or the screen) and a microphone on this computer directly: pick both, press start. */
-function DeviceCard({ t, onStart }: { t: (k: LiveKey) => string; onStart: (choice: { video?: string; audio: string; title: string }) => void }) {
+/** Cameras, screens and microphones on the computer Vidi runs on (null while loading). */
+function useDevices(enabled: boolean): Device[] | null {
   const [devices, setDevices] = useState<Device[] | null>(null)
-  const [video, setVideoRaw] = useState<string>(() => store.get('device.video', ''))
-  const [audio, setAudioRaw] = useState<string>(() => store.get('device.audio', ''))
-  const setVideo = (v: string) => { setVideoRaw(v); store.set('device.video', v) }
-  const setAudio = (v: string) => { setAudioRaw(v); store.set('device.audio', v) }
   useEffect(() => {
+    if (!enabled || devices) return
     fetch('/live/api/devices').then(r => r.json()).then((d: { devices?: Device[] }) => setDevices(d.devices ?? [])).catch(() => setDevices([]))
-  }, [])
-  if (!devices) return null
-  const cams = devices.filter(d => d.kind !== 'mic'), mics = devices.filter(d => d.kind === 'mic')
-  if (!mics.length) return null
-  // Remembered choices that are gone (unplugged) fall back to the first one.
-  const v = video === 'none' || cams.some(d => d.id === video) ? video : (cams.find(d => d.kind === 'camera')?.id ?? 'none')
-  const a = mics.some(d => d.id === audio) ? audio : mics[0]!.id
-  const videoOptions = [
-    ...cams.map(d => ({ value: d.id, label: d.kind === 'screen' ? d.name.replace(/^Screen (\d+)$/, (_, n) => t('dev.screen').replace('{n}', String(Number(n) + 1))) : d.name, group: t(d.kind === 'screen' ? 'dev.screens' : 'dev.cameras') })),
-    { value: 'none', label: t('dev.noVideo'), group: t('dev.other') },
-  ]
-  const title = v === 'none' ? (mics.find(d => d.id === a)?.name ?? '') : (videoOptions.find(o => o.value === v)?.label ?? '')
-  return (
-    <div className="dshl-pushinfo dshl-devices">
-      <div className="title"><Icon.camera /> {t('dev.title')} <span>{t('dev.hint')}</span></div>
-      <dl>
-        <dt>{t('dev.video')}</dt>
-        <dd><Pick value={v} options={videoOptions} onChange={setVideo} /></dd>
-        <dt>{t('dev.audio')}</dt>
-        <dd><Pick value={a} options={mics.map(d => ({ value: d.id, label: d.name }))} onChange={setAudio} /></dd>
-      </dl>
-      <button className="dshl-btn primary" onClick={() => onStart({ video: v === 'none' ? undefined : v, audio: a, title })}>{t('dev.start')}</button>
-    </div>
-  )
+  }, [enabled, devices])
+  return devices
 }
+
+/**
+ * Ask for the camera / microphone from the page first when the page runs on the same computer: the system
+ * then asks the user once for this app, and the capture that follows is allowed.
+ */
+async function askDeviceAccess(video: boolean): Promise<void> {
+  const local = location.protocol === 'dsh-app:' || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
+  if (!local || !navigator.mediaDevices?.getUserMedia) return
+  try { const s = await navigator.mediaDevices.getUserMedia({ audio: true, video }); s.getTracks().forEach(tr => tr.stop()) } catch {}
+}
+
+type SourceTab = 'link' | 'file' | 'camera' | 'push'
 
 /** The push stream key: copy it, or change it (typed, or a new random one). */
 function KeyRow({ value, t, onChanged }: { value: string; t: (k: LiveKey) => string; onChanged: () => void }) {
@@ -262,6 +249,14 @@ export function LiveView(props: LiveViewInjected) {
   const fileInput = useRef<HTMLInputElement>(null)
 
   const active = !!job && (job.status === 'resolving' || job.status === 'running' || job.status === 'stopping')
+  // One source at a time: a link, a file, a camera on this computer, or a stream pushed from OBS.
+  const [srcTab, setSrcTabRaw] = useState<SourceTab>(() => store.get('source', 'link'))
+  const setSrcTab = (v: SourceTab) => { setSrcTabRaw(v); store.set('source', v); setError('') }
+  const devices = useDevices(srcTab === 'camera')
+  const [camVideo, setCamVideoRaw] = useState<string>(() => store.get('device.video', ''))
+  const [camAudio, setCamAudioRaw] = useState<string>(() => store.get('device.audio', ''))
+  const setCamVideo = (v: string) => { setCamVideoRaw(v); store.set('device.video', v) }
+  const setCamAudio = (v: string) => { setCamAudioRaw(v); store.set('device.audio', v) }
   const ui: 'en' | 'zh' = t('view.live') === 'Video' ? 'en' : 'zh'
   const langOptions = useMemo(() => Object.entries(langs).filter(([k]) => k !== 'auto').map(([k, v]) => [k, langLabel(k, ui, v)] as [string, string]), [langs, ui])
   const langName = useCallback((k: string) => (k === 'src' ? t('sub.source') : langLabel(k, ui, langs[k])), [langs, t, ui])
@@ -616,14 +611,27 @@ export function LiveView(props: LiveViewInjected) {
   const needsModel = !hasTranslator && shownLines.some(l => l !== 'src')
 
   const hasMain = !!job && !(job.status === 'error' && !job.files.length)
+  // Camera: remembered choices that are gone (unplugged) fall back to the first one.
+  const cams = (devices ?? []).filter(d => d.kind !== 'mic'), mics = (devices ?? []).filter(d => d.kind === 'mic')
+  const camV = camVideo === 'none' || cams.some(d => d.id === camVideo) ? camVideo : (cams.find(d => d.kind === 'camera')?.id ?? 'none')
+  const camA = mics.some(d => d.id === camAudio) ? camAudio : (mics[0]?.id ?? '')
+  const videoOptions = [
+    ...cams.map(d => ({ value: d.id, label: d.kind === 'screen' ? t('dev.screen').replace('{n}', String(Number(/\d+/.exec(d.name)?.[0] ?? 0) + 1)) : d.name, group: t(d.kind === 'screen' ? 'dev.screens' : 'dev.cameras') })),
+    { value: 'none', label: t('dev.noVideo'), group: t('dev.other') },
+  ]
+  const startDevice = async () => {
+    if (!camA) return
+    const title = camV === 'none' ? (mics.find(d => d.id === camA)?.name ?? '') : (videoOptions.find(o => o.value === camV)?.label ?? '')
+    await askDeviceAccess(camV !== 'none' && cams.find(d => d.id === camV)?.kind === 'camera')
+    void start(JSON.stringify({ video: camV === 'none' ? undefined : camV, audio: camA, title }), 'device')
+  }
   const emptyBox = (
     <div className="dshl-drop">
-      <h2>{t('empty.title')}</h2>
-      <p>{t('empty.body')}</p>
-      <DeviceCard t={t} onStart={c => void start(JSON.stringify(c), 'device')} />
-      {armed?.rtmp && (
+      <h2>{t(srcTab === 'file' ? 'src.file.title' : srcTab === 'camera' ? 'src.cam.title' : srcTab === 'push' ? 'src.push.title' : 'empty.title')}</h2>
+      <p>{srcTab === 'camera' && devices && !mics.length ? t('src.cam.none') : t(srcTab === 'file' ? 'src.file.body' : srcTab === 'camera' ? 'src.cam.body' : srcTab === 'push' ? 'src.push.body' : 'empty.body')}</p>
+      {srcTab === 'file' && <button className="dshl-btn" onClick={() => fileInput.current?.click()}><Icon.folder /> {t('src.file.pick')}</button>}
+      {srcTab === 'push' && armed?.rtmp && (
         <div className="dshl-pushinfo">
-          <div className="title"><Icon.push /> {t('push.title')} <span>{t('push.hint')}</span></div>
           <dl>
             <CopyRow label={t('push.server')} value={armed.rtmp} copy={t('push.copy')} copied={t('push.copied')} />
             {armed.key && <KeyRow value={armed.key} t={t} onChanged={() => void post('arm', options()).then((a: Armed & { busy?: boolean }) => setArmed(a.busy ? null : a)).catch(() => {})} />}
@@ -747,17 +755,34 @@ export function LiveView(props: LiveViewInjected) {
       <header className="dshl-top">
         <div className="dshl-bar">
           {onClose && <button className="dshl-btn icon back" onClick={onClose} title={t('page.back')}><Icon.arrow /></button>}
-          <label className="dshl-field">
-            <Icon.link />
-            <input type="text" value={input} placeholder={t('in.placeholder')} onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') void start() }} />
-            <button className="ghost" title={t('in.file.tip')} onClick={() => fileInput.current?.click()}>
-              {uploading !== null ? <span className="pct">{t('in.uploading').replace('{p}', String(uploading))}</span> : <Icon.folder />}
-            </button>
-            <input ref={fileInput} type="file" accept="video/*,audio/*,.mkv,.ts,.flv" hidden
-              onChange={e => { const f = e.target.files?.[0]; if (f) void onFile(f); e.target.value = '' }} />
-          </label>
-          <button className="dshl-btn primary" onClick={() => start()} disabled={!classify(input)}>{t('in.open')}</button>
+          <Pick className="srcpick" value={srcTab} onChange={v => setSrcTab(v as SourceTab)} title={t('src.tip')}
+            options={(['link', 'file', 'camera', 'push'] as const).map(k => ({ value: k, label: t(`src.${k}` as LiveKey) }))} />
+          <input ref={fileInput} type="file" accept="video/*,audio/*,.mkv,.ts,.flv" hidden
+            onChange={e => { const f = e.target.files?.[0]; if (f) void onFile(f); e.target.value = '' }} />
+          {(srcTab === 'link' || srcTab === 'file') && <>
+            <label className="dshl-field">
+              <input type="text" value={input} placeholder={t(srcTab === 'file' ? 'src.file.placeholder' : 'in.placeholder')} onChange={e => setInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') void start() }} />
+              {srcTab === 'file' && <button className="ghost" title={t('in.file.tip')} onClick={() => fileInput.current?.click()}>
+                {uploading !== null ? <span className="pct">{t('in.uploading').replace('{p}', String(uploading))}</span> : <Icon.folder />}
+              </button>}
+            </label>
+            <button className="dshl-btn primary" onClick={() => start()} disabled={!classify(input)}>{t('in.open')}</button>
+          </>}
+          {srcTab === 'camera' && <>
+            <div className="dshl-devbar">
+              {devices === null ? <span className="dshl-muted">{t('src.cam.loading')}</span> : mics.length ? <>
+                <Pick value={camV} options={videoOptions} onChange={setCamVideo} title={t('dev.video')} />
+                <Pick value={camA} options={mics.map(d => ({ value: d.id, label: d.name }))} onChange={setCamAudio} title={t('dev.audio')} />
+              </> : <span className="dshl-muted">{t('src.cam.none')}</span>}
+            </div>
+            <button className="dshl-btn primary" onClick={() => void startDevice()} disabled={!camA}>{t('dev.start')}</button>
+          </>}
+          {srcTab === 'push' && (
+            <div className="dshl-field static" title={t('src.push.body')}>
+              <span>{t(armed?.rtmp ? 'src.push.bar' : active ? 'src.push.busy' : 'src.push.wait')}</span>
+            </div>
+          )}
           <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={changeMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
             login={login} onLogin={chooseLogin} browsers={browsers} providers={providers} shared={keysShared} name={engineName}
             onKey={(id, k) => { setProviders(ps => ps.map(p => p.id === id ? { ...p, key: k, ready: k.set } : p)); if (k.set) setError('') }}
@@ -769,7 +794,7 @@ export function LiveView(props: LiveViewInjected) {
       {missing.length > 0 && <div className="dshl-note warn">{t('note.install')} {missing.map(d => <code key={d.name}>{d.hint}</code>)}</div>}
       {needsModel && <div className="dshl-note">{t('note.noModel')}</div>}
       {(error || job?.status === 'error') && (
-        <div className="dshl-note warn"><span>{error || job?.message}</span>{job && !active && <button className="dshl-link" onClick={() => start(job.url, job.source)}>{t('st.retry')}</button>}</div>
+        <div className="dshl-note warn"><span>{error || (job?.message === 'device-blocked' ? t('dev.blocked') : job?.message)}</span>{job && !active && <button className="dshl-link" onClick={() => start(job.url, job.source)}>{t('st.retry')}</button>}</div>
       )}
 
       {!hasMain && !pageMode ? (

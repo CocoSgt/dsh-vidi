@@ -366,6 +366,16 @@ export class LiveJob extends EventEmitter {
     ]
     const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
     this.ffmpeg = ff
+    // A camera / microphone that sends nothing is almost always blocked by the system's privacy settings:
+    // say so after a while instead of loading forever.
+    if (this.opts.source === 'device') {
+      setTimeout(() => {
+        if (this.ffmpeg !== ff || this.segments().length) return
+        this.ffmpeg = undefined
+        ff.kill('SIGKILL')
+        this.setStatus('error', 'device-blocked')
+      }, 12_000)
+    }
     // A push source is "waiting" until its first segment lands (the status is set right after this call).
     if (this.opts.source === 'push') {
       const wait = setInterval(() => {

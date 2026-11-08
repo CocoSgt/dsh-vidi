@@ -165,10 +165,12 @@ const CSS = `
 .dshl-pushinfo dd .err { flex-basis: 100%; color: #d1434b; font-size: 12px; }
 .dshl-pushinfo .val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; user-select: all; }
 .dshl-pushinfo .dshl-link { flex: none; font-size: 12.5px; }
-.dshl-devices { display: grid; width: fit-content; max-width: 100%; margin: 32px auto 0; }
-.dshl-devices + .dshl-pushinfo { margin-top: 12px; }
-.dshl-devices dd .dshl-select { width: 240px; max-width: 100%; height: 30px; }
-.dshl-devices > .dshl-btn { justify-self: end; height: 32px; padding: 0 18px; border-radius: 8px; font-size: 13px; }
+.dshl-bar .dshl-select.srcpick { flex: none; width: auto; height: 40px; padding: 0 10px 0 14px; border-radius: 10px; font-weight: 550; }
+.dshl-devbar { display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 0; }
+.dshl-devbar .dshl-select { flex: 1 1 0; min-width: 0; height: 40px; border-radius: 10px; }
+.dshl-field.static { color: var(--muted); cursor: default; }
+.dshl-field.static .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
+.dshl-drop > .dshl-btn { margin-top: 20px; }
 
 /* ── Layout ── */
 .dshl-main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 28vw, 400px); align-items: start; gap: 18px; padding: 18px 20px 28px; }

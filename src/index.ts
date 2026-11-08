@@ -545,7 +545,9 @@ export function apply(ctx: Context, config: Config): void {
       }
       if (route === 'devices') {
         // Cameras, screens and microphones on this computer (for "use my camera").
-        return send(res, 200, { devices: await listDevices(), platform: process.platform })
+        const devices = await listDevices()
+        log(`devices: ${devices.filter(d => d.kind !== 'mic').length} picture, ${devices.filter(d => d.kind === 'mic').length} microphone`)
+        return send(res, 200, { devices, platform: process.platform })
       }
       if (route === 'pushkey' && req.method === 'POST') {
         // { key } sets it, { random: true } makes a new one; the waiting listener restarts with it.
