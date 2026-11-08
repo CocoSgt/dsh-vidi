@@ -100,6 +100,13 @@ function cutNear(cs: string[], ratio: number): number {
   return best > 0 ? best : Math.max(1, Math.min(n - 1, target))
 }
 
+/** When a video was first opened: its folder is named after that moment (UTC); older saves could carry a later time. */
+export function openedAt(id: string, saved?: unknown): number | undefined {
+  const named = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/.exec(id)
+  const fromName = named ? Date.parse(`${named[1]}T${named[2]}:${named[3]}:${named[4]}Z`) : NaN
+  return Number.isFinite(fromName) ? fromName : typeof saved === 'number' ? saved : undefined
+}
+
 export class LiveJob extends EventEmitter {
   /** Real-time picture (own sources): the newest JPEG frame, and whether frames are coming. */
   lastFrame?: Buffer
@@ -110,7 +117,8 @@ export class LiveJob extends EventEmitter {
   status: JobStatus = 'resolving'
   message?: string
   title?: string
-  readonly startedAt = Date.now()
+  /** When it was first opened (kept across restores, so the history keeps its place). */
+  startedAt = Date.now()
   readonly cues: Cue[] = []
   private ffmpeg?: ChildProcess
   private reader?: ChildProcess
@@ -216,6 +224,7 @@ export class LiveJob extends EventEmitter {
       const j = JSON.parse(readFileSync(join(dir, 'job.json'), 'utf8')) as { id: string; opts: JobOptions; title?: string; vod?: boolean; duration?: number; subs?: { state: SubsState; at: number }; status?: JobStatus }
       const job = new LiveJob(j.id, j.opts, deps)
       job.title = j.title
+      job.startedAt = openedAt(j.id, (j as { startedAt?: unknown }).startedAt) ?? job.startedAt
       job.vod = !!j.vod
       job.duration = j.duration
       job.captureDone = true

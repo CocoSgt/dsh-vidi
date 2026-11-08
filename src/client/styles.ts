@@ -422,6 +422,9 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-history .tx { display: grid; gap: 3px; min-width: 0; flex: 1; }
 .dshl-history .tt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 550; }
 .dshl-history .mm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
+.dshl-history .stop { flex: none; padding: 4px 6px; font-size: 12.5px; color: var(--faint); }
+.dshl-history .stop:hover { color: var(--live); }
+.dshl-history .stop:disabled { opacity: .5; }
 .dshl-history .chip { flex: none; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--live) 14%, transparent); color: var(--live); font-size: 11.5px; font-weight: 600; }
 .dshl-history .more { margin: 8px 0 0 6px; font-size: 12.5px; }
 .dshl-modemenu .mh { margin: 6px 4px 2px; color: rgba(255,255,255,.55); font-size: 11.5px; }
@@ -431,8 +434,11 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-line { position: relative; }
 .dshl-line .tools { position: absolute; top: 4px; right: 4px; display: none; gap: 2px; padding: 2px; border-radius: 7px; background: var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
 .dshl-line:hover .tools, .dshl-line:focus-within .tools { display: flex; }
-.dshl-line .tools .ghost { display: grid; place-items: center; width: 26px; height: 24px; border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; }
-.dshl-line .tools svg { width: 15px; height: 15px; }
+.dshl-line .tools .ghost { position: relative; display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px 0 5px; border: 0; border-radius: 5px; background: none; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.dshl-line .tools svg { width: 14px; height: 14px; flex: none; }
+/* Says what a button does the moment the pointer is on it (the system tooltip takes a second). */
+.dshl-history .stop { position: relative; }
+.dshl-history .stop[data-tip]:hover::after, .dshl-line .tools .ghost[data-tip]:hover::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; width: max-content; max-width: 220px; padding: 5px 8px; border-radius: 6px; background: var(--ink); color: var(--bg); font-size: 12px; line-height: 1.45; white-space: normal; text-align: left; pointer-events: none; }
 .dshl-line .tools .ghost:hover { background: var(--hover); color: var(--ink); }
 .dshl-line.splitting { cursor: default; background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .dshl-line .cutline .ch { cursor: col-resize; border-left: 1px solid transparent; }

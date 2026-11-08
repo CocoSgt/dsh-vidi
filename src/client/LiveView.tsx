@@ -119,7 +119,9 @@ function useDevices(enabled: boolean): Device[] | null {
 type SourceTab = 'link' | 'file' | 'camera' | 'push'
 type AccessKind = 'camera' | 'microphone' | 'screen'
 
-interface PastVideo { id: string; title: string; source: Source; url?: string; startedAt?: number; duration?: number; live?: boolean; running?: boolean; conversationId: string }
+/** What a past video is still doing (subs: percent done, -1 for a live stream). */
+interface Work { recording?: boolean; loading?: boolean; subs?: number; pushing?: boolean }
+interface PastVideo { work?: Work; id: string; title: string; source: Source; url?: string; startedAt?: number; duration?: number; live?: boolean; running?: boolean; conversationId: string }
 
 /** "3 分钟前", "5 小时前", "2 天前", then the date. */
 function ago(ts: number | undefined, ui: 'en' | 'zh'): string {
@@ -138,6 +140,26 @@ function History({ t, ui, onOpen }: { t: (k: LiveKey) => string; ui: 'en' | 'zh'
   const load = (offset: number, limit: number) => fetch(`/live/api/history?offset=${offset}&limit=${limit}`).then(r => r.json())
     .then((j: { items?: PastVideo[]; total?: number }) => { setItems(v => (offset ? [...v, ...(j.items ?? [])] : j.items ?? [])); setTotal(j.total ?? 0) }).catch(() => {})
   useEffect(() => { void load(0, 5) }, [])
+  // While something is still working, keep its progress fresh.
+  const busy = items.some(v => v.work)
+  const shown = useRef(5)
+  shown.current = Math.max(5, items.length)
+  useEffect(() => {
+    if (!busy) return
+    const timer = window.setInterval(() => void load(0, shown.current), 3000)
+    return () => window.clearInterval(timer)
+  }, [busy])
+  const [halting, setHalting] = useState<string | null>(null)
+  const halt = async (v: PastVideo) => {
+    setHalting(v.id)
+    await fetch('/live/api/halt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: v.id }) }).catch(() => {})
+    await load(0, shown.current)
+    setHalting(null)
+  }
+  const doing = (w: Work) => [
+    w.recording ? t('hist.recording') : '', w.loading ? t('hist.loading') : '',
+    w.subs !== undefined ? (w.subs >= 0 ? t('hist.subsPct').replace('{p}', String(w.subs)) : t('hist.subs')) : '', w.pushing ? t('hist.pushing') : '',
+  ].filter(Boolean)
   if (!items.length) return null
   const from = (v: PastVideo) => v.source === 'file' ? t('src.file') : v.source === 'device' ? t('src.camera') : v.source === 'push' ? t('src.push') : (siteName(v.url ?? '') || (() => { try { return new URL(v.url ?? '').hostname.replace(/^www\./, '') } catch { return t('src.link') } })())
   return (
@@ -155,8 +177,12 @@ function History({ t, ui, onOpen }: { t: (k: LiveKey) => string; ui: 'en' | 'zh'
               <span className="tt">{v.title || (v.source === 'push' ? from(v) : t('hist.untitled'))}</span>
               <span className="mm">{[v.title || v.source !== 'push' ? from(v) : '', v.live ? t('hist.live') : '', ago(v.startedAt, ui)].filter(Boolean).join(' · ')}</span>
             </span>
-            {v.running && <span className="chip">{t('hist.running')}</span>}
-            {v.live && v.source === 'url' && !v.running && <button className="dshl-link replay" onClick={e => { e.stopPropagation(); onOpen(v, true) }}>{t('hist.replay')}</button>}
+            {v.work ? <>
+              <span className="chip">{doing(v.work).join(' · ')}</span>
+              <button className="dshl-link stop" disabled={halting === v.id} data-tip={t('hist.stop.tip').replace('{w}', doing(v.work).join('、'))}
+                onClick={e => { e.stopPropagation(); void halt(v) }}>{t(halting === v.id ? 'hist.stopping' : 'hist.stop')}</button>
+            </> : v.running ? <span className="chip">{t('hist.running')}</span> : null}
+            {v.live && v.source === 'url' && !v.running && !v.work && <button className="dshl-link replay" onClick={e => { e.stopPropagation(); onOpen(v, true) }}>{t('hist.replay')}</button>}
           </div>
         ))}
       </div>
@@ -831,11 +857,11 @@ export function LiveView(props: LiveViewInjected) {
                   <span className="mark" aria-hidden="true">{c.polished && <Icon.check />}</span>
                   {c.final && (
                     <span className="tools" onClick={e => e.stopPropagation()}>
-                      {idx < shown.length - 1 && shown[idx + 1]?.final && <button className="ghost" title={t('lines.merge')} onClick={() => void mergeLine(c.id)}><Icon.merge /></button>}
+                      {idx < shown.length - 1 && shown[idx + 1]?.final && <button className="ghost" data-tip={t('lines.merge')} aria-label={t('lines.merge')} onClick={() => void mergeLine(c.id)}><Icon.merge /><span>{t('lines.mergeShort')}</span></button>}
                       {(() => {
                         // Cut in the first line shown with text (the original when no translation is there).
                         const k = shownLines.find(x => (lineText(c, x) ?? '').length > 1) ?? 'src'
-                        return Array.from(lineText(c, k) ?? c.src).length > 1 && <button className="ghost" title={t('lines.split')} onClick={() => setSplitting({ id: c.id, key: lineKey(k) })}><Icon.scissors /></button>
+                        return Array.from(lineText(c, k) ?? c.src).length > 1 && <button className="ghost" data-tip={t('lines.split')} aria-label={t('lines.split')} onClick={() => setSplitting({ id: c.id, key: lineKey(k) })}><Icon.scissors /><span>{t('lines.splitShort')}</span></button>
                       })()}
                     </span>
                   )}

@@ -13,7 +13,7 @@ import z from '@deepseek-ai/schemastery'
 import { checkDeps } from './deps.ts'
 import { exportCues, type ExportFormat } from './export.ts'
 import { Glossary } from './glossary.ts'
-import { LiveJob } from './job.ts'
+import { LiveJob, openedAt } from './job.ts'
 import { Downloads } from './downloads.ts'
 import { Targets } from './restream.ts'
 import { KeyStore, type Credentials, type DshProvider } from './keys.ts'
@@ -409,7 +409,7 @@ export function apply(ctx: Context, config: Config): void {
             // Live recordings saved before their length was known: add up the playlist.
             let duration = j.duration
             if (!duration) try { duration = [...readFileSync(join(dir, 'hls', 'index.m3u8'), 'utf8').matchAll(/#EXTINF:([\d.]+)/g)].reduce((n, m) => n + Number(m[1]), 0) || undefined } catch {}
-            item = { id: j.id, title: j.title || device || (j.opts.source === 'url' ? j.opts.url : ''), source: j.opts.source, url: j.opts.source === 'url' ? j.opts.url : undefined, startedAt: j.startedAt, duration, live: !j.vod, running: false, conversationId: j.opts.conversationId }
+            item = { id: j.id, title: j.title || device || (j.opts.source === 'url' ? j.opts.url : ''), source: j.opts.source, url: j.opts.source === 'url' ? j.opts.url : undefined, startedAt: openedAt(j.id, j.startedAt), duration, live: !j.vod, running: false, conversationId: j.opts.conversationId }
           }
         } catch {}
         hit = { mtime, item }
@@ -417,7 +417,30 @@ export function apply(ctx: Context, config: Config): void {
       }
       if (hit.item) out.push(hit.item)
     }
-    return out
+    // What each video loaded here is still doing, so the list can say so and offer to stop it.
+    for (const item of out) {
+      const j = jobs.get(String(item.id))
+      if (!j) continue
+      const w = workOf(j)
+      if (w) item.work = w
+    }
+    // Those still working first: that is where a stop button is looked for.
+    return [...out.filter(i => i.work), ...out.filter(i => !i.work)]
+  }
+
+  /** Still working: recording a live stream, loading a video, making subtitles, pushing out. */
+  function workOf(j: LiveJob): Record<string, unknown> | undefined {
+    const s = j.summary()
+    const ok = !s.message
+    const total = s.vod ? s.duration : s.status === 'running' ? undefined : (s.recorded || s.duration)
+    const w = {
+      recording: s.status === 'running' && !s.vod && ok,
+      loading: (s.status === 'running' || s.status === 'resolving') && !!s.vod && ok,
+      // Percent of the whole when its length is known (a video, or a live stream that has ended).
+      subs: s.subs?.state === 'running' ? (total ? Math.min(99, Math.round((s.subs.at / total) * 100)) : -1) : undefined,
+      pushing: !!s.restream?.running,
+    }
+    return w.recording || w.loading || w.subs !== undefined || w.pushing ? w : undefined
   }
 
   /** A small picture of a video for its history row (made once, kept in its folder). */
@@ -555,6 +578,17 @@ export function apply(ctx: Context, config: Config): void {
         const conv = job.summary().conversationId
         if (byConversation.get(conv) === job.id) byConversation.set(conv, '')
         try { writeFileSync(join(job.summary().dir, 'closed'), new Date().toISOString()) } catch {}
+        return send(res, 200, { ok: true })
+      }
+      if (route === 'halt' && req.method === 'POST') {
+        // Stop everything a video is still doing (from the start page): subtitles, pushing out, recording.
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        const s = job.summary()
+        if (s.subs?.state === 'running') await job.pauseSubs()
+        if (s.restream?.running) await job.stopRestream()
+        if ((s.status === 'running' || s.status === 'resolving') && !s.vod) await job.stop()
         return send(res, 200, { ok: true })
       }
       if (route === 'stop' && req.method === 'POST') {
