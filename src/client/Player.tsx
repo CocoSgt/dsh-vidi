@@ -378,8 +378,17 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
         </button>
       )}
       {openMenu && (() => {
+        // Phones get a sheet from the bottom; a small player in a wide window gets its menu floating
+        // above it at the normal size (not squeezed inside the picture, not across the whole window).
+        const phone = narrow && window.innerWidth < 700 && !full && !pageFull
+        const floating = narrow && !phone && !full && !pageFull
+        const r = floating ? stage.current?.getBoundingClientRect() : undefined
+        const place = r ? {
+          position: 'fixed' as const, right: Math.max(8, window.innerWidth - r.right + 8), bottom: Math.max(8, window.innerHeight - r.bottom + 56),
+          width: Math.min(360, window.innerWidth - 16), maxHeight: Math.max(240, r.bottom - 56 - 12),
+        } : undefined
         const panel = (
-          <div className={`dshl-menu ${narrow ? 'sheet' : ''}`} role="dialog" aria-label={openMenu.title}>
+          <div className={`dshl-menu ${phone ? 'sheet' : ''}`} role="dialog" aria-label={openMenu.title} style={place}>
             <div className="head">
               <span>{openMenu.title}</span>
               <span className="grow" />
@@ -392,9 +401,9 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
           </div>
         )
         // In full screen the sheet must stay inside the stage; otherwise it goes to the page so it can use the whole width.
-        return narrow && !full && !pageFull
+        return phone
           ? createPortal(<div className="dshl-sheetwrap" onMouseDown={e => { if (e.target === e.currentTarget) setMenu(null) }}>{panel}</div>, document.body)
-          : panel
+          : floating ? createPortal(panel, document.body) : panel
       })()}
       <div className="dshl-controls" onClick={e => e.stopPropagation()}>
         <div className="dshl-progress" style={{ ['--pos' as string]: pct(now), ['--done' as string]: vod ? pct(edge) : '100%', ['--subs' as string]: subsAt !== undefined ? pct(subsAt) : '0%' }}>

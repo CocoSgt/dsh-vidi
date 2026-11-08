@@ -49,11 +49,16 @@ export function startOverlay(port: number, current: () => LiveJob | undefined, o
       res.end(PAGE)
       return
     }
+    if (url.pathname === '/screen' || url.pathname === '/screen/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(SCREEN)
+      return
+    }
     res.writeHead(404); res.end()
   })
   server.on('error', err => log(`overlay: port ${port} unavailable (${(err as Error).message})`))
-  // Only this computer (OBS runs here); the LAN gets nothing.
-  server.listen(port, '127.0.0.1', () => log(`overlay: http://127.0.0.1:${port}/overlay`))
+  // Read-only subtitle pages: on the local network too, so a big screen or another computer can open /screen.
+  server.listen(port, () => log(`overlay: http://127.0.0.1:${port}/overlay, /screen`))
   return () => { offJob(); detach?.(); server.close() }
 }
 
@@ -94,6 +99,64 @@ function show(c) {
 function connect() {
   const es = new EventSource('/overlay/events')
   es.onmessage = e => { try { show(JSON.parse(e.data)) } catch {} }
+  es.onerror = () => { es.close(); setTimeout(connect, 2000) }
+}
+connect()
+</script></body></html>`
+
+/**
+ * Subtitles as the whole picture, for a big screen (a hall, a projector, a
+ * second monitor, or OBS as a source of its own): 16:9, the current line large
+ * with the original under it, the two before it smaller and dimmed above.
+ *   …/screen?lines=zh,src&theme=dark|light
+ */
+const SCREEN = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vidi · subtitles</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
+body.light{background:#f4f3ef}
+#stage{position:absolute;inset:0;margin:auto;width:min(100vw,177.78vh);height:min(56.25vw,100vh);display:flex;flex-direction:column;justify-content:flex-end;box-sizing:border-box;padding:4% 6% 7%;
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;color:#fff;container-type:inline-size}
+body.light #stage{color:#151513}
+.cue{text-align:center;text-wrap:balance;line-break:strict;transition:opacity .4s,font-size .3s}
+.cue+.cue{margin-top:3.2cqw}
+.cue .main{display:block;font-weight:600;line-height:1.35}
+.cue .sub{display:block;margin-top:.8cqw;opacity:.62;line-height:1.4}
+.cue.now .main{font-size:5.4cqw}.cue.now .sub{font-size:2.9cqw}
+.cue.old .main{font-size:3cqw}.cue.old .sub{font-size:1.9cqw}
+.cue.old{opacity:.38}.cue.old2{opacity:.2}
+.cue.draft .main{opacity:.75}
+</style></head><body><div id="stage"></div>
+<script>
+const q = new URLSearchParams(location.search)
+const lines = (q.get('lines') || 'zh,src').split(',')
+if (q.get('theme') === 'light') document.body.classList.add('light')
+const stage = document.getElementById('stage')
+let done = [], draft = null
+function texts(c) {
+  const seen = new Set()
+  return lines.map(k => (k === 'src' ? c.src : (c.tr || {})[k]) || '').map(s => s.trim()).filter(s => s && !seen.has(s) && seen.add(s))
+}
+function render() {
+  const list = [...done.slice(-3), ...(draft ? [draft] : [])].slice(-3)
+  stage.innerHTML = ''
+  list.forEach((c, i) => {
+    const t = texts(c); if (!t.length) return
+    const d = document.createElement('div')
+    const age = list.length - 1 - i
+    d.className = 'cue ' + (age === 0 ? 'now' : age === 1 ? 'old' : 'old old2') + (c.final ? '' : ' draft')
+    const m = document.createElement('span'); m.className = 'main'; m.textContent = t[0]; d.appendChild(m)
+    if (t[1]) { const s = document.createElement('span'); s.className = 'sub'; s.textContent = t[1]; d.appendChild(s) }
+    stage.appendChild(d)
+  })
+}
+function connect() {
+  const es = new EventSource('/overlay/events')
+  es.onmessage = e => {
+    let c; try { c = JSON.parse(e.data) } catch { return }
+    if (!c) return
+    if (c.final) { draft = null; if (!done.length || done.at(-1).src !== c.src) done.push(c); done = done.slice(-6) } else draft = c
+    render()
+  }
   es.onerror = () => { es.close(); setTimeout(connect, 2000) }
 }
 connect()

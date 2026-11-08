@@ -793,7 +793,7 @@ function SubsStarter(props: {
   const pop = useRef<HTMLDivElement>(null)
   const toggle = () => {
     // On a small player the chooser opens as a sheet from the bottom of the screen, like the player's menus.
-    setSheet((box.current?.closest('.dshl-stage')?.clientWidth ?? 999) < 560 && !document.fullscreenElement)
+    setSheet(window.innerWidth < 700 && !document.fullscreenElement)
     setOpen(v => !v)
   }
   useEffect(() => {

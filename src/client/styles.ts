@@ -453,8 +453,9 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-dl .dshl-chips .chip { background: transparent; }
 
 /* Menus as a bottom sheet on small players (phones) */
-.dshl-sheetwrap { position: fixed; inset: 0; z-index: 2147483002; display: flex; align-items: flex-end; background: rgba(0,0,0,.4); }
-.dshl-menu.sheet { position: relative; right: auto; bottom: auto; width: 100%; max-height: 78vh; padding-bottom: env(safe-area-inset-bottom); border: 0; border-radius: 16px 16px 0 0;
+.dshl-sheetwrap { position: fixed; inset: 0; z-index: 2147483002; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,.4); }
+body > .dshl-menu { z-index: 2147483002; }
+.dshl-menu.sheet { position: relative; right: auto; bottom: auto; width: 100%; max-width: 560px; max-height: 78vh; padding-bottom: env(safe-area-inset-bottom); border: 0; border-radius: 16px 16px 0 0;
   font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 15px; }
 .dshl-menu.sheet .head { padding: 14px 12px 8px 18px; font-size: 16px; }
 .dshl-menu.sheet .body { padding: 4px 14px 16px; }

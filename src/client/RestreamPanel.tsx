@@ -180,19 +180,26 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
   )
 }
 
-/** The subtitle page for OBS's Browser Source: lay the subtitles over your own picture without encoding anything. */
+/** Subtitle pages: the overlay for OBS's Browser Source, and the big screen of subtitles only. */
 function OverlayLink({ t }: { t: (k: LiveKey) => string }) {
-  const [url, setUrl] = useState('')
-  const [copied, setCopied] = useState(false)
-  useEffect(() => { fetch('/live/api/overlay').then(r => r.json()).then(j => setUrl(j.url ?? '')).catch(() => {}) }, [])
-  if (!url) return null
-  return (
+  const [urls, setUrls] = useState<{ url?: string; screen?: string; screenLan?: string }>({})
+  const [copied, setCopied] = useState('')
+  useEffect(() => { fetch('/live/api/overlay').then(r => r.json()).then(setUrls).catch(() => {}) }, [])
+  if (!urls.url) return null
+  const row = (label: string, url: string, note: string, open?: boolean) => (
     <div className="rs-overlay">
-      <span className="rs-sub">{t('rs.overlay')}</span>
+      <span className="rs-sub">{label}</span>
       <span className="rs-url"><code>{url}</code>
-        <button className="dshl-link" onClick={() => void navigator.clipboard.writeText(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })}>{copied ? t('tr.copied') : t('rs.copy')}</button>
+        <button className="dshl-link" onClick={() => void navigator.clipboard.writeText(url).then(() => { setCopied(url); setTimeout(() => setCopied(''), 1500) })}>{copied === url ? t('tr.copied') : t('rs.copy')}</button>
+        {open && <a className="dshl-link" href={url} target="_blank" rel="noreferrer">{t('rs.openPage')}</a>}
       </span>
-      <p className="rs-hint">{t('rs.overlay.d')}</p>
+      <p className="rs-hint">{note}</p>
     </div>
+  )
+  return (
+    <>
+      {row(t('rs.overlay'), urls.url, t('rs.overlay.d'))}
+      {urls.screen && row(t('rs.screen'), urls.screenLan ?? urls.screen, t('rs.screen.d').replace('{local}', urls.screen), true)}
+    </>
   )
 }

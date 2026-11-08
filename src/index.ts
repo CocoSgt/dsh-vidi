@@ -401,7 +401,7 @@ export function apply(ctx: Context, config: Config): void {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const route = url.pathname.replace(/^\/live\/api\/?/, '')
     try {
-      if (route === 'overlay') return send(res, 200, { url: `http://127.0.0.1:${config.overlayPort}/overlay` })
+      if (route === 'overlay') return send(res, 200, { url: `http://127.0.0.1:${config.overlayPort}/overlay`, screen: `http://127.0.0.1:${config.overlayPort}/screen`, screenLan: `http://${lanAddress()}:${config.overlayPort}/screen` })
       if (route === 'deps') {
         const [deps] = await Promise.all([checkDeps(config.whisperModel), keys.refresh()])
         localReady = deps.filter(d => ['ffmpeg', 'whisper-server', 'whisper model'].includes(d.name)).every(d => d.ok)
