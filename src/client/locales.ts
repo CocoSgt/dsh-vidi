@@ -170,6 +170,13 @@ export const en = {
 
   // Push card
   'push.title': 'Stream here from OBS',
+  'upd.version': 'Vidi {v}',
+  'upd.check': 'Check for updates',
+  'upd.checking': 'Checking…',
+  'upd.latest': 'Up to date',
+  'upd.available': 'Version {v} is out',
+  'upd.how': 'Update it from DSH’s Plugins page, then restart the app.',
+  'upd.failed': 'Could not reach npm just now; it checks again tomorrow.',
   'src.tip': 'Where the video comes from',
   'src.link': 'Link',
   'src.file': 'Local file',
@@ -605,6 +612,13 @@ export const zh: Record<keyof typeof en, string> = {
   'note.install': '需要先安装：',
 
   'push.title': '用 OBS 推流到这里',
+  'upd.version': 'Vidi {v}',
+  'upd.check': '检查更新',
+  'upd.checking': '正在检查…',
+  'upd.latest': '已是最新',
+  'upd.available': '有新版本 {v}',
+  'upd.how': '到 DSH 的「插件」页面更新，再重启 app。',
+  'upd.failed': '这会儿连不上 npm，明天会再查一次。',
   'src.tip': '视频从哪里来',
   'src.link': '链接',
   'src.file': '本地文件',

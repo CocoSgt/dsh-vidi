@@ -129,6 +129,8 @@ const CSS = `
   background: var(--l1); color: var(--muted); font-size: 13px; cursor: pointer; }
 .dshl-ctl.icon { width: 40px; padding: 0; }
 .dshl-ctl.icon svg { width: 18px; height: 18px; }
+.dshl-ctl.icon.dot { position: relative; }
+.dshl-ctl.icon.dot::after { content: ''; position: absolute; top: 8px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; box-shadow: 0 0 0 2px var(--bg); }
 .dshl-ctl:hover, .dshl-ctl.on { background: var(--hover); color: var(--ink); }
 
 .dshl-note { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 20px 0; padding: 9px 14px; border: 1px solid var(--line); border-radius: 10px;
@@ -607,6 +609,8 @@ body > .dshl-menu { z-index: 2147483002; }
 .dshl .srow .duo { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 8px; }
 .dshl .srow .duo > .dshl-select { width: 100%; }
 .dshl-pop.settings .srow + .srow { border-top: 1px solid var(--line-soft); }
+.dshl-pop.settings .srow.version .vline { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; color: var(--faint); font-size: 12.5px; }
+.dshl-pop.settings .srow.version .new { color: #e5484d; font-weight: 550; }
 .dshl-pop.settings .srow > .dshl-select, .dshl-pop.settings .srow > .dshl-seg { width: 168px; }
 .dshl-pop.settings .srow > .dshl-seg button { flex: 1; padding: 0 6px; }
 .dshl .srow.col { display: grid; justify-content: stretch; gap: 8px; padding: 10px 0; }

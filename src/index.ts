@@ -28,6 +28,7 @@ import type { JobDeps } from './job.ts'
 import { registerTools } from './tools.ts'
 import { metered, UsageMeter } from './usage.ts'
 import { listDevices } from './devices.ts'
+import { updateChecker } from './updates.ts'
 import { EventEmitter } from 'node:events'
 import { WhisperServer } from './whisper.ts'
 
@@ -543,6 +544,10 @@ export function apply(ctx: Context, config: Config): void {
         }
         return send(res, 200, job.summary())
       }
+      if (route === 'version') {
+        // Newer Vidi on npm? GET answers from the last check (re-checking once a day); POST checks now.
+        return send(res, 200, req.method === 'POST' ? await updates.check() : updates.state())
+      }
       if (route === 'devices') {
         // Cameras, screens and microphones on this computer (for "use my camera").
         const devices = await listDevices()
@@ -837,6 +842,9 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/api', handler: api }), 'dsh-vidi: api route')
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/media', handler: media }), 'dsh-vidi: media route')
+  // Checked at start and once a day.
+  let updates!: ReturnType<typeof updateChecker>
+  ctx.effect(() => { updates = updateChecker(log); return () => updates.stop() }, 'dsh-vidi: update check')
   // Subtitles as a page for OBS's Browser Source: the newest running video's lines.
   ctx.effect(() => startOverlay(config.overlayPort, () => [...jobs.values()].filter(j => j.summary().status === 'running').at(-1) ?? [...jobs.values()].at(-1), fn => { bus.on('job', fn); return () => { bus.off('job', fn) } }, log), 'dsh-vidi: subtitle overlay')
   ctx.effect(() => () => {

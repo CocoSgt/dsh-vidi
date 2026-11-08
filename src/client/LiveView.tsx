@@ -13,7 +13,7 @@ import { LoginDialog } from './LoginDialog.tsx'
 import { Player, type CueLike, type PlayerHandle, type PlayerMenu } from './Player.tsx'
 import { vidiUi, type VidiView } from './extensions.ts'
 import { RestreamPanel, type RestreamStatus } from './RestreamPanel.tsx'
-import { engineLabel, Settings, type Browser, type Provider } from './Settings.tsx'
+import { engineLabel, Settings, type Browser, type Provider, type UpdateInfo } from './Settings.tsx'
 import { loadStyle, reconcile, saveStyle, type SubStyle } from './subStyle.tsx'
 
 type Source = 'url' | 'push' | 'file' | 'device'
@@ -249,6 +249,10 @@ export function LiveView(props: LiveViewInjected) {
   const fileInput = useRef<HTMLInputElement>(null)
 
   const active = !!job && (job.status === 'resolving' || job.status === 'running' || job.status === 'stopping')
+  // Newer Vidi? The host checks at start and once a day; the settings can ask again.
+  const [update, setUpdate] = useState<UpdateInfo | undefined>()
+  useEffect(() => { fetch('/live/api/version').then(r => (r.ok ? r.json() : undefined)).then(setUpdate).catch(() => {}) }, [])
+  const checkUpdate = async () => { try { setUpdate(await post('version', {})) } catch {} }
   // One source at a time: a link, a file, a camera on this computer, or a stream pushed from OBS.
   // Always a link to begin with (the usual case); the switch is right next to it.
   const [srcTab, setSrcTabRaw] = useState<SourceTab>('link')
@@ -778,7 +782,7 @@ export function LiveView(props: LiveViewInjected) {
       <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={changeMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
         login={login} onLogin={chooseLogin} browsers={browsers} providers={providers} shared={keysShared} name={engineName}
         onKey={(id, k) => { setProviders(ps => ps.map(p => p.id === id ? { ...p, key: k, ready: k.set } : p)); if (k.set) setError('') }}
-        open={settingsOpen} onOpen={setSettingsOpen} t={t} />
+        open={settingsOpen} onOpen={setSettingsOpen} update={update} onCheckUpdate={checkUpdate} t={t} />
     </>
   )
 

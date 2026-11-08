@@ -59,6 +59,9 @@ async function post(path: string, body: unknown): Promise<any> {
 }
 
 /** Everything most people never touch, behind one gear: recognition and its key, mode, spoken language, site login. */
+/** This Vidi and the newest release on npm (checked by the host at start and daily). */
+export interface UpdateInfo { current: string; latest?: string; newer: boolean; checkedAt?: number; error?: string }
+
 export function Settings(props: {
   engine: string
   onEngine: (e: string) => void
@@ -78,9 +81,14 @@ export function Settings(props: {
   disabled?: boolean
   open: boolean
   onOpen: (v: boolean) => void
+  /** This Vidi and the newest on npm. */
+  update?: UpdateInfo
+  onCheckUpdate?: () => Promise<void>
   t: (k: LiveKey) => string
 }) {
-  const { engine, onEngine, mode, onMode, spoken, onSpoken, langOptions, login, onLogin, browsers, providers, shared, name, onKey, disabled, open, onOpen, t } = props
+  const { engine, onEngine, mode, onMode, spoken, onSpoken, langOptions, login, onLogin, browsers, providers, shared, name, onKey, disabled, open, onOpen, update, onCheckUpdate, t } = props
+  const [checking, setChecking] = useState(false)
+  const [checked, setChecked] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -157,7 +165,7 @@ export function Settings(props: {
 
   return (
     <div className="dshl-pick" ref={box}>
-      <button className={`dshl-ctl icon ${open ? 'on' : ''}`} onClick={() => onOpen(!open)} title={t('in.settings')} aria-expanded={open}><Icon.gear /></button>
+      <button className={`dshl-ctl icon ${open ? 'on' : ''} ${update?.newer ? 'dot' : ''}`} onClick={() => onOpen(!open)} title={update?.newer ? t('upd.available').replace('{v}', update.latest ?? '') : t('in.settings')} aria-expanded={open}><Icon.gear /></button>
       {open && (
         <div className="dshl-pop settings right">
           <div className="srow col">
@@ -237,6 +245,20 @@ export function Settings(props: {
             <span>{t('set.login')}</span>
             <Pick value={login} onChange={onLogin} options={[{ value: 'auto', label: t('set.auto') }, ...browsers.map(b => ({ value: b.id, label: b.label })), { value: 'none', label: t('set.login.none') }]} />
           </div>
+          {update && (
+            <div className="srow col version">
+              <span className="vline">
+                <span>{t('upd.version').replace('{v}', update.current)}</span>
+                {update.newer
+                  ? <span className="new">{t('upd.available').replace('{v}', update.latest ?? '')}</span>
+                  : <button className="dshl-link" disabled={checking} onClick={() => { setChecking(true); void onCheckUpdate?.().finally(() => { setChecking(false); setChecked(true) }) }}>
+                      {checking ? t('upd.checking') : checked && !update.error ? t('upd.latest') : t('upd.check')}
+                    </button>}
+              </span>
+              {update.newer && <span className="hint">{t('upd.how')}</span>}
+              {checked && update.error && <span className="hint">{t('upd.failed')}</span>}
+            </div>
+          )}
         </div>
       )}
     </div>
