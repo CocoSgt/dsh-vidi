@@ -29,6 +29,8 @@ interface Props {
   subsAt?: number
   waitingText: string
   cues: CueLike[]
+  /** Live, picture first: keep showing the newest line that came in late. */
+  trail?: boolean
   /** Language spoken in the video: a line in that language shows the original. */
   spoken?: string
   /** The site's own subtitle tracks that are switched on (key 'site:<lang>'). */
@@ -73,7 +75,7 @@ const fmt = (s: number) => {
  * stage, so subtitles (sized in container units) and menus come along.
  */
 export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref) {
-  const { src, live, vod, duration, subsAt, waitingText, cues, siteCues, spoken, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], onSnapshot, onClip, onThumb, quality, t } = props
+  const { trail, src, live, vod, duration, subsAt, waitingText, cues, siteCues, spoken, style, delay, onDelay, showDelay, theater, onTheater, onTime, action, menus = [], onSnapshot, onClip, onThumb, quality, t } = props
   const stage = useRef<HTMLDivElement>(null)
   const video = useRef<HTMLVideoElement>(null)
   const hls = useRef<Hls | null>(null)
@@ -280,7 +282,9 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   const total = vod ? Math.max(duration ?? 0, edge) : edge
   const behind = Math.max(0, edge - now)
   const atLive = behind < delay + 10
+  // Picture first (live): subtitles arrive after their moment, so the newest line stays up until the next one.
   const current = cues.filter(c => c.start - 0.2 <= now && now <= c.end + 1.2).at(-1)
+    ?? (trail ? cues.filter(c => c.start <= now && c.end > now - 8).at(-1) : undefined)
   // What each line shows now; a translation identical to the original is not repeated.
   const texts: LineTexts = {}
   if (ccOn) {

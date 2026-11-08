@@ -16,15 +16,15 @@ import { engineLabel, Settings, type Browser, type Provider } from './Settings.t
 import { loadStyle, reconcile, saveStyle, type SubStyle } from './subStyle.tsx'
 
 type Source = 'url' | 'push' | 'file'
-/** Live subtitles: the site's own (no delay), real-time (a few seconds behind) or polished (a minute or two behind). */
-type LiveMode = 'site' | 'realtime' | 'polished'
+/** Live streams: picture first (subtitles follow), in sync (picture a few seconds behind), or polished (a minute or two behind). */
+type LiveMode = 'live' | 'realtime' | 'polished'
 interface NeedsLogin { site: string; browser?: string; detail: string }
 interface Summary {
   id: string; status: 'resolving' | 'running' | 'stopping' | 'stopped' | 'error'; message?: string; title?: string
   source: Source; url: string; mode: string; srcLang: string; tgtLangs: string[]; provider: string; files: string[]
   startedAt: number; ingest?: { rtmp?: string; srt?: string; key?: string }
   vod?: boolean; duration?: number; loginBrowser?: string; needsLogin?: NeedsLogin
-  subs?: { state: 'off' | 'running' | 'paused' | 'done'; at: number }
+  subs?: { state: 'off' | 'running' | 'paused' | 'done'; at: number; ready?: number; latency?: number }
   usage?: Usage
   restream?: RestreamStatus
   site?: { key: string; lang: string; name?: string; auto: boolean }[]
@@ -136,7 +136,8 @@ export function LiveView(props: LiveViewInjected) {
   const [lines, setLinesRaw] = useState<string[]>(() => store.get('lines', [browserLang(), 'src']))
   const setLines = (l: string[]) => { setLinesRaw(l); store.set('lines', l) }
   // Live subtitles: the site's own (no delay), real-time (seconds behind) or polished (a minute or two behind, the default).
-  const [mode, setModeRaw] = useState<LiveMode>(() => store.get('mode', 'polished'))
+  // ('site' was the old name of 'live'.)
+  const [mode, setModeRaw] = useState<LiveMode>(() => { const m = store.get('mode', 'polished') as string; return m === 'site' ? 'live' : (m as LiveMode) })
   const setMode = (m: LiveMode) => { setModeRaw(m); store.set('mode', m) }
   const [engine, setEngineRaw] = useState<string>(() => store.get('engine', ''))
   const setEngine = (e: string) => { setEngineRaw(e); store.set('engine', e) }
@@ -190,7 +191,7 @@ export function LiveView(props: LiveViewInjected) {
     const base = (l: string) => l.replace(/-orig$/, '').split('-')[0]
     return (list.find(x => !x.auto && base(x.lang) === ui) ?? list.find(x => !x.auto) ?? list.find(x => base(x.lang) === ui) ?? list[0])?.key
   }, [job?.site, ui])
-  const siteOnly = mode === 'site' && !!job
+  const siteOnly = false
   // Only the picture changes: the subtitle list keeps the lines made here. (A video without subtitles of its own keeps them on screen too.)
   const screenLines = siteOnly && siteBest ? (lines.some(l => l.startsWith('site:')) ? lines.filter(l => l.startsWith('site:')) : [siteBest]) : lines
   const shownLines = lines
@@ -320,13 +321,17 @@ export function LiveView(props: LiveViewInjected) {
   useEffect(() => {
     const p = player.current
     if (!p) return
-    const waiting = !!job && job.status === 'running' && !job.vod && mode !== 'site' && subs.state === 'running' && !noWait
-    const ready = mode === 'polished' ? Math.max(lastPolished, subs.at - 150) : subs.at
-    if (waiting && now > ready + 0.5) p.hold(t(mode === 'polished' ? 'hold.polished' : 'hold.realtime'), () => setNoWait(true))
+    const waiting = !!job && job.status === 'running' && !job.vod && mode !== 'live' && subs.state === 'running' && !noWait
+    // Real-time: where the lines are finished (recognition and translation included), not just where audio was read.
+    const firstPass = subs.ready ?? subs.at
+    const ready = mode === 'polished' ? Math.max(lastPolished, firstPass - 150) : firstPass
+    const behind = Math.max(0, subs.at - firstPass)
+    const text = t(mode === 'polished' ? 'hold.polished' : 'hold.realtime') + (mode !== 'polished' && behind >= 1 ? ` ${t('hold.behind').replace('{s}', behind.toFixed(1))}` : '')
+    if (waiting && now > ready + 0.5) p.hold(text, () => setNoWait(true))
     // Go on once there is some room ahead, so playback does not stop and start every few seconds.
     else if (!waiting || ready > now + (mode === 'polished' ? 20 : 4)) p.hold(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [now, subs.at, subs.state, lastPolished, mode, noWait, job?.status])
+  }, [now, subs.at, subs.ready, subs.state, lastPolished, mode, noWait, job?.status])
   // Name the conversation after its video once the title is known (once per video).
   useEffect(() => {
     if (!job?.title || !props.onTitle) return
@@ -362,7 +367,6 @@ export function LiveView(props: LiveViewInjected) {
     if (m === mode) return
     setMode(m)
     if (!job || job.status === 'error') return
-    if (m === 'site') { if (subs.state === 'running') void pauseSubs(); return }
     void startSubs(subs.state === 'off' ? now : undefined, m)
   }
   // New subtitle languages: from now on, and filled in for lines already there (no pause needed).
@@ -638,7 +642,7 @@ export function LiveView(props: LiveViewInjected) {
 
   // Live notes under the player: no site subtitles in no-delay mode; subtitles behind the picture; transcription slower than the stream.
   const live = !!job && job.status === 'running' && !job.vod
-  const slow = live && mode !== 'site' && rate !== null && rate < 0.95
+  const slow = live && rate !== null && rate < 0.95
   const engineNow = providers.find(x => x.id === usableEngine())
   const liveNote = siteOnly && job && job.status !== 'resolving' && !(job.site?.length) ? (
     <div className="dshl-lag"><span>{t('site.none')}</span><button className="dshl-link" onClick={() => changeMode('polished')}>{t('site.switch')}</button></div>
@@ -693,7 +697,7 @@ export function LiveView(props: LiveViewInjected) {
               quality={job.source === 'url' && job.heights?.length ? { heights: job.heights.filter(h => h <= 2160), current: job.height ?? 720, onChange: h => void post('quality', { jobId: job.id, height: h }).then(setJob).catch(() => {}) } : undefined}
               live={job.status === 'running'} vod={job.vod} duration={job.duration} subsAt={subs.state === 'off' ? undefined : subs.at}
               waitingText={job.status === 'resolving' ? statusText : t('player.waiting')}
-              cues={cues} siteCues={shownSite} spoken={spokenBase} style={subStyle} delay={job.vod ? delay : mode === 'polished' ? Math.max(delay, 75) : mode === 'site' ? 3 : delay} onDelay={setDelay} showDelay={job.status === 'running' && !job.vod}
+              cues={cues} trail={mode === 'live' && !job.vod} siteCues={shownSite} spoken={spokenBase} style={subStyle} delay={job.vod ? delay : mode === 'polished' ? Math.max(delay, 75) : mode === 'live' ? 3 : delay} onDelay={setDelay} showDelay={job.status === 'running' && !job.vod}
               onSnapshot={saveSnapshot} onClip={makeClip} onThumb={rememberFrame}
               theater={theater} onTheater={() => setTheater(v => !v)} onTime={setNow} t={t}
               action={subs.state === 'off'

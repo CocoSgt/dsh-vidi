@@ -10,16 +10,26 @@ import { wrapBalanced } from './wrap.ts'
 export const PLATFORMS = ['bilibili', 'douyin', 'kuaishou', 'wechat', 'douyu', 'huya', 'yy', 'cc', 'youtube', 'twitch', 'custom'] as const
 export type Platform = typeof PLATFORMS[number]
 
+/**
+ * What a destination receives: the picture with subtitles drawn in, the
+ * picture alone, or the subtitles alone on a green screen (to key over a
+ * camera in OBS or a broadcast console).
+ */
+export type Content = 'burn' | 'clean' | 'subs'
+export const CONTENTS: readonly Content[] = ['burn', 'clean', 'subs']
+
 export interface Target {
   id: string
   platform: Platform
+  /** What it receives (default: the picture with subtitles). */
+  content?: Content
   /** Server address, e.g. rtmp://live-push.bilivideo.com/live-bvc/ */
   server: string
   /** Stream key (secret). */
   key: string
 }
 
-export interface TargetView { id: string; platform: Platform; server: string; key: string }
+export interface TargetView { id: string; platform: Platform; server: string; key: string; content: Content }
 
 const mask = (k: string) => (!k ? '' : k.length > 10 ? `${k.slice(0, 3)}…${k.slice(-4)}` : '••••')
 
@@ -40,18 +50,19 @@ export class Targets {
   }
 
   view(): TargetView[] {
-    return this.list().map(t => ({ id: t.id, platform: t.platform, server: t.server, key: mask(t.key) }))
+    return this.list().map(t => ({ id: t.id, platform: t.platform, server: t.server, key: mask(t.key), content: t.content ?? 'burn' }))
   }
 
   /** Add or change one (an empty key keeps the saved one); returns the saved list. */
-  save(input: { id?: string; platform?: string; server?: string; key?: string }): TargetView[] {
+  save(input: { id?: string; platform?: string; server?: string; key?: string; content?: string }): TargetView[] {
     const all = this.list()
     const platform = (PLATFORMS as readonly string[]).includes(String(input.platform)) ? input.platform as Platform : 'custom'
     const server = String(input.server ?? '').trim()
     if (!/^(rtmps?|srt):\/\//i.test(server)) throw new Error('the server address should start with rtmp://, rtmps:// or srt://')
     const old = input.id ? all.find(t => t.id === input.id) : undefined
     const key = String(input.key ?? '').trim() || old?.key || ''
-    const next: Target = { id: old?.id ?? Math.random().toString(36).slice(2, 10), platform, server, key }
+    const content = (CONTENTS as readonly string[]).includes(String(input.content)) ? input.content as Content : old?.content ?? 'burn'
+    const next: Target = { id: old?.id ?? Math.random().toString(36).slice(2, 10), platform, server, key, content }
     this.write(old ? all.map(t => (t.id === old.id ? next : t)) : [...all, next])
     return this.view()
   }
@@ -145,7 +156,7 @@ function roundRect(g: any, x: number, y: number, w: number, h: number, r: number
 
 export type PushState = 'connecting' | 'live' | 'retrying' | 'error' | 'stopped'
 
-export interface PushStatus { id: string; platform: Platform; server: string; state: PushState; message?: string; since: number }
+export interface PushStatus { id: string; platform: Platform; server: string; content: Content; state: PushState; message?: string; since: number }
 
 export interface RestreamStatus {
   running: boolean
@@ -191,12 +202,17 @@ export class Restream extends EventEmitter {
   private watchdog?: ReturnType<typeof setInterval>
   private lastOut = 0
   private stuckSince = Date.now()
+  /** The encoder's outputs, in order (first on stdout, the next on pipes 4 and 5). */
+  private outs: Content[] = []
 
   constructor(private readonly source: RestreamSource, private readonly opts: { from: number; burn: boolean; style: BurnStyle; height: 720 | 1080; bitrateK: number }, targets: Target[], private readonly log: (m: string) => void) {
     super()
     this.status = { running: true, at: opts.from, startedAt: Date.now(), burn: opts.burn, height: opts.height, targets: [] }
-    for (const t of targets) this.pushes.set(t.id, { target: t, tries: 0, status: { id: t.id, platform: t.platform, server: t.server, state: 'connecting', since: Date.now() } })
+    for (const t of targets) this.pushes.set(t.id, { target: t, tries: 0, status: { id: t.id, platform: t.platform, server: t.server, content: this.contentOf(t), state: 'connecting', since: Date.now() } })
+    this.outs = CONTENTS.filter(c => targets.some(t => this.contentOf(t) === c))
   }
+
+  private contentOf(t: Target): Content { return t.content ?? (this.opts.burn ? 'burn' : 'clean') }
 
   get summary(): RestreamStatus {
     return { ...this.status, targets: [...this.pushes.values()].map(p => ({ ...p.status })) }
@@ -209,25 +225,39 @@ export class Restream extends EventEmitter {
     const { args: input, at } = this.source.input(this.opts.from)
     this.startAt = at
     this.status.at = at
-    const burn = this.opts.burn && !!(await loadCanvas())
-    if (this.opts.burn && !burn) this.status.message = 'no-burn'
-    this.status.burn = burn
-    if (burn) this.blank = await drawSubtitles([], this.opts.style, w, h)
-    const video = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25,setpts=PTS-STARTPTS`
-    const filter = burn
-      ? `${video}[v];[1:v]format=rgba,setpts=PTS-STARTPTS[s];[v][s]overlay=0:0:eof_action=repeat:shortest=1,format=yuv420p[o]`
-      : `${video},format=yuv420p[o]`
+    // Subtitle pictures are needed for drawn-in and subtitle-only outputs; without the canvas library
+    // the picture still goes out, the subtitle-only one cannot.
+    const canDraw = !!(await loadCanvas())
+    if (!canDraw && this.outs.some(o => o !== 'clean')) {
+      this.status.message = 'no-burn'
+      this.outs = [...new Set(this.outs.map(o => (o === 'burn' ? 'clean' : o)).filter(o => o !== 'subs'))] as Content[]
+      for (const p of this.pushes.values()) if (this.contentOf(p.target) === 'burn') p.target = { ...p.target, content: 'clean' }
+    }
+    const subs = this.outs.some(o => o !== 'clean')
+    this.status.burn = this.outs.includes('burn')
+    if (subs) this.blank = await drawSubtitles([], this.opts.style, w, h)
+    // One decode, split into the outputs asked for.
+    const vids = this.outs.filter(o => o !== 'subs'), subUses = this.outs.filter(o => o !== 'clean')
+    const parts = [`[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=25,setpts=PTS-STARTPTS${vids.length > 1 ? `,split=${vids.length}${vids.map(o => `[v_${o}]`).join('')}` : vids.length ? `[v_${vids[0]}]` : ''}`]
+    if (!vids.length) parts[0] = `[0:v]nullsink`
+    if (subUses.length) parts.push(`[1:v]format=rgba,setpts=PTS-STARTPTS${subUses.length > 1 ? `,split=${subUses.length}${subUses.map(o => `[s_${o}]`).join('')}` : `[s_${subUses[0]}]`}`)
+    if (this.outs.includes('burn')) parts.push(`[v_burn][s_burn]overlay=0:0:eof_action=repeat:shortest=1,format=yuv420p[o_burn]`)
+    if (this.outs.includes('clean')) parts.push(`[v_clean]format=yuv420p[o_clean]`)
+    // Green screen (#00FF00): key it out over a camera.
+    if (this.outs.includes('subs')) parts.push(`color=c=0x00FF00:s=${w}x${h}:r=25[g];[g][s_subs]overlay=0:0:eof_action=repeat:shortest=1,format=yuv420p[o_subs]`)
     const b = this.opts.bitrateK
+    const video = ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-profile:v', 'high',
+      '-b:v', `${b}k`, '-maxrate', `${b}k`, '-bufsize', `${b * 2}k`, '-g', '50', '-keyint_min', '50', '-sc_threshold', '0']
+    const audio = ['-map', '0:a:0?', '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2']
+    const fd = (i: number) => (i === 0 ? 1 : i + 3)
     const args = [
       '-hide_banner', '-loglevel', 'error', '-re', ...input,
-      ...(burn ? ['-probesize', '65536', '-analyzeduration', '0', '-f', 'image2pipe', '-framerate', String(FPS_SUBS), '-c:v', 'png', '-i', 'pipe:0'] : []),
-      '-filter_complex', filter, '-map', '[o]', '-map', '0:a:0?',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-profile:v', 'high',
-      '-b:v', `${b}k`, '-maxrate', `${b}k`, '-bufsize', `${b * 2}k`, '-g', '50', '-keyint_min', '50', '-sc_threshold', '0',
-      '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
-      '-progress', 'pipe:3', '-f', 'mpegts', 'pipe:1',
+      ...(subs ? ['-probesize', '65536', '-analyzeduration', '0', '-f', 'image2pipe', '-framerate', String(FPS_SUBS), '-c:v', 'png', '-i', 'pipe:0'] : []),
+      '-filter_complex', parts.join(';'), '-progress', 'pipe:3',
+      // The subtitle-only picture carries no sound (the camera's own goes with it in OBS).
+      ...this.outs.flatMap((o, i) => ['-map', `[o_${o}]`, ...video, ...(o === 'subs' ? ['-an'] : audio), '-f', 'mpegts', `pipe:${fd(i)}`]),
     ]
-    const enc = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] })
+    const enc = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'] })
     this.encoder = enc
     this.spawnedAt = Date.now()
     // If DSH itself goes away, take the ffmpeg processes with it (they would keep pushing on their own).
@@ -241,12 +271,16 @@ export class Restream extends EventEmitter {
       if (hit) { this.outTime = Number(hit[1]) / 1e6; this.status.at = this.startAt + this.outTime }
     })
     enc.stdin!.on('error', () => {})
-    // Fan the encoded stream out to every destination.
-    enc.stdout!.on('data', (chunk: Buffer) => {
-      for (const p of this.pushes.values()) {
-        const sin = p.proc?.stdin as Writable | undefined
-        if (sin && !sin.destroyed && sin.writableLength < 8 << 20) sin.write(chunk)
-      }
+    // Fan each encoded stream out to the destinations that asked for it.
+    this.outs.forEach((o, i) => {
+      const out = (i === 0 ? enc.stdout : enc.stdio[i + 3]) as Readable
+      out.on('data', (chunk: Buffer) => {
+        for (const p of this.pushes.values()) {
+          if (this.contentOf(p.target) !== o) continue
+          const sin = p.proc?.stdin as Writable | undefined
+          if (sin && !sin.destroyed && sin.writableLength < 8 << 20) sin.write(chunk)
+        }
+      })
     })
     enc.on('exit', code => {
       if (this.stopped) return
@@ -254,7 +288,7 @@ export class Restream extends EventEmitter {
       this.log(`restream: ${reason}`)
       void this.stop(reason)
     })
-    if (burn) this.feedSubtitles(w, h)
+    if (subs) this.feedSubtitles(w, h)
     for (const p of this.pushes.values()) this.connect(p.target.id)
     // Nothing coming out of the encoder after a while (no picture to read): say so instead of "connecting" forever.
     this.watchdog = setInterval(() => {
@@ -335,12 +369,17 @@ export class Restream extends EventEmitter {
     this.changed()
   }
 
-  /** Add a destination while running (no interruption for the others). */
-  add(t: Target): void {
-    if (this.pushes.has(t.id) || this.stopped) return
-    this.pushes.set(t.id, { target: t, tries: 0, status: { id: t.id, platform: t.platform, server: t.server, state: 'connecting', since: Date.now() } })
+  /** Add a destination while running (no interruption for the others); false when it needs an output this run does not make. */
+  add(t: Target): boolean {
+    if (this.pushes.has(t.id) || this.stopped) return true
+    if (!this.outs.includes(this.contentOf(t))) return false
+    this.pushes.set(t.id, { target: t, tries: 0, status: { id: t.id, platform: t.platform, server: t.server, content: this.contentOf(t), state: 'connecting', since: Date.now() } })
     this.connect(t.id)
+    return true
   }
+
+  /** The destinations this run sends to. */
+  get targets(): Target[] { return [...this.pushes.values()].map(p => p.target) }
 
   /** Stop one destination; the rest keep going. Returns true when none are left. */
   drop(id: string): boolean {

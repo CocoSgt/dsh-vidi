@@ -424,6 +424,10 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-rs .rs-hint { margin: 0; color: var(--faint); font-size: 12px; line-height: 1.55; }
 .dshl-rs .rs-err { margin: 0; color: #ff8f92; font-size: 12px; line-height: 1.55; }
 .dshl-rs .rs-field { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+.dshl-rs .rs-overlay { display: grid; gap: 4px; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); }
+.dshl-rs .rs-sub { color: var(--muted); font-size: 12.5px; font-weight: 550; }
+.dshl-rs .rs-url { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dshl-rs .rs-url code { overflow: hidden; color: var(--ink); font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; user-select: all; }
 .dshl-rs .rs-field .dshl-select { width: 100%; height: 34px; background: var(--l1); }
 .dshl-rs .rs-field input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--l1); color: var(--ink); font: inherit; font-size: 13px; }
 .dshl-rs .rs-field input:focus { outline: none; border-color: var(--accent); }

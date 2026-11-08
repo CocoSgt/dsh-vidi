@@ -4,7 +4,8 @@ import type { LiveKey } from './locales.ts'
 import type { SubStyle } from './subStyle.tsx'
 import { Pick } from './Pick.tsx'
 
-export interface RestreamTarget { id: string; platform: string; server: string; key: string }
+type Content = 'burn' | 'clean' | 'subs'
+export interface RestreamTarget { id: string; platform: string; server: string; key: string; content?: Content }
 export interface RestreamStatus {
   running: boolean
   at: number
@@ -43,7 +44,7 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
   const running = !!status?.running
   const [targets, setTargets] = useState<RestreamTarget[]>([])
   const [picked, setPicked] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('dsh-live.rsPicked') ?? '[]') } catch { return [] } })
-  const [editing, setEditing] = useState<{ id?: string; platform: string; server: string; key: string } | null>(null)
+  const [editing, setEditing] = useState<{ id?: string; platform: string; server: string; key: string; content: Content } | null>(null)
   const [burn, setBurn] = useState(true)
   const [height, setHeight] = useState<720 | 1080>(720)
   const [busy, setBusy] = useState(false)
@@ -53,7 +54,7 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
     fetch('/live/api/restream/targets').then(r => r.json()).then(j => {
       const list: RestreamTarget[] = j.targets ?? []
       setTargets(list)
-      if (!list.length) setEditing({ platform: 'bilibili', server: '', key: '' })
+      if (!list.length) setEditing({ platform: 'bilibili', server: '', key: '', content: 'burn' })
     }).catch(() => {})
   }, [])
   useEffect(() => { try { localStorage.setItem('dsh-live.rsPicked', JSON.stringify(picked)) } catch {} }, [picked])
@@ -107,6 +108,11 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
             options={PLATFORMS.map(p => ({ value: p, label: pname(p) }))} />
         </label>
         <p className="rs-hint">{t(`rs.h.${editing.platform}` as LiveKey)}</p>
+        <label className="rs-field"><span>{t('rs.content')}</span>
+          <Pick value={editing.content} onChange={v => setEditing({ ...editing, content: v as Content })}
+            options={(['burn', 'clean', 'subs'] as const).map(c => ({ value: c, label: t(`rs.c.${c}` as LiveKey) }))} />
+        </label>
+        {editing.content === 'subs' && <p className="rs-hint">{t('rs.c.subs.d')}</p>}
         <label className="rs-field"><span>{t('rs.server')}</span>
           <input type="text" spellCheck={false} placeholder={fixed ?? 'rtmp://…'} value={editing.server} onChange={e => setEditing({ ...editing, server: e.target.value })} />
         </label>
@@ -126,7 +132,7 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
     <div className="dshl-rs">
       <div className="rs-head">
         <span>{running ? t('rs.running').replace('{t}', CLOCK((Date.now() - status!.startedAt) / 1000)) : t('rs.title')}</span>
-        {!running && <button className="dshl-link" onClick={() => setEditing({ platform: 'bilibili', server: '', key: '' })}>+ {t('rs.add')}</button>}
+        {!running && <button className="dshl-link" onClick={() => setEditing({ platform: 'bilibili', server: '', key: '', content: 'burn' })}>+ {t('rs.add')}</button>}
       </div>
       <div className="rs-list">
         {targets.map(x => {
@@ -137,13 +143,13 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
               {running
                 ? <span className={`rs-dot ${st?.state ?? 'off'}`} />
                 : <input type="checkbox" checked={on} onChange={e => setPicked(v => e.target.checked ? [...v, x.id] : v.filter(id => id !== x.id))} />}
-              <span className="rs-name">{pname(x.platform)}<small>{host(x.server)}</small></span>
+              <span className="rs-name">{pname(x.platform)}<small>{host(x.server)} · {t(`rs.c.${x.content ?? 'burn'}` as LiveKey)}</small></span>
               {running
                 ? st
                   ? <span className={`rs-state ${st.state}`} title={st.message}>{t(`rs.s.${st.state}` as LiveKey)}</span>
                   : <button className="dshl-link" onClick={() => void add(x.id)}>{t('rs.join')}</button>
                 : <span className="rs-tools">
-                    <button className="ghost" title={t('rs.edit')} onClick={() => setEditing({ id: x.id, platform: x.platform, server: x.server, key: '' })}><Icon.pencil /></button>
+                    <button className="ghost" title={t('rs.edit')} onClick={() => setEditing({ id: x.id, platform: x.platform, server: x.server, key: '', content: x.content ?? 'burn' })}><Icon.pencil /></button>
                     <button className="ghost" title={t('rs.remove')} onClick={() => void remove(x.id)}><Icon.close /></button>
                   </span>}
               {running && st && <button className="ghost" title={t('rs.stopOne')} onClick={() => void stop(x.id)}><Icon.close /></button>}
@@ -156,7 +162,6 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
       )}
       {!running && (
         <div className="rs-opts">
-          <label className="rs-check"><input type="checkbox" checked={burn} onChange={e => setBurn(e.target.checked)} />{t('rs.burn')}</label>
           <span className="seg">
             {([720, 1080] as const).map(h => <button key={h} className={height === h ? 'on' : ''} onClick={() => setHeight(h)}>{h}p</button>)}
           </span>
@@ -170,6 +175,24 @@ export function RestreamPanel(props: { jobId: string; status?: RestreamStatus; n
             {chosen.length ? t('rs.start').replace('{n}', String(chosen.length)) : t('rs.pick')}
           </button>}
       {!running && <p className="rs-hint">{t('rs.note')}</p>}
+      <OverlayLink t={t} />
+    </div>
+  )
+}
+
+/** The subtitle page for OBS's Browser Source: lay the subtitles over your own picture without encoding anything. */
+function OverlayLink({ t }: { t: (k: LiveKey) => string }) {
+  const [url, setUrl] = useState('')
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { fetch('/live/api/overlay').then(r => r.json()).then(j => setUrl(j.url ?? '')).catch(() => {}) }, [])
+  if (!url) return null
+  return (
+    <div className="rs-overlay">
+      <span className="rs-sub">{t('rs.overlay')}</span>
+      <span className="rs-url"><code>{url}</code>
+        <button className="dshl-link" onClick={() => void navigator.clipboard.writeText(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })}>{copied ? t('tr.copied') : t('rs.copy')}</button>
+      </span>
+      <p className="rs-hint">{t('rs.overlay.d')}</p>
     </div>
   )
 }

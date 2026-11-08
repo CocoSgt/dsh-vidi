@@ -62,8 +62,8 @@ async function post(path: string, body: unknown): Promise<any> {
 export function Settings(props: {
   engine: string
   onEngine: (e: string) => void
-  mode: 'site' | 'realtime' | 'polished'
-  onMode: (m: 'site' | 'realtime' | 'polished') => void
+  mode: 'live' | 'realtime' | 'polished'
+  onMode: (m: 'live' | 'realtime' | 'polished') => void
   spoken: string
   onSpoken: (l: string) => void
   langOptions: [string, string][]
@@ -224,7 +224,7 @@ export function Settings(props: {
             <span className="pair">
               <span>{t('set.mode')}</span>
               <span className="dshl-seg">
-                {(['site', 'realtime', 'polished'] as const).map(m => <button key={m} className={mode === m ? 'on' : ''} title={t(`mode.${m}.tip`)} onClick={() => onMode(m)}>{t(`mode.${m}`)}</button>)}
+                {(['live', 'realtime', 'polished'] as const).map(m => <button key={m} className={mode === m ? 'on' : ''} title={t(`mode.${m}.tip`)} onClick={() => onMode(m)}>{t(`mode.${m}`)}</button>)}
               </span>
             </span>
             <span className="hint">{t(`mode.${mode}.tip`)}</span>

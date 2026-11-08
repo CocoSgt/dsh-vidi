@@ -136,7 +136,7 @@ export class LiveJob extends EventEmitter {
       files: existsSync(this.deps.dir) ? readdirSync(this.deps.dir).filter(f => /\.(mp4|m4a|srt|vtt|txt|md|json|jsonl)$/.test(f)) : [],
       ingest: this.ingest, vod: this.vod, duration: this.duration, loginBrowser: this.loginBrowser, needsLogin: this.needsLogin,
       hls: this.hlsName, height: this.height, heights: this.heights, restream: this.restream,
-      subs: { ...this.subs }, usage: this.deps.usage.summary(), site: this.siteTracks, spoken: this.spokenLang(),
+      subs: { ...this.subs, ready: this.readyAt(), latency: this.provider?.latency?.() }, usage: this.deps.usage.summary(), site: this.siteTracks, spoken: this.spokenLang(),
     }
   }
 
@@ -532,6 +532,21 @@ export class LiveJob extends EventEmitter {
     this.emit('state', this.summary())
   }
 
+  /**
+   * How far the subtitles are complete (media s): audio read minus what the
+   * recogniser still holds, and before the first line still waiting for its
+   * real-time translation. The page lets the picture wait for this.
+   */
+  readyAt(): number {
+    let ready = this.subs.at - (this.provider?.backlog?.() ?? 0)
+    if (this.opts.mode === 'realtime' && this.pendingTranslations > 0) {
+      const targets = this.targets()
+      const waiting = this.cues.find(c => c.final && targets.some(t => !c.tr?.[t]) && c.start > ready - 60)
+      if (waiting) ready = Math.min(ready, waiting.start)
+    }
+    return Math.max(0, ready)
+  }
+
   /** Is recognition or translation too far behind the media read so far? (`slack` < 1 waits until it is well caught up.) */
   private behind(slack = 1): boolean {
     const asr = this.provider?.backlog?.() ?? 0
@@ -558,7 +573,6 @@ export class LiveJob extends EventEmitter {
       this.deps.glossary.notice(cue.src)
       // Real-time: a quick per-line translation now, polished a few lines later.
       // Polished mode: no quick pass; the polishing batch fixes and translates.
-      // ('site' mode only transcribes when asked; then it works like real-time.)
       if (this.opts.mode !== 'polished' && !this.provider?.translates && cue.tr === undefined && this.targets().length) this.translate(cue)
       else { this.record(cue); this.polisher.add(cue) }
     }
@@ -658,7 +672,16 @@ export class LiveJob extends EventEmitter {
 
   /** Push this video (from media time `from`, subtitles drawn in) to the chosen destinations. */
   async startRestream(targets: Target[], opts: { from: number; burn: boolean; style: BurnStyle; height: 720 | 1080 }): Promise<void> {
-    if (this.restreamer?.summary.running) { for (const t of targets) this.restreamer.add(t); return }
+    if (this.restreamer?.summary.running) {
+      const r = this.restreamer
+      const misfits = targets.filter(t => !r.add(t))
+      if (!misfits.length) return
+      // A new kind of output (say, subtitles alone): restart once with everything, from where it is now.
+      const all = [...r.targets, ...misfits]
+      const at = r.summary.at
+      await r.stop()
+      return this.startRestream(all, { ...opts, from: at })
+    }
     if (!this.segments().length) throw new Error('nothing recorded yet')
     // Watched to the end of a video: stream it from the beginning rather than end at once.
     if (this.vod && this.duration && opts.from >= this.duration - 1.5) opts = { ...opts, from: 0 }

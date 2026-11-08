@@ -27,13 +27,20 @@ export interface SpeechProvider {
   backlog?(): number
   /** True when the provider already returns translations (no LLM pass needed). */
   readonly translates: boolean
+  /** Seconds between audio and its text arriving, when the provider measures it. */
+  latency?(): number
   start(emit: (cue: ProviderCue) => void, onError: (err: Error) => void): Promise<void>
   push(pcm: Buffer): void
   stop(): Promise<void>
 }
 
-/** How live subtitles are made: 'site' = only the site's own subtitles (no delay, nothing transcribed); 'realtime' = a few seconds behind; 'polished' = a minute or two behind, fixed with context. */
-export type Mode = 'site' | 'realtime' | 'polished'
+/**
+ * How a live stream is watched: 'live' = the picture does not wait, subtitles
+ * follow a few seconds later; 'realtime' = the picture is a few seconds behind
+ * and in step with its subtitles (live translation models when available);
+ * 'polished' = a minute or two behind, fixed with context.
+ */
+export type Mode = 'live' | 'realtime' | 'polished'
 
 export type JobStatus = 'resolving' | 'running' | 'stopping' | 'stopped' | 'error'
 
@@ -77,7 +84,7 @@ export interface JobSummary extends JobOptions {
   loginBrowser?: string
   /** Set when the site needs a login no browser session provided. */
   needsLogin?: { site: string; browser?: string; detail: string }
-  subs?: { state: SubsState; at: number }
+  subs?: { state: SubsState; at: number; ready?: number; latency?: number }
   usage?: import('./usage.ts').UsageSummary
   /** Restreaming to other platforms, while it runs (and its last state after). */
   restream?: import('./restream.ts').RestreamStatus

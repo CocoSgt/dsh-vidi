@@ -20,7 +20,8 @@ import { installedBrowsers, type CookieChoice } from './sites.ts'
 import { LocalProvider } from './providers/local.ts'
 import { OpenAIProvider } from './providers/openai.ts'
 import { dashscopeEngine, deepgramEngine, elevenLabsEngine, geminiEngine, SERVICES, service, speechServiceOf, verifyKey, volcEngine, whisperApiEngine } from './providers/cloud.ts'
-import { OpenAITranslateProvider } from './providers/openai-translate.ts'
+import { OpenAITranslateProvider, TRANSLATE_TARGETS } from './providers/openai-translate.ts'
+import { startOverlay } from './overlay.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
 import type { JobOptions, Mode, SourceKind, SpeechProvider } from './types.ts'
 import type { JobDeps } from './job.ts'
@@ -58,6 +59,7 @@ export interface Config {
   glossary: string
   rtmpPort: number
   srtPort: number
+  overlayPort: number
   openaiApiKey: string
   openaiModel: string
   geminiModel: string
@@ -72,6 +74,7 @@ export const Config: z<Config> = z.object({
   glossary: z.string().role('textarea').default('').description('Terms to keep consistent, one per line (e.g. "Dots = Dots"). Each stream also builds its own glossary automatically.'),
   rtmpPort: z.number().default(1935).description('Port for incoming RTMP pushes (OBS → rtmp://<this machine>/live).'),
   srtPort: z.number().default(9000).description('Port for incoming SRT pushes.'),
+  overlayPort: z.number().default(19380).description('Local port of the subtitle overlay page for OBS (http://127.0.0.1:<port>/overlay).'),
   openaiApiKey: z.string().role('secret').default('').description('OpenAI API key for online subtitles. Usually not needed here: keys saved in DSH (Models page) or on the video page are used.'),
   openaiModel: z.string().default('gpt-live-transcribe').description('OpenAI realtime transcription model.'),
   geminiModel: z.string().default('auto').description('Gemini model for online subtitles ("auto" picks the newest Flash model your key can use).'),
@@ -235,6 +238,13 @@ export function apply(ctx: Context, config: Config): void {
     const svc = service(opts.provider)
     if (svc) {
       if (!keys.get(svc.key)) throw new Error(`no ${svc.label} key yet: add one in the video page settings or on the DSH Models page`)
+      // In step with the picture: OpenAI's live interpretation, when the subtitle language is one it speaks.
+      const target = opts.tgtLangs.find(l => l !== opts.srcLang)
+      if (svc.kind === 'realtime' && opts.mode === 'realtime' && target && TRANSLATE_TARGETS.includes(target)) {
+        const tr = service('openai-translate')!
+        log(`subtitles in step: ${tr.model} into ${target}`)
+        return new OpenAITranslateProvider({ apiKey: keys.get('openai')!, model: tr.model, target, log })
+      }
       if (svc.kind === 'realtime') {
         return new OpenAIProvider({
           apiKey: keys.get('openai')!, model: config.openaiModel, lang: opts.srcLang,
@@ -248,7 +258,7 @@ export function apply(ctx: Context, config: Config): void {
         // Speech straight to the first translation line on screen (and the source text with it).
         const target = opts.tgtLangs[0]
         if (!target) throw new Error('OpenAI live translation needs a subtitle language to translate into')
-        return new OpenAITranslateProvider({ apiKey: keys.get('openai')!, model: svc.model, target, minSec: 2, maxSec: 8, log })
+        return new OpenAITranslateProvider({ apiKey: keys.get('openai')!, model: svc.model, target, log })
       }
       // Chunk by chunk over the network: longer chunks mean fewer requests (free tiers count them).
       const key = () => keys.get(svc.key)
@@ -366,7 +376,8 @@ export function apply(ctx: Context, config: Config): void {
     return undefined
   }
 
-  const modeOf = (m: unknown): Mode => (m === 'polished' || m === 'site' ? m : 'realtime')
+  // ('site' was the old name of 'live'.)
+  const modeOf = (m: unknown): Mode => (m === 'polished' ? 'polished' : m === 'live' || m === 'site' ? 'live' : 'realtime')
 
   async function startJob(opts: JobOptions, waiting = false): Promise<LiveJob> {
     const prev = waiting ? undefined : byConversation.get(opts.conversationId)
@@ -379,8 +390,7 @@ export function apply(ctx: Context, config: Config): void {
     job = new LiveJob(id, opts, jobDeps(dir, opts, () => job, waiting))
     jobs.set(id, job)
     if (!waiting) byConversation.set(opts.conversationId, id)
-    // 'site': the site's own subtitles only, so nothing is transcribed until asked.
-    job.autoSubs = opts.mode !== 'site'
+    job.autoSubs = true
     bus.emit('job', job)
     void job.start()
     return job
@@ -391,6 +401,7 @@ export function apply(ctx: Context, config: Config): void {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const route = url.pathname.replace(/^\/live\/api\/?/, '')
     try {
+      if (route === 'overlay') return send(res, 200, { url: `http://127.0.0.1:${config.overlayPort}/overlay` })
       if (route === 'deps') {
         const [deps] = await Promise.all([checkDeps(config.whisperModel), keys.refresh()])
         localReady = deps.filter(d => ['ffmpeg', 'whisper-server', 'whisper model'].includes(d.name)).every(d => d.ok)
@@ -512,7 +523,7 @@ export function apply(ctx: Context, config: Config): void {
           if (Array.isArray(b.tgtLangs)) opts.tgtLangs = (b.tgtLangs as unknown[]).map(String).slice(0, 4)
           if (typeof b.srcLang === 'string') opts.srcLang = b.srcLang
           if (typeof b.provider === 'string') opts.provider = b.provider
-          if (b.mode === 'realtime' || b.mode === 'polished' || b.mode === 'site') opts.mode = b.mode
+          if (typeof b.mode === 'string') opts.mode = modeOf(b.mode)
           const svc = opts.provider ? service(opts.provider) : undefined
           if (svc) { await keys.refresh(); if (!keys.get(svc.key)) return send(res, 400, { error: `no ${svc.label} key` }) }
           savePrefs({ last: { ...lastOptions(), ...opts } as NonNullable<Prefs['last']> })
@@ -798,6 +809,8 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/api', handler: api }), 'dsh-vidi: api route')
   ctx.effect(() => (ctx as any).webServer.register({ kind: 'prefix', path: '/live/media', handler: media }), 'dsh-vidi: media route')
+  // Subtitles as a page for OBS's Browser Source: the newest running video's lines.
+  ctx.effect(() => startOverlay(config.overlayPort, () => [...jobs.values()].filter(j => j.summary().status === 'running').at(-1) ?? [...jobs.values()].at(-1), fn => { bus.on('job', fn); return () => { bus.off('job', fn) } }, log), 'dsh-vidi: subtitle overlay')
   ctx.effect(() => () => {
     for (const job of jobs.values()) void job.close('plugin unloaded')
     whisper.stop()
