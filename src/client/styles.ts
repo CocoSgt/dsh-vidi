@@ -254,6 +254,9 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-stage.pagefull { position: fixed; inset: 0; z-index: 2147483000; width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; }
 .dshl-stage video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
 .dshl-stage.idle { cursor: none; }
+.dshl-holdnote { position: absolute; top: 14px; left: 50%; z-index: 4; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; transform: translateX(-50%);
+  background: rgba(20,20,22,.78); color: #f2f2f3; font-size: 12.5px; white-space: nowrap; backdrop-filter: blur(8px); }
+.dshl-holdnote .dshl-link { color: #9ec0ff; }
 .dshl-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #cfcfcf; font-size: 14px; }
 .dshl-spinner { width: 28px; height: 28px; border: 2.5px solid rgba(255,255,255,.18); border-top-color: #fff; border-radius: 50%; animation: dshl-spin .9s linear infinite; }
 .dshl-spinner.sm { width: 14px; height: 14px; border-width: 2px; flex: none; }

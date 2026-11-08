@@ -312,6 +312,21 @@ export function LiveView(props: LiveViewInjected) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending])
   const subs = job?.subs ?? { state: 'off' as const, at: 0 }
+  // Live: the picture waits for its subtitles. Real-time waits for the first pass, polished for the
+  // polished lines (or the first pass if polishing has stalled for 2.5 min); no delay never waits.
+  const [noWait, setNoWait] = useState(false)
+  useEffect(() => { setNoWait(false) }, [mode, job?.id])
+  const lastPolished = useMemo(() => cues.reduce((m, c) => (c.polished && c.end > m ? c.end : m), 0), [cues])
+  useEffect(() => {
+    const p = player.current
+    if (!p) return
+    const waiting = !!job && job.status === 'running' && !job.vod && mode !== 'site' && subs.state === 'running' && !noWait
+    const ready = mode === 'polished' ? Math.max(lastPolished, subs.at - 150) : subs.at
+    if (waiting && now > ready + 0.5) p.hold(t(mode === 'polished' ? 'hold.polished' : 'hold.realtime'), () => setNoWait(true))
+    // Go on once there is some room ahead, so playback does not stop and start every few seconds.
+    else if (!waiting || ready > now + (mode === 'polished' ? 20 : 4)) p.hold(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now, subs.at, subs.state, lastPolished, mode, noWait, job?.status])
   // Name the conversation after its video once the title is known (once per video).
   useEffect(() => {
     if (!job?.title || !props.onTitle) return
@@ -624,15 +639,12 @@ export function LiveView(props: LiveViewInjected) {
   // Live notes under the player: no site subtitles in no-delay mode; subtitles behind the picture; transcription slower than the stream.
   const live = !!job && job.status === 'running' && !job.vod
   const slow = live && mode !== 'site' && rate !== null && rate < 0.95
-  const behindBy = live && mode !== 'site' && subs.state === 'running' && cues.length > 0 ? now - subs.at : 0
   const engineNow = providers.find(x => x.id === usableEngine())
   const liveNote = siteOnly && job && job.status !== 'resolving' && !(job.site?.length) ? (
     <div className="dshl-lag"><span>{t('site.none')}</span><button className="dshl-link" onClick={() => changeMode('polished')}>{t('site.switch')}</button></div>
   ) : slow ? (
     <div className="dshl-lag warn"><span>{t(engineNow && !engineNow.online ? 'lag.slowLocal' : 'lag.slow').replace('{x}', rate!.toFixed(2))}</span>
       {engineNow && !engineNow.online && <button className="dshl-link" onClick={() => setSettingsOpen(true)}>{t('lag.settings')}</button>}</div>
-  ) : behindBy > 6 ? (
-    <div className="dshl-lag"><span>{t('lag.behind').replace('{t}', CLOCK(behindBy))}</span><button className="dshl-link" onClick={() => player.current?.seek(Math.max(0, subs.at - 2))}>{t('lag.wait')}</button></div>
   ) : null
 
   return (

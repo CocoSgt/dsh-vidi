@@ -11,6 +11,8 @@ export interface PlayerHandle {
   seek(t: number): void
   /** Close the open control-bar menu. */
   closeMenu(): void
+  /** Live: hold the picture while the subtitles catch up (text shown over it), or let it go on (null). */
+  hold(text: string | null, onSkip?: () => void): void
 }
 
 /** A control-bar menu: an icon button that opens a panel above the bar. */
@@ -110,7 +112,24 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   /** Where playback was, so a new source (quality switch) continues from there. */
   const lastTime = useRef(0)
 
-  useImperativeHandle(ref, () => ({ seek: (time: number) => { if (video.current) video.current.currentTime = Math.max(0, time) }, closeMenu: () => setMenu(null) }), [])
+  const [held, setHeld] = useState<{ text: string; skip?: () => void } | null>(null)
+  const heldRef = useRef(false)
+  useImperativeHandle(ref, () => ({
+    seek: (time: number) => { if (video.current) video.current.currentTime = Math.max(0, time) },
+    closeMenu: () => setMenu(null),
+    hold: (text, onSkip) => {
+      const el = video.current
+      if (!el) return
+      if (text) {
+        if (!heldRef.current) { heldRef.current = true; el.pause() }
+        setHeld(h => (h?.text === text ? h : { text, skip: onSkip }))
+      } else if (heldRef.current) {
+        heldRef.current = false
+        setHeld(null)
+        void el.play().catch(() => {})
+      }
+    },
+  }), [])
 
   // Attach HLS once the first segments exist.
   useEffect(() => {
@@ -337,6 +356,10 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
       onMouseMove={poke} onMouseLeave={() => setIdle(true)} onDoubleClick={e => { if (!(e.target as HTMLElement).closest('.dshl-controls, .dshl-menu')) toggleFull() }}>
       <video ref={video} playsInline onClick={togglePlay} />
       {!ready && <div className="dshl-overlay"><div className="dshl-spinner" />{waitingText}</div>}
+      {ready && held && (
+        <div className="dshl-holdnote"><i className="dshl-spinner sm" /><span>{held.text}</span>
+          {held.skip && <button className="dshl-link" onClick={() => held.skip?.()}>{t('hold.skip')}</button>}</div>
+      )}
       <SubtitleOverlay texts={texts} style={style} draft={current ? !current.final : false} />
       {toast && (
         <div className="dshl-toast">
