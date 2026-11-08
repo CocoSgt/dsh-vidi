@@ -85,6 +85,18 @@ export function apply(ctx: any): void {
       select: id => c.layout.selectPanel(id),
       info: { getSnapshot: () => c.layout.panelInfo.getSnapshot(), subscribe: fn => c.layout.panelInfo.subscribe(fn) },
     }), 'dsh-vidi: main panel host')
+    // Reloaded after a one-click update: come back to the video page of the conversation on screen.
+    c.effect(() => {
+      let back = false
+      try { back = sessionStorage.getItem('dsh-vidi.reopen') === '1'; sessionStorage.removeItem('dsh-vidi.reopen') } catch {}
+      if (!back) return () => {}
+      let tries = 0
+      const timer = setInterval(() => {
+        const s = sessions(), cur = s?.current()
+        if (s && cur) { clearInterval(timer); void openPage(s, { sessionId: cur }) } else if (++tries > 40) clearInterval(timer)
+      }, 250)
+      return () => clearInterval(timer)
+    }, 'dsh-vidi: reopen after update')
     c.slots.inject('main', () => c.slots.register({
       name: 'main',
       key: PANEL_ID,

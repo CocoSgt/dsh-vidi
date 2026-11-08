@@ -94,12 +94,25 @@ export function Settings(props: {
   const [installed, setInstalled] = useState<{ status: 'applied' | 'restart' | 'failed'; version?: string; message?: string } | null>(null)
   const installUpdate = async () => {
     setInstalling(true); setInstalled(null)
+    const target = update?.latest
     try {
       const r = await fetch('/live/api/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
       const j = await r.json()
       setInstalled(j)
-      if (j.status === 'applied') setTimeout(() => location.reload(), 800)
-    } catch (e) { setInstalled({ status: 'failed', message: (e as Error).message }) }
+      if (j.status === 'applied') { try { sessionStorage.setItem('dsh-vidi.reopen', '1') } catch {} setTimeout(() => location.reload(), 800) }
+      setInstalling(false)
+      return
+    } catch {}
+    // DSH with hot reload swaps Vidi while the request is open, so no answer comes back: wait for the new
+    // version to answer, then reload the page onto it.
+    for (let i = 0; i < 60; i++) {
+      await new Promise(res => setTimeout(res, 1500))
+      try {
+        const v = await (await fetch('/live/api/version')).json() as UpdateInfo
+        if (v.current === target) { try { sessionStorage.setItem('dsh-vidi.reopen', '1') } catch {} location.reload(); return }
+      } catch {}
+    }
+    setInstalled({ status: 'failed', message: 'no answer' })
     setInstalling(false)
   }
   const box = useRef<HTMLDivElement>(null)
