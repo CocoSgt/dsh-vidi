@@ -885,7 +885,13 @@ export class LiveJob extends EventEmitter {
 
   /** What the player would show at media time t, line by line (the same rules: no repeats, line-end marks dropped). */
   rowsAt(t: number, style: BurnStyle): { text: string; size: number; main: boolean }[] {
-    const cue = this.cues.find(c => c.final && c.start <= t && t < Math.max(c.end, c.start + 1.2))
+    // As in the player: a line stays up until the next one starts unless there is a real pause.
+    const finals = this.cues.filter(c => c.final)
+    let i = -1
+    for (let k = 0; k < finals.length; k++) if (finals[k]!.start <= t) i = k
+    const cand = finals[i], next = finals[i + 1]
+    const until = cand ? (next && next.start - cand.end <= 4 ? next.start : Math.max(cand.end, cand.start + 1.2)) : 0
+    const cue = cand && t < until ? cand : undefined
     const text = (key: string): string | undefined => {
       if (key.startsWith('site:')) return this.siteCues.get(key)?.find(c => c.start <= t && t < c.end)?.text
       if (!cue) return undefined

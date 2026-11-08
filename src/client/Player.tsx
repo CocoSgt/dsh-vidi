@@ -16,6 +16,9 @@ export interface PlayerHandle {
 }
 
 /** A control-bar menu: an icon button that opens a panel above the bar. */
+/** Seconds between two lines that still count as one stretch of speech (the line stays up across it). */
+const GAP_FILL = 4
+
 export interface PlayerMenu { id: string; icon: ReactNode; title: string; content: ReactNode; on?: boolean; /** Shown next to the icon (e.g. the subtitle languages). */ label?: string }
 
 interface Props {
@@ -294,7 +297,16 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   const behind = Math.max(0, edge - now)
   const atLive = behind < delay + 10
   // Picture first (live): subtitles arrive after their moment, so the newest line stays up until the next one.
-  const current = cues.filter(c => c.start - 0.2 <= now && now <= c.end + 1.2).at(-1)
+  // A line stays up until the next one starts while the speaker keeps talking (gaps of a few seconds are
+  // timing, not silence); after a real pause it goes 1.2 s after its last word.
+  const current = (() => {
+    let i = -1
+    for (let k = 0; k < cues.length; k++) if (cues[k]!.start - 0.2 <= now) i = k
+    const c = cues[i], next = cues[i + 1]
+    if (!c) return undefined
+    const until = next && next.start - c.end <= GAP_FILL ? next.start - 0.2 : c.end + 1.2
+    return now <= Math.max(until, c.end + 0.3) ? c : undefined
+  })()
     ?? (trail ? cues.filter(c => c.start <= now && c.end > now - 8).at(-1) : undefined)
   // What each line shows now; a translation identical to the original is not repeated.
   const textsOf = (cue: CueLike | undefined): LineTexts => {

@@ -61,8 +61,14 @@ function join(parts: string[]): string {
  */
 export function exportCues(cues: Cue[], langs: string[], format: ExportFormat, title = ''): string {
   const rows = cues.filter(c => c.final && lines(c, langs).length)
-  if (format === 'srt') return rows.map((c, i) => `${i + 1}\n${stamp(c.start, ',')} --> ${stamp(c.end, ',')}\n${lines(c, langs).join('\n')}\n`).join('\n')
-  if (format === 'vtt') return 'WEBVTT\n\n' + rows.map(c => `${stamp(c.start, '.')} --> ${stamp(c.end, '.')}\n${lines(c, langs).join('\n')}\n`).join('\n')
+  // Each line lasts until the next one when only a short gap lies between (no flicker while someone talks).
+  const endOf = (i: number) => {
+    const c = rows[i]!, n = rows[i + 1]
+    const until = n && n.start - c.end <= 4 ? n.start : c.end + 0.6
+    return Math.max(c.start + 0.8, Math.min(until, n ? n.start : until))
+  }
+  if (format === 'srt') return rows.map((c, i) => `${i + 1}\n${stamp(c.start, ',')} --> ${stamp(endOf(i), ',')}\n${lines(c, langs).join('\n')}\n`).join('\n')
+  if (format === 'vtt') return 'WEBVTT\n\n' + rows.map((c, i) => `${stamp(c.start, '.')} --> ${stamp(endOf(i), '.')}\n${lines(c, langs).join('\n')}\n`).join('\n')
   // Readable transcript: paragraphs with a timestamp, each selected language as its own paragraph block.
   const md = format === 'md'
   const head = md && title ? `# ${title}\n\n` : title ? `${title}\n\n` : ''
