@@ -168,7 +168,7 @@ function History({ t, ui, onOpen }: { t: (k: LiveKey) => string; ui: 'en' | 'zh'
       <div className="hl">
         {items.map(v => (
           <div key={v.id} role="button" tabIndex={0} className="hi" onClick={() => onOpen(v)} onKeyDown={e => { if (e.key === 'Enter') onOpen(v) }}
-            title={v.live && v.source === 'url' && !v.running ? t('hist.goLive') : undefined}>
+            title={v.live && v.source === 'url' && !v.running && !v.work ? t('hist.goLive') : undefined}>
             <span className="th">
               <img src={`/live/api/thumb?jobId=${encodeURIComponent(v.id)}`} alt="" onError={e => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
               {v.duration ? <span className="dur">{CLOCK(v.duration)}</span> : null}
@@ -740,7 +740,8 @@ export function LiveView(props: LiveViewInjected) {
   const openPast = async (v: PastVideo, replay = false) => {
     setError('')
     // A live stream picks up live again (a new recording in the same conversation); the recording stays in the list.
-    if (!replay && v.live && v.source === 'url' && v.url && !v.running) {
+    // One still at work (subtitles running on its recording) opens as it is.
+    if (!replay && v.live && v.source === 'url' && v.url && !v.running && !v.work) {
       if (v.conversationId !== sessionId && props.onOpenVideo && await props.onOpenVideo(v.conversationId, v.id, v.url)) return
       void start(v.url, 'url')
       return
@@ -1077,7 +1078,7 @@ function SubsButton(props: { state: 'off' | 'running' | 'paused' | 'done'; at: n
   if (state === 'running') return (
     <button className="dshl-subsbtn running" onClick={onPause} title={t('subs.pause.tip').replace('{t}', CLOCK(at))}
       style={{ ['--p' as string]: `${pct ?? 0}%` }}>
-      <i className="dot" />
+      <i className="dot" /><span className="pz"><Icon.pause /></span>
       <span className="now">{pct !== undefined ? t('subs.progress').replace('{p}', String(pct)) : t('subs.progressLive').replace('{t}', CLOCK(at))}</span>
       <span className="short">{pct !== undefined ? `${pct}%` : CLOCK(at)}</span>
       <span className="act">{t('subs.pause')}</span>
@@ -1085,7 +1086,7 @@ function SubsButton(props: { state: 'off' | 'running' | 'paused' | 'done'; at: n
   )
   if (state === 'paused') return (
     <button className="dshl-subsbtn" onClick={onResume} title={t('subs.resume.tip').replace('{t}', CLOCK(at))}>
-      {t('subs.resume')}{pct !== undefined ? ` · ${pct}%` : ''}
+      <span className="pz on"><Icon.play /></span>{t('subs.resume')}{pct !== undefined ? ` · ${pct}%` : ''}
     </button>
   )
   return <button className="dshl-subsbtn" onClick={onStart} title={t('subs.start.tip')}>{t('subs.start')}</button>

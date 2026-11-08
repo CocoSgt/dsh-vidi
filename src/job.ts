@@ -100,6 +100,24 @@ function cutNear(cs: string[], ratio: number): number {
   return best > 0 ? best : Math.max(1, Math.min(n - 1, target))
 }
 
+/**
+ * A line meant to be in `lang` that is written in another script: live interpretation now and then
+ * passes the speaker's words through untranslated (Chinese in a Japanese line). Latin words (names,
+ * brands) never count; a Japanese line has kana, a Chinese one none, a Korean one hangul.
+ */
+export function wrongScript(text: string, lang: string): boolean {
+  const n = (re: RegExp) => (text.match(re) ?? []).length
+  const han = n(/[\u3400-\u9fff]/g), kana = n(/[\u3040-\u30ff]/g), hangul = n(/[\uac00-\ud7af\u1100-\u11ff]/g)
+  const letters = n(/\p{L}/gu)
+  const base = lang.split('-')[0]
+  // Short lines too, when they use words only Chinese has (是吧, 嗯, 什么…).
+  if (base === 'ja') return (kana === 0 && (han >= 4 || /[是吧嗯么们这那的呢吗啊呃对没还就说几]/.test(text))) || hangul >= 2
+  if (base === 'zh') return kana >= 2 || hangul >= 2
+  if (base === 'ko') return hangul === 0 && han + kana >= 3
+  const cjk = han + kana + hangul
+  return cjk >= 3 && cjk > letters * 0.3
+}
+
 /** When a video was first opened: its folder is named after that moment (UTC); older saves could carry a later time. */
 export function openedAt(id: string, saved?: unknown): number | undefined {
   const named = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/.exec(id)
@@ -256,6 +274,8 @@ export class LiveJob extends EventEmitter {
       for (const [k, v] of site.cues) job.siteCues.set(k, v)
       const at = j.subs?.at ?? job.cues.at(-1)?.end ?? 0
       job.subs = { state: j.subs?.state === 'done' ? 'done' : at > 0 ? 'paused' : 'off', at }
+      // Lines saved in the wrong language get their translation again (once: the fix is saved).
+      setTimeout(() => job.repairEchoes(), 3000)
       // A recording cut short by a restart still needs its MP4.
       if (!existsSync(join(dir, 'recording.mp4'))) void job.remux()
       return job
@@ -691,19 +711,48 @@ export class LiveJob extends EventEmitter {
       this.deps.glossary.notice(cue.src)
       // Real-time: a quick per-line translation now, polished a few lines later.
       // Polished mode: no quick pass; the polishing batch fixes and translates.
-      if (this.opts.mode !== 'polished' && !this.provider?.translates && cue.tr === undefined && this.targets().length) this.translate(cue)
+      // A translation that came back in the speaker's language (live interpretation sometimes echoes it): translate it properly.
+      const echoed = this.echoOf(cue)
+      if (echoed) this.translate(cue, echoed)
+      else if (this.opts.mode !== 'polished' && !this.provider?.translates && cue.tr === undefined && this.targets().length) this.translate(cue)
       else { this.record(cue); this.polisher.add(cue) }
     }
   }
 
-  private translate(cue: Cue): void {
+  /**
+   * Translations of a line that are in the wrong language: taken out (the line shows without them
+   * until the proper one comes), and the text to translate from returned (the line's source, or the
+   * echoed text itself when the line has none of its own: its source sits with the next line).
+   */
+  private echoOf(cue: Cue): string | undefined {
+    let from: string | undefined
+    for (const t of this.targets()) {
+      const x = cue.tr?.[t]
+      if (!x || !wrongScript(x, t)) continue
+      from ??= cue.src.trim() || x
+      delete cue.tr![t]
+    }
+    if (from && cue.tr && !Object.keys(cue.tr).length) cue.tr = undefined
+    return from
+  }
+
+  /** Lines saved with a translation in the wrong language (before this check existed): translate them again. */
+  private repairEchoes(): void {
+    for (const cue of this.cues) {
+      if (!cue.final || cue.edited) continue
+      const from = this.echoOf(cue)
+      if (from) { this.emit('cue', cue); this.translate(cue, from) }
+    }
+  }
+
+  private translate(cue: Cue, text = cue.src): void {
     const context = this.cues.filter(c => c.final && c.id < cue.id).slice(-6)
     // Keep order but let a slow model fall behind gracefully: chain, never block capture.
     this.pendingTranslations++
     this.translating = this.translating.then(async () => {
       try {
         const ref = this.siteText(cue.start, cue.end).map(x => `[${x.lang}${x.auto ? ', auto' : ''}] ${x.text}`).join('\n')
-        const tr = await this.deps.translator.translate(this.targets(), cue.src, context, this.deps.glossary.forPrompt(), undefined, ref)
+        const tr = await this.deps.translator.translate(this.targets(), text, context, this.deps.glossary.forPrompt(), undefined, ref)
         if (tr) {
           cue.tr = { ...cue.tr, ...tr }
           this.emit('cue', cue)

@@ -369,7 +369,12 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 @container (max-width: 640px) { .dshl-subsbtn .now { display: none; } .dshl-subsbtn.running:not(:hover) .short { display: inline; } }
 .dshl-subsbtn.running:hover .now { display: none; }
 .dshl-subsbtn.running:hover .act { display: inline; }
-.dshl-subsbtn.running:hover .dot { width: 8px; height: 8px; border-radius: 1px; background: #fff; animation: none; }
+.dshl-subsbtn .pz { display: none; margin: 0 -2px 0 -4px; }
+.dshl-subsbtn .pz svg { display: block; width: 15px; height: 15px; }
+.dshl-subsbtn .pz.on { display: inline-flex; }
+/* Hover on a running one: the pause sign stands where the pulsing dot was. */
+.dshl-subsbtn.running:hover .dot { display: none; }
+.dshl-subsbtn.running:hover .pz { display: inline-flex; }
 @container (max-width: 520px) { .dshl-subsbtn { margin: 0 2px; padding: 0 9px; } }
 .dshl-starter { position: relative; display: inline-flex; }
 .dshl-startpop { position: absolute; left: 50%; bottom: calc(100% + 26px); z-index: 6; display: grid; gap: 10px; width: 290px; padding: 12px 12px 14px; transform: translateX(-50%);
