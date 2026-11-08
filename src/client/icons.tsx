@@ -11,6 +11,7 @@ export const Icon = {
   full: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>,
   exitFull: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>,
   theater: () => <svg viewBox="0 0 24 24" width="20" height="20" {...P}><rect x="2" y="6" width="20" height="12" rx="2" /></svg>,
+  timer: () => <svg viewBox="0 0 24 24" width="18" height="18" {...P}><circle cx="12" cy="13.5" r="7.5" /><path d="M12 9.5v4l2.5 1.5M10 3h4M12 3v3" /></svg>,
   live: () => <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="5" fill="currentColor" /></svg>,
   link: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></svg>,
   copy: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h8" /></svg>,

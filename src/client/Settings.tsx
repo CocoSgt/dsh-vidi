@@ -65,11 +65,6 @@ export interface UpdateInfo { current: string; latest?: string; newer: boolean; 
 export function Settings(props: {
   engine: string
   onEngine: (e: string) => void
-  mode: 'live' | 'realtime' | 'polished'
-  onMode: (m: 'live' | 'realtime' | 'polished') => void
-  spoken: string
-  onSpoken: (l: string) => void
-  langOptions: [string, string][]
   login: string
   onLogin: (l: string) => void
   browsers: Browser[]
@@ -86,7 +81,7 @@ export function Settings(props: {
   onCheckUpdate?: () => Promise<void>
   t: (k: LiveKey) => string
 }) {
-  const { engine, onEngine, mode, onMode, spoken, onSpoken, langOptions, login, onLogin, browsers, providers, shared, name, onKey, disabled, open, onOpen, update, onCheckUpdate, t } = props
+  const { engine, onEngine, login, onLogin, browsers, providers, shared, name, onKey, disabled, open, onOpen, update, onCheckUpdate, t } = props
   const [checking, setChecking] = useState(false)
   const [checked, setChecked] = useState(false)
   // One-click update: installing, then "restart to finish" or what went wrong.
@@ -253,19 +248,6 @@ export function Settings(props: {
             </span>
             {makerUnset && <span className="hint">{t('set.model.addInDsh').replace('{v}', MAKERS.find(m => m.id === shownMaker)?.label ?? shownMaker)}</span>}
             <span className="hint">{t(sees ? 'set.model.sees' : 'set.model.text')}</span>
-          </div>
-          <div className="srow col">
-            <span className="pair">
-              <span>{t('set.mode')}</span>
-              <span className="dshl-seg">
-                {(['live', 'realtime', 'polished'] as const).map(m => <button key={m} className={mode === m ? 'on' : ''} title={t(`mode.${m}.tip`)} onClick={() => onMode(m)}>{t(`mode.${m}`)}</button>)}
-              </span>
-            </span>
-            <span className="hint">{t(`mode.${mode}.tip`)}</span>
-          </div>
-          <div className="srow">
-            <span>{t('set.spoken')}</span>
-            <Pick value={spoken} disabled={disabled} onChange={onSpoken} options={[{ value: 'auto', label: t('set.auto') }, ...langOptions.map(([k, v]) => ({ value: k, label: v }))]} />
           </div>
           <div className="srow" title={t('set.login.tip')}>
             <span>{t('set.login')}</span>

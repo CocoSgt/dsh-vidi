@@ -805,7 +805,7 @@ export function LiveView(props: LiveViewInjected) {
           <span>{t(armed?.rtmp ? 'src.push.bar' : active ? 'src.push.busy' : 'src.push.wait')}</span>
         </div>
       )}
-      <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={changeMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
+      <Settings engine={engine || 'local'} onEngine={setEngine}
         login={login} onLogin={chooseLogin} browsers={browsers} providers={providers} shared={keysShared} name={engineName}
         onKey={(id, k) => { setProviders(ps => ps.map(p => p.id === id ? { ...p, key: k, ready: k.set } : p)); if (k.set) setError('') }}
         open={settingsOpen} onOpen={setSettingsOpen} update={update} onCheckUpdate={checkUpdate} t={t} />
@@ -870,10 +870,23 @@ export function LiveView(props: LiveViewInjected) {
                   content: (
                     <>
                       <SubtitleMenu lines={lines} onLines={l => void changeLines(l)} options={translatable} site={siteChips} name={nameWithSpoken}
-                        style={subStyle} onStyle={setSubStyle} t={t} />
+                        style={subStyle} onStyle={setSubStyle} spoken={{ value: spoken, options: langOptions, onChange: setSpoken }} t={t} />
                     </>
                   ),
                 },
+                ...(!job.vod && job.status === 'running' ? [{
+                  id: 'mode', icon: <Icon.timer />, title: t('set.mode'), label: t(`mode.${mode}` as LiveKey),
+                  content: (
+                    <div className="dshl-modemenu">
+                      {(['live', 'realtime', 'polished'] as const).map(m => (
+                        <button key={m} className={`mm ${mode === m ? 'on' : ''}`} onClick={() => changeMode(m)}>
+                          <span className="n">{t(`mode.${m}` as LiveKey)}{mode === m && <Icon.check />}</span>
+                          <span className="d">{t(`mode.${m}.tip` as LiveKey)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ),
+                }] : []),
                 {
                   id: 'restream', icon: <Icon.push />, title: t('menu.restream'),
                   label: job.restream?.running ? t('rs.live') : undefined, on: !!job.restream?.running,

@@ -411,6 +411,13 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-menu .dshl-seg button.on { background: rgba(255,255,255,.92); color: #111; box-shadow: none; }
 .dshl-menu .dshl-switch { background: rgba(255,255,255,.22); }
 .dshl-menu .dshl-switch.on { background: var(--accent); }
+.dshl-modemenu { display: grid; gap: 4px; width: 300px; max-width: 100%; }
+.dshl-modemenu .mm { display: grid; gap: 3px; padding: 9px 10px; border: 0; border-radius: 8px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.dshl-modemenu .mm:hover { background: rgba(255,255,255,.08); }
+.dshl-modemenu .mm.on { background: rgba(255,255,255,.12); }
+.dshl-modemenu .n { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; font-weight: 600; }
+.dshl-modemenu .n svg { width: 14px; height: 14px; }
+.dshl-modemenu .d { color: rgba(255,255,255,.62); font-size: 12px; line-height: 1.45; }
 .dshl-menu .opt { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; padding: 0 6px; color: var(--muted); }
 .dshl-menu .opt .dshl-seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .dshl-menu .opt input[type=range] { flex: 1; max-width: 180px; accent-color: var(--accent); }

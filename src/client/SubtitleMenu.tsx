@@ -23,9 +23,11 @@ export function SubtitleMenu(props: {
   name: (key: string) => string
   style: SubStyle
   onStyle: (s: SubStyle) => void
+  /** The language spoken in the video ('auto' = detect), with the choices. */
+  spoken?: { value: string; options: [string, string][]; onChange: (v: string) => void }
   t: (k: LiveKey) => string
 }) {
-  const { lines, onLines, options, site, name, style, onStyle, t } = props
+  const { lines, onLines, options, site, name, style, onStyle, spoken, t } = props
   const main = lines[0] ?? 'src'
   const second = lines[1] ?? ''
   const label = (k: string) => site.find(s => s.key === k)?.label ?? name(k)
@@ -56,6 +58,12 @@ export function SubtitleMenu(props: {
           <Pick value={second} onChange={setSecond} options={[{ value: '', label: t('sub.none') }, ...choices]} />
         </label>
         {second && <button className="swap" onClick={() => onLines([second, main])}>⇅ {t('sub.swapMain')}</button>}
+        {spoken && (
+          <label className="slot" title={t('set.spoken.tip')}>
+            <span>{t('set.spoken')}</span>
+            <Pick value={spoken.value} onChange={spoken.onChange} options={[{ value: 'auto', label: t('set.auto') }, ...spoken.options.map(([k, v]) => ({ value: k, label: v }))]} />
+          </label>
+        )}
       </div>
       <div className="opts">
         <div className="opt"><span>{t('sub.size')}</span>
