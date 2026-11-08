@@ -13,6 +13,7 @@ import type { Translator } from './translate.ts'
 import { drawSubtitles, Restream, type BurnStyle, type RestreamStatus, type Target } from './restream.ts'
 import type { Cue, JobOptions, JobStatus, JobSummary, ProviderCue, SpeechProvider, SubsState } from './types.ts'
 import type { UsageMeter } from './usage.ts'
+import { deviceInput, type DeviceChoice } from './devices.ts'
 
 const run = promisify(execFile)
 
@@ -240,6 +241,12 @@ export class LiveJob extends EventEmitter {
       this.duration = p.duration
       return { args: [...q, '-i', url], audio: '0:a:0', video: p.vcodec ? '0:v:0' : undefined, vcodec: p.vcodec }
     }
+    if (source === 'device') {
+      // A camera / screen and a microphone on this computer, captured directly ({ video, audio, title } as JSON).
+      const c = JSON.parse(url) as DeviceChoice & { title?: string }
+      this.title = c.title || 'Camera'
+      return { ...deviceInput(c, q), vcodec: 'rawvideo' }
+    }
     if (source === 'push') {
       const key = this.deps.ingest.key ?? this.id.slice(-4)
       const { host, rtmpPort, srtPort } = this.deps.ingest
@@ -334,7 +341,7 @@ export class LiveJob extends EventEmitter {
     // A podcast cover: centred on the dark background with a slim waveform under it.
     const coverIn = input.args.filter(a => a === '-i').length
     const picture = input.video
-      ? ['-map', input.video, ...(h264 ? ['-c:v', 'copy'] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-vf', 'scale=-2:min(720\\,ih)', '-g', '50'])]
+      ? ['-map', input.video, ...(h264 ? ['-c:v', 'copy'] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-vf', 'scale=-2:min(720\\,ih)', '-pix_fmt', 'yuv420p', '-g', '50'])]
       : input.cover ? ['-loop', '1', '-framerate', '25', '-i', input.cover, '-filter_complex', [
           'color=c=0x0f1420:s=1280x720:r=25[bg]',
           `[${coverIn}:v]scale=-2:460,format=rgba[c]`,

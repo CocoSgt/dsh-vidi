@@ -48,7 +48,7 @@ export type JobStatus = 'resolving' | 'running' | 'stopping' | 'stopped' | 'erro
 export type SubsState = 'off' | 'running' | 'paused' | 'done'
 
 /** Where the media comes from. */
-export type SourceKind = 'url' | 'push' | 'file'
+export type SourceKind = 'url' | 'push' | 'file' | 'device'
 
 export interface JobOptions {
   source: SourceKind

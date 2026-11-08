@@ -1,3 +1,4 @@
+import { Pick } from './Pick.tsx'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { frameStore, onOpenRequest } from './bus.ts'
@@ -15,7 +16,7 @@ import { RestreamPanel, type RestreamStatus } from './RestreamPanel.tsx'
 import { engineLabel, Settings, type Browser, type Provider } from './Settings.tsx'
 import { loadStyle, reconcile, saveStyle, type SubStyle } from './subStyle.tsx'
 
-type Source = 'url' | 'push' | 'file'
+type Source = 'url' | 'push' | 'file' | 'device'
 /** Live streams: picture first (subtitles follow), in sync (picture a few seconds behind), or polished (a minute or two behind). */
 type LiveMode = 'live' | 'realtime' | 'polished'
 interface NeedsLogin { site: string; browser?: string; detail: string }
@@ -101,6 +102,43 @@ function upload(file: File, onProgress: (p: number) => void): Promise<string> {
 }
 
 /** A value to copy: plain text (not an input look-alike) and a text button. */
+interface Device { id: string; name: string; kind: 'camera' | 'screen' | 'mic' }
+
+/** Subtitle a camera (or the screen) and a microphone on this computer directly: pick both, press start. */
+function DeviceCard({ t, onStart }: { t: (k: LiveKey) => string; onStart: (choice: { video?: string; audio: string; title: string }) => void }) {
+  const [devices, setDevices] = useState<Device[] | null>(null)
+  const [video, setVideoRaw] = useState<string>(() => store.get('device.video', ''))
+  const [audio, setAudioRaw] = useState<string>(() => store.get('device.audio', ''))
+  const setVideo = (v: string) => { setVideoRaw(v); store.set('device.video', v) }
+  const setAudio = (v: string) => { setAudioRaw(v); store.set('device.audio', v) }
+  useEffect(() => {
+    fetch('/live/api/devices').then(r => r.json()).then((d: { devices?: Device[] }) => setDevices(d.devices ?? [])).catch(() => setDevices([]))
+  }, [])
+  if (!devices) return null
+  const cams = devices.filter(d => d.kind !== 'mic'), mics = devices.filter(d => d.kind === 'mic')
+  if (!mics.length) return null
+  // Remembered choices that are gone (unplugged) fall back to the first one.
+  const v = video === 'none' || cams.some(d => d.id === video) ? video : (cams.find(d => d.kind === 'camera')?.id ?? 'none')
+  const a = mics.some(d => d.id === audio) ? audio : mics[0]!.id
+  const videoOptions = [
+    ...cams.map(d => ({ value: d.id, label: d.kind === 'screen' ? d.name.replace(/^Screen (\d+)$/, (_, n) => t('dev.screen').replace('{n}', String(Number(n) + 1))) : d.name, group: t(d.kind === 'screen' ? 'dev.screens' : 'dev.cameras') })),
+    { value: 'none', label: t('dev.noVideo'), group: t('dev.other') },
+  ]
+  const title = v === 'none' ? (mics.find(d => d.id === a)?.name ?? '') : (videoOptions.find(o => o.value === v)?.label ?? '')
+  return (
+    <div className="dshl-pushinfo dshl-devices">
+      <div className="title"><Icon.camera /> {t('dev.title')} <span>{t('dev.hint')}</span></div>
+      <dl>
+        <dt>{t('dev.video')}</dt>
+        <dd><Pick value={v} options={videoOptions} onChange={setVideo} /></dd>
+        <dt>{t('dev.audio')}</dt>
+        <dd><Pick value={a} options={mics.map(d => ({ value: d.id, label: d.name }))} onChange={setAudio} /></dd>
+      </dl>
+      <button className="dshl-btn primary" onClick={() => onStart({ video: v === 'none' ? undefined : v, audio: a, title })}>{t('dev.start')}</button>
+    </div>
+  )
+}
+
 /** The push stream key: copy it, or change it (typed, or a new random one). */
 function KeyRow({ value, t, onChanged }: { value: string; t: (k: LiveKey) => string; onChanged: () => void }) {
   const [edit, setEdit] = useState<string | null>(null)
@@ -342,7 +380,7 @@ export function LiveView(props: LiveViewInjected) {
     const c = forced ? { source: forced, url: target } : classify(target)
     if (!c) return
     // Another video while one is open: it gets its own conversation (this one keeps its video and chat).
-    if (props.onNewVideo && job && job.source !== 'push' && job.url !== c.url && c.source !== 'push' && await props.onNewVideo(target)) return
+    if (props.onNewVideo && job && job.source !== 'push' && job.url !== c.url && c.source !== 'push' && c.source !== 'device' && await props.onNewVideo(target)) return
     try {
       const j = await post('start', { ...options(), source: c.source, url: c.url })
       setCues([]); setTerms([]); setJob(j); setArmed(null)
@@ -582,6 +620,7 @@ export function LiveView(props: LiveViewInjected) {
     <div className="dshl-drop">
       <h2>{t('empty.title')}</h2>
       <p>{t('empty.body')}</p>
+      <DeviceCard t={t} onStart={c => void start(JSON.stringify(c), 'device')} />
       {armed?.rtmp && (
         <div className="dshl-pushinfo">
           <div className="title"><Icon.push /> {t('push.title')} <span>{t('push.hint')}</span></div>

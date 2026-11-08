@@ -27,6 +27,7 @@ import type { JobOptions, Mode, SourceKind, SpeechProvider } from './types.ts'
 import type { JobDeps } from './job.ts'
 import { registerTools } from './tools.ts'
 import { metered, UsageMeter } from './usage.ts'
+import { listDevices } from './devices.ts'
 import { EventEmitter } from 'node:events'
 import { WhisperServer } from './whisper.ts'
 
@@ -449,7 +450,7 @@ export function apply(ctx: Context, config: Config): void {
         const b = await readJson(req)
         if (typeof b.url !== 'string' || !b.url.trim()) return send(res, 400, { error: 'url required' })
         if (Array.isArray(b.tgtLangs)) savePrefs({ last: { tgtLangs: (b.tgtLangs as unknown[]).map(String).slice(0, 4), srcLang: typeof b.srcLang === 'string' ? b.srcLang : 'auto', provider: typeof b.provider === 'string' ? b.provider : 'local', mode: modeOf(b.mode) } })
-        const source: SourceKind = b.source === 'push' || b.source === 'file' ? b.source : 'url'
+        const source: SourceKind = b.source === 'push' || b.source === 'file' || b.source === 'device' ? b.source : 'url'
         await disarm()
         const raw = b.url.trim()
         const job = await startJob({
@@ -541,6 +542,10 @@ export function apply(ctx: Context, config: Config): void {
           void job.startSubs(typeof b.from === 'number' ? b.from : undefined, opts)
         }
         return send(res, 200, job.summary())
+      }
+      if (route === 'devices') {
+        // Cameras, screens and microphones on this computer (for "use my camera").
+        return send(res, 200, { devices: await listDevices(), platform: process.platform })
       }
       if (route === 'pushkey' && req.method === 'POST') {
         // { key } sets it, { random: true } makes a new one; the waiting listener restarts with it.
