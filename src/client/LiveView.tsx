@@ -828,7 +828,7 @@ export function LiveView(props: LiveViewInjected) {
           <button className="dshl-link" onClick={() => void startDevice()}>{t('st.retry')}</button></div>
       )}
       {!accessIssue && (error || job?.status === 'error') && (
-        <div className="dshl-note warn"><span>{error || (job?.message === 'device-blocked' ? t('dev.blocked') : job?.message === 'restored' ? t('st.failedEarlier') : job?.message)}</span>
+        <div className="dshl-note warn"><span>{error || (job?.message === 'device-blocked' ? t('dev.blocked') : job?.message === 'device-stalled' ? t('dev.stalled') : job?.message === 'restored' ? t('st.failedEarlier') : job?.message)}</span>
           {job?.message === 'device-blocked' && <button className="dshl-link" onClick={() => openPrivacy(blockedKind())}>{t('dev.openSettings')}</button>}
           {job && !active && <button className="dshl-link" onClick={() => start(job.url, job.source)}>{t('st.retry')}</button>}</div>
       )}

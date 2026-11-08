@@ -374,7 +374,7 @@ export class LiveJob extends EventEmitter {
         if (this.ffmpeg !== ff || this.segments().length) return
         this.ffmpeg = undefined
         ff.kill('SIGKILL')
-        this.setStatus('error', 'device-blocked')
+        this.setStatus('error', flowing ? 'device-stalled' : 'device-blocked')
       }, 12_000)
     }
     // A push source is "waiting" until its first segment lands (the status is set right after this call).
@@ -386,8 +386,11 @@ export class LiveJob extends EventEmitter {
     }
     // ffmpeg's RTMP listener only warns about a stream with another key and records it anyway: cut such a sender off.
     let rejected = false
+    // A device that sends frames writes encoder lines; one that is blocked stays silent after opening.
+    let flowing = false
     ff.stderr!.on('data', (d: Buffer) => {
       appendFileSync(join(this.deps.dir, 'ffmpeg.log'), d)
+      if (!flowing && /pts|dts|frame|Past duration/i.test(d.toString())) flowing = true
       if (this.opts.source === 'push' && !rejected && /Unexpected stream/.test(d.toString())) { rejected = true; ff.kill('SIGKILL') }
     })
     ff.on('exit', code => {
