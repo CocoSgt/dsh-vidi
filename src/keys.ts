@@ -7,6 +7,11 @@ export const KEY_REFS = {
   groq: ['GROQ_API_KEY'],
   siliconflow: ['SILICONFLOW_API_KEY'],
   glm: ['GLM_API_KEY', 'ZHIPUAI_API_KEY', 'ZAI_API_KEY'],
+  deepgram: ['DEEPGRAM_API_KEY'],
+  elevenlabs: ['ELEVENLABS_API_KEY', 'XI_API_KEY'],
+  mistral: ['MISTRAL_API_KEY'],
+  dashscope: ['DASHSCOPE_API_KEY', 'BAILIAN_API_KEY'],
+  volc: ['VOLC_SPEECH_API_KEY', 'VOLCENGINE_SPEECH_API_KEY'],
 } as const satisfies Record<string, readonly string[]>
 
 export type KeyName = keyof typeof KEY_REFS

@@ -25,7 +25,7 @@ export interface OpenAIOptions {
 const URL_DEFAULT = 'wss://api.openai.com/v1/realtime?intent=transcription'
 
 /** Streaming linear resampler, 16 kHz → 24 kHz s16le mono, continuous across calls. */
-class Upsampler {
+export class Upsampler {
   private prev = 0
   /** Position of the next output sample, in input samples relative to the first sample of the next call (may be negative: between prev and it). */
   private pos = 0

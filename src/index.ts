@@ -19,7 +19,8 @@ import { KeyStore, type Credentials, type DshProvider } from './keys.ts'
 import { installedBrowsers, type CookieChoice } from './sites.ts'
 import { LocalProvider } from './providers/local.ts'
 import { OpenAIProvider } from './providers/openai.ts'
-import { geminiEngine, SERVICES, service, speechServiceOf, verifyKey, whisperApiEngine } from './providers/cloud.ts'
+import { dashscopeEngine, deepgramEngine, elevenLabsEngine, geminiEngine, SERVICES, service, speechServiceOf, verifyKey, volcEngine, whisperApiEngine } from './providers/cloud.ts'
+import { OpenAITranslateProvider } from './providers/openai-translate.ts'
 import { LANGS, Translator, type LlmHandle } from './translate.ts'
 import type { JobOptions, Mode, SourceKind, SpeechProvider } from './types.ts'
 import type { JobDeps } from './job.ts'
@@ -208,7 +209,7 @@ export function apply(ctx: Context, config: Config): void {
   let localReady = false
   void checkDeps(config.whisperModel).then(d => { localReady = d.filter(x => ['ffmpeg', 'whisper-server', 'whisper model'].includes(x.name)).every(x => x.ok) })
   /** Recognition to use when nothing was chosen: this computer if it can, else the first online service with a key. */
-  const defaultEngine = (): string => localReady ? 'local' : (SERVICES.find(s => keys.get(s.id))?.id ?? 'local')
+  const defaultEngine = (): string => localReady ? 'local' : (SERVICES.find(s => keys.get(s.key))?.id ?? 'local')
 
   // Page-level preferences (which browser login to use for video sites).
   const settingsFile = join(config.dataDir, 'settings.json')
@@ -233,7 +234,7 @@ export function apply(ctx: Context, config: Config): void {
   function makeProvider(opts: JobOptions, glossary: Glossary, usage: UsageMeter, job?: LiveJob): SpeechProvider {
     const svc = service(opts.provider)
     if (svc) {
-      if (!keys.get(svc.id)) throw new Error(`no ${svc.label} key yet: add one in the video page settings or on the DSH Models page`)
+      if (!keys.get(svc.key)) throw new Error(`no ${svc.label} key yet: add one in the video page settings or on the DSH Models page`)
       if (svc.kind === 'realtime') {
         return new OpenAIProvider({
           apiKey: keys.get('openai')!, model: config.openaiModel, lang: opts.srcLang,
@@ -243,11 +244,21 @@ export function apply(ctx: Context, config: Config): void {
           onUsage: u => usage.add('openai', config.openaiModel, u),
         })
       }
+      if (svc.kind === 'translate') {
+        // Speech straight to the first translation line on screen (and the source text with it).
+        const target = opts.tgtLangs[0]
+        if (!target) throw new Error('OpenAI live translation needs a subtitle language to translate into')
+        return new OpenAITranslateProvider({ apiKey: keys.get('openai')!, model: svc.model, target, minSec: 2, maxSec: 8, log })
+      }
       // Chunk by chunk over the network: longer chunks mean fewer requests (free tiers count them).
-      const key = () => keys.get(svc.id)
-      const engine = svc.kind === 'gemini'
-        ? geminiEngine(config.geminiModel, key, (model, u) => usage.add('gemini', model, u), log)
-        : whisperApiEngine({ ...svc, base: keys.bases.get(svc.id) ?? svc.base }, svc.model, key)
+      const key = () => keys.get(svc.key)
+      const base = keys.bases.get(svc.key) ?? svc.base
+      const engine = svc.kind === 'gemini' ? geminiEngine(config.geminiModel, key, (model, u) => usage.add('gemini', model, u), log)
+        : svc.kind === 'deepgram' ? deepgramEngine(svc.model, key)
+          : svc.kind === 'elevenlabs' ? elevenLabsEngine(svc.model, key)
+            : svc.kind === 'dashscope' ? dashscopeEngine(base!, svc.model, key)
+              : svc.kind === 'volc' ? volcEngine(svc.model, key)
+                : whisperApiEngine({ ...svc, base }, svc.model, key)
       return new LocalProvider({
         engine, lang: opts.srcLang === 'auto' ? 'auto' : opts.srcLang, minSec: 3, maxSec: 10,
         prompt: (start, end) => job ? job.asrHint(start, end, glossary.forAsr()) : (glossary.forAsr() ? `Glossary: ${glossary.forAsr()}.` : ''),
@@ -386,8 +397,8 @@ export function apply(ctx: Context, config: Config): void {
         return send(res, 200, {
           deps, translator: translator.available, langs: LANGS, defaultTargetLang: config.defaultTargetLang, dataDir: config.dataDir,
           providers: [
-            { id: 'local', online: false, ready: localReady },
-            ...SERVICES.map(s => ({ id: s.id, label: s.label, online: true, ready: keys.info(s.id).set, key: keys.info(s.id), keyUrl: s.keyUrl })),
+            { id: 'local', vendor: 'local', model: 'whisper-large-v3-turbo', online: false, ready: localReady },
+            ...SERVICES.map(s => ({ id: s.id, vendor: s.key, model: s.modelLabel ?? s.model, label: s.label, online: true, region: s.region, ready: keys.info(s.key).set, key: keys.info(s.key), keyUrl: s.keyUrl })),
           ],
           defaultEngine: defaultEngine(),
           keysShared: !!keys.creds,
@@ -404,10 +415,10 @@ export function apply(ctx: Context, config: Config): void {
             const check = await verifyKey(svc, key)
             if (!check.ok) return send(res, 400, { error: check.message ?? 'key rejected' })
           }
-          await keys.save(svc.id, key)
-          return send(res, 200, { key: keys.info(svc.id) })
+          await keys.save(svc.key, key)
+          return send(res, 200, { key: keys.info(svc.key) })
         }
-        const key = keys.get(svc.id)
+        const key = keys.get(svc.key)
         if (!key) return send(res, 400, { error: 'no key' })
         const check = await verifyKey(svc, key)
         return send(res, check.ok ? 200 : 400, check.ok ? { ok: true } : { error: check.message })
@@ -503,7 +514,7 @@ export function apply(ctx: Context, config: Config): void {
           if (typeof b.provider === 'string') opts.provider = b.provider
           if (b.mode === 'realtime' || b.mode === 'polished' || b.mode === 'site') opts.mode = b.mode
           const svc = opts.provider ? service(opts.provider) : undefined
-          if (svc) { await keys.refresh(); if (!keys.get(svc.id)) return send(res, 400, { error: `no ${svc.label} key` }) }
+          if (svc) { await keys.refresh(); if (!keys.get(svc.key)) return send(res, 400, { error: `no ${svc.label} key` }) }
           savePrefs({ last: { ...lastOptions(), ...opts } as NonNullable<Prefs['last']> })
           void job.startSubs(typeof b.from === 'number' ? b.from : undefined, opts)
         }

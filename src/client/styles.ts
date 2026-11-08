@@ -577,7 +577,9 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-pop.right { left: auto; right: 0; }
 .dshl-pop.up { top: auto; bottom: calc(100% + 6px); }
 .dshl .srow { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; font-size: 13.5px; }
-.dshl-pop.settings { width: 320px; padding: 6px 12px; }
+.dshl-pop.settings { width: 380px; padding: 6px 12px; }
+.dshl .srow .duo { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 8px; }
+.dshl .srow .duo > .dshl-select { width: 100%; }
 .dshl-pop.settings .srow + .srow { border-top: 1px solid var(--line-soft); }
 .dshl-pop.settings .srow > .dshl-select, .dshl-pop.settings .srow > .dshl-seg { width: 168px; }
 .dshl-pop.settings .srow > .dshl-seg button { flex: 1; padding: 0 6px; }

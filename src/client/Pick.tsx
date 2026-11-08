@@ -53,9 +53,11 @@ export function Pick(props: {
     const room = window.innerHeight - r.bottom - 8, above = r.top - 8
     const up = room < 220 && above > room
     const maxH = Math.max(120, Math.min(320, up ? above - 4 : room - 4))
-    const width = Math.min(Math.max(r.width, 180), window.innerWidth - 16)
-    const left = Math.min(Math.max(8, r.left), window.innerWidth - width - 8)
-    setPlace({ ...vars, left, width, maxHeight: maxH, ...(up ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }), fontFamily: cs.fontFamily } as CSSProperties)
+    // As wide as its longest option (at least the button, at most 380px), kept inside the window.
+    const minWidth = Math.min(Math.max(r.width, 180), window.innerWidth - 16)
+    const maxWidth = Math.max(minWidth, Math.min(380, window.innerWidth - 16))
+    const side = r.left + maxWidth > window.innerWidth - 8 ? { right: Math.max(8, window.innerWidth - r.right) } : { left: Math.max(8, r.left) }
+    setPlace({ ...vars, ...side, minWidth, maxWidth, maxHeight: maxH, ...(up ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }), fontFamily: cs.fontFamily } as CSSProperties)
     setActive(Math.max(0, options.findIndex(o => o.value === value)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])

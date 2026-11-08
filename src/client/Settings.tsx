@@ -6,7 +6,23 @@ import { Pick } from './Pick.tsx'
 export interface KeyInfo { set: boolean; source?: 'dsh' | 'settings' | 'env' | 'page'; ref?: string; hint?: string; provider?: string }
 export interface Browser { id: string; label: string }
 /** A recognition engine: this computer, or an online service with its key. */
-export interface Provider { id: string; label?: string; online: boolean; ready: boolean; key?: KeyInfo; keyUrl?: string }
+export interface Provider { id: string; vendor?: string; model?: string; label?: string; online: boolean; region?: 'intl' | 'cn'; ready: boolean; key?: KeyInfo; keyUrl?: string }
+
+/** Who runs a speech engine (engines of one vendor share its key). */
+const vendorOf = (p: Provider) => p.vendor ?? p.id
+
+/**
+ * Subtitle models worth suggesting first: the fast, cheap tier of each family
+ * (flash / mini / turbo / air / lite / haiku), newest first, and the one DSH
+ * uses by default.
+ */
+function recommended(models: { model: string; name: string }[], fallback?: string): Set<string> {
+  const ver = (n: string) => Number(/(\d+(?:\.\d+)?)/.exec(n)?.[1] ?? 0)
+  const fast = models.filter(m => /flash|mini|turbo|\bair\b|-air|lite|haiku/i.test(`${m.model} ${m.name}`) && !/embed|tts|audio|image|vision-preview|realtime/i.test(m.model))
+  const picks = fast.sort((a, b) => ver(b.model) - ver(a.model)).slice(0, 2).map(m => m.model)
+  if (fallback && models.some(m => m.model === fallback)) picks.unshift(fallback)
+  return new Set(picks)
+}
 
 export const engineLabel = (t: (k: LiveKey) => string, id: string) => {
   const v = t(`engine.${id}` as LiveKey)
@@ -49,6 +65,11 @@ export function Settings(props: {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const cur = providers.find(p => p.id === engine)
   const key = cur?.key ?? { set: false }
+  // Transcription: who, then which model; the key belongs to the vendor.
+  const vendorName = (v: string) => { const x = t(`vendor.${v}` as LiveKey); return x === `vendor.${v}` ? name(v) : x }
+  const vendors = [...new Map(providers.map(p => [vendorOf(p), p])).values()]
+  const curVendor = cur ? vendorOf(cur) : 'local'
+  const vendorEngines = providers.filter(p => vendorOf(p) === curVendor)
 
   useEffect(() => {
     if (!open) return
@@ -61,7 +82,7 @@ export function Settings(props: {
 
   // Subtitle model (translation, polishing, glossary): the models DSH has, loaded when the panel opens.
   type ModelRow = { provider: string; providerName: string; model: string; name: string; image: boolean }
-  const [models, setModels] = useState<{ models: ModelRow[]; chosen: { provider: string; model: string } | null; fallback: { provider: string; model: string } | null } | null>(null)
+  const [models, setModels] = useState<{ models: ModelRow[]; chosen: { provider: string; model: string } | null; fallback: { provider: string; model: string } | null; current?: { provider: string; model: string } | null } | null>(null)
   useEffect(() => {
     if (!open || models) return
     fetch('/live/api/models').then(r => r.json()).then(setModels).catch(() => {})
@@ -77,8 +98,12 @@ export function Settings(props: {
     setModels(v => v && { ...v, chosen: subsModel })
     void post('settings', { subsModel })
   }
-  const providersOf = [...new Set((models?.models ?? []).map(m => m.providerName))]
-  const current = models?.chosen ?? models?.fallback
+  // What runs now: the user's choice, else DeepSeek's default, else what DSH picks.
+  const current = models?.chosen ?? models?.fallback ?? models?.current ?? undefined
+  const providersOf = [...new Map([
+    ...(current && !(models?.models ?? []).some(m => m.provider === current.provider) ? [[current.provider, { id: current.provider, name: current.provider }] as const] : []),
+    ...(models?.models ?? []).map(m => [m.provider, { id: m.provider, name: m.providerName }] as const),
+  ]).values()]
   const sees = !!models?.models.find(x => modelKey(x) === modelKey(current))?.image
 
   const saveKey = async (value: string) => {
@@ -97,14 +122,18 @@ export function Settings(props: {
       <button className={`dshl-ctl icon ${open ? 'on' : ''}`} onClick={() => onOpen(!open)} title={t('in.settings')} aria-expanded={open}><Icon.gear /></button>
       {open && (
         <div className="dshl-pop settings right">
-          <div className="srow">
+          <div className="srow col">
             <span title={t('set.engine.tip')}>{t('set.engine')}</span>
-            <Pick value={engine} disabled={disabled} onChange={onEngine}
-              options={providers.map(p => ({ value: p.id, label: name(p.id), hint: p.ready ? undefined : t(p.online ? 'set.engine.noKey' : 'set.engine.notInstalled') }))} />
+            <span className="duo">
+              <Pick value={curVendor} disabled={disabled} onChange={v => { const first = providers.find(p => vendorOf(p) === v); if (first) onEngine(first.id) }}
+                options={vendors.map(p => ({ value: vendorOf(p), label: vendorName(vendorOf(p)), hint: p.ready ? undefined : t(p.online ? 'set.engine.noKey' : 'set.engine.notInstalled'), group: p.online ? t(p.region === 'cn' ? 'set.engine.cn' : 'set.engine.intl') : undefined }))} />
+              <Pick value={engine} disabled={disabled || vendorEngines.length < 2} onChange={onEngine}
+                options={vendorEngines.map((p, i) => ({ value: p.id, label: p.model ?? name(p.id), hint: t(`engine.note.${p.id}` as LiveKey) !== `engine.note.${p.id}` ? t(`engine.note.${p.id}` as LiveKey) : i === 0 && vendorEngines.length > 1 ? t('set.recommended') : undefined }))} />
+            </span>
           </div>
           {cur?.online && (
             <div className="srow col">
-              <span title={t(shared ? 'set.key.tip.shared' : 'set.key.tip')}>{t('set.key').replace('{s}', name(cur.id))}</span>
+              <span title={t(shared ? 'set.key.tip.shared' : 'set.key.tip')}>{t('set.key').replace('{s}', vendorName(curVendor))}</span>
               {key.set && !draft && (
                 <span className="keyline">
                   <code>{key.hint}</code>{from && <span className="from">{from}</span>}
@@ -125,13 +154,28 @@ export function Settings(props: {
           )}
           {cur && !cur.online && !cur.ready && <div className="srow col"><span className="hint">{t('set.local.missing')}</span></div>}
           <div className="srow col">
-            <span className="pair">
-              <span title={t('set.model.tip')}>{t('set.model')}</span>
-              <Pick value={models?.chosen ? modelKey(models.chosen) : ''} onChange={chooseModel}
-                options={[
-                  { value: '', label: models?.fallback ? t('set.model.default').replace('{m}', modelName(models.fallback)) : t('set.model.dsh') },
-                  ...providersOf.flatMap(pn => models!.models.filter(m => m.providerName === pn).map(m => ({ value: modelKey(m), label: m.name, hint: m.image ? t('set.model.image') : undefined, group: pn }))),
-                ]} />
+            <span title={t('set.model.tip')}>{t('set.model')}</span>
+            <span className="duo">
+              <Pick value={current?.provider ?? ''} placeholder="…" onChange={v => {
+                // A provider picked: its first recommended model goes with it.
+                const list = (models?.models ?? []).filter(m => m.provider === v)
+                const rec = recommended(list, models?.fallback?.provider === v ? models.fallback.model : undefined)
+                const pick = list.find(m => rec.has(m.model)) ?? list[0]
+                if (pick) chooseModel(modelKey(pick))
+              }}
+                options={providersOf.map(p => ({ value: p.id, label: p.name }))} />
+              <Pick value={modelKey(current)} placeholder="…" onChange={chooseModel}
+                options={(() => {
+                  const listed = (models?.models ?? []).filter(m => m.provider === current?.provider)
+                  // The model in use is always on the list, even when its provider does not list it.
+                  const list = current && !listed.some(m => m.model === current.model) ? [{ provider: current.provider, providerName: current.provider, model: current.model, name: current.model, image: false }, ...listed] : listed
+                  const rec = recommended(list, models?.fallback?.provider === current?.provider ? models?.fallback?.model : undefined)
+                  const tag = (m: ModelRow) => [modelKey(m) === modelKey(models?.fallback) ? t('set.model.dshDefault') : '', m.image ? t('set.model.image') : ''].filter(Boolean).join(' · ') || undefined
+                  return [
+                    ...list.filter(m => rec.has(m.model)).map(m => ({ value: modelKey(m), label: m.name, hint: tag(m), group: t('set.recommended') })),
+                    ...list.filter(m => !rec.has(m.model)).map(m => ({ value: modelKey(m), label: m.name, hint: tag(m), group: rec.size ? t('set.allModels') : undefined })),
+                  ]
+                })()} />
             </span>
             <span className="hint">{t(sees ? 'set.model.sees' : 'set.model.text')}</span>
           </div>
