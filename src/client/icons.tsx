@@ -20,6 +20,7 @@ export const Icon = {
   download: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>,
   push: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><circle cx="12" cy="12" r="2" /><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8" /></svg>,
   folder: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>,
+  check: () => <svg viewBox="0 0 24 24" width="12" height="12" {...P} strokeWidth={2.6}><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>,
   plus: () => <svg viewBox="0 0 24 24" width="14" height="14" {...P}><path d="M12 5v14M5 12h14" /></svg>,
   pencil: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></svg>,
   close: () => <svg viewBox="0 0 24 24" width="16" height="16" {...P}><path d="M6 6l12 12M18 6L6 18" /></svg>,

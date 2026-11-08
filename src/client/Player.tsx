@@ -9,6 +9,8 @@ export interface CueLike { id: number; start: number; end: number; src: string; 
 
 export interface PlayerHandle {
   seek(t: number): void
+  /** Close the open control-bar menu. */
+  closeMenu(): void
 }
 
 /** A control-bar menu: an icon button that opens a panel above the bar. */
@@ -108,7 +110,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
   /** Where playback was, so a new source (quality switch) continues from there. */
   const lastTime = useRef(0)
 
-  useImperativeHandle(ref, () => ({ seek: (time: number) => { if (video.current) video.current.currentTime = Math.max(0, time) } }), [])
+  useImperativeHandle(ref, () => ({ seek: (time: number) => { if (video.current) video.current.currentTime = Math.max(0, time) }, closeMenu: () => setMenu(null) }), [])
 
   // Attach HLS once the first segments exist.
   useEffect(() => {
@@ -385,7 +387,9 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(props, ref
           {onClip && <button className={`ic ${clipIn !== null ? 'on rec' : ''}`} onClick={() => void clip()} title={clipIn === null ? t('player.clip') : t('player.clip.end')}><Icon.scissors /></button>}
           {allMenus.map(m => (
             <button key={m.id} className={`${m.label ? 'pill' : 'ic'} dshl-menubtn ${menu === m.id || m.on ? 'on' : ''}`} title={m.title} onClick={() => setMenu(v => (v === m.id ? null : m.id))}>
-              {m.icon}{m.label && <span className="txt">{m.label}</span>}{m.label && <span className="caret" />}
+              {m.icon}{m.label && <span className="txt">{m.label}</span>}
+              {m.id === 'cc' && ccOn && current?.polished && <span className="dshl-okmark" title={t('player.polished')}><Icon.check /></span>}
+              {m.label && <span className="caret" />}
             </button>
           ))}
           {!full && !pageFull && <button className={`ic theater ${theater ? 'on' : ''}`} onClick={onTheater} title={`${t('player.theater')} (T)`}><Icon.theater /></button>}

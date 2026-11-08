@@ -115,6 +115,7 @@ export class LiveJob extends EventEmitter {
       still: at => this.still(at),
       onLine: (cue, src, tr, speaker) => {
         if (!this.cues.includes(cue)) return // replaced by a later run
+        this.deps.glossary.notice(src)
         cue.src = src
         if (speaker) cue.speaker = speaker
         if (Object.keys(tr).length) cue.tr = { ...cue.tr, ...tr }
@@ -185,6 +186,7 @@ export class LiveJob extends EventEmitter {
       job.cues.push(...[...seen.values()].sort((a, b) => a.start - b.start))
       job.nextId = Math.max(0, ...job.cues.map(c => c.id)) + 1
       if (existsSync(join(dir, 'brief.txt'))) job.brief = readFileSync(join(dir, 'brief.txt'), 'utf8')
+      deps.glossary.notice([job.title ?? '', job.brief, ...job.cues.map(c => c.src)].join('\n'))
       job.siteLang = (j as { siteLang?: string }).siteLang
       const q = j as { height?: number; hlsName?: string; heights?: number[] }
       if (q.height) job.height = q.height
@@ -547,6 +549,7 @@ export class LiveJob extends EventEmitter {
     if (cue.final && key !== undefined) this.drafts.delete(key)
     this.emit('cue', cue)
     if (cue.final) {
+      this.deps.glossary.notice(cue.src)
       // Real-time: a quick per-line translation now, polished a few lines later.
       // Polished mode: no quick pass; the polishing batch fixes and translates.
       if (this.opts.mode === 'realtime' && !this.provider?.translates && cue.tr === undefined && this.targets().length) this.translate(cue)
@@ -860,6 +863,7 @@ export class LiveJob extends EventEmitter {
   private setBrief(text: string): void {
     this.brief = text.slice(0, 4000)
     try { writeFileSync(join(this.deps.dir, 'brief.txt'), this.brief) } catch {}
+    this.deps.glossary.notice(`${this.title ?? ''}\n${this.brief}`)
   }
 
   /** The site's subtitle text around [from, to] (media seconds), per track — a reference, not ground truth. */

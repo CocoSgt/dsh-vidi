@@ -234,6 +234,31 @@ export function downloadOriginal(url: string, dir: string, browser: string | und
   })
 }
 
+/** Download only the sound of a page URL (best audio stream), next to the job files. Resolves to the saved file path. */
+export function downloadAudio(url: string, dir: string, browser: string | undefined, onProgress: (pct: number) => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '--no-warnings', '--no-playlist', ...cookieArgs(browser), '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+      '--newline', '--progress-template', 'download:%(progress._percent_str)s',
+      '-o', join(dir, 'audio-src.%(ext)s'), '--print', 'after_move:filepath', url,
+    ]
+    const p = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = '', err = ''
+    p.stdout.on('data', (d: Buffer) => {
+      out += d.toString()
+      const m = d.toString().match(/([\d.]+)%\s*$/m)
+      if (m) onProgress(Math.min(99, Math.round(Number(m[1]))))
+    })
+    p.stderr.on('data', (d: Buffer) => { err += d.toString() })
+    p.on('error', reject)
+    p.on('exit', code => {
+      const file = out.split('\n').map(l => l.trim()).filter(l => l.startsWith('/')).at(-1)
+      if (code === 0 && file && existsSync(file)) resolve(file)
+      else reject(new Error(ytdlpError({ stderr: err })))
+    })
+  })
+}
+
 /** Keep the most recent downloaded original of a job dir, if any. */
 export function findOriginal(dir: string): string | undefined {
   if (!existsSync(dir)) return undefined

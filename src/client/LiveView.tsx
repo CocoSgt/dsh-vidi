@@ -33,7 +33,7 @@ interface Usage {
   audio: Record<string, number>
   total: number
 }
-interface Task { id: string; url?: string; kind: 'original' | 'subtitled' | 'video'; saveAs?: string; stage?: 'download' | 'mux'; dirId: string; title?: string; status: 'running' | 'done' | 'error'; pct: number; file?: string; error?: string; needsLogin?: NeedsLogin }
+interface Task { id: string; url?: string; kind: 'original' | 'subtitled' | 'video' | 'audio'; saveAs?: string; stage?: 'download' | 'mux'; dirId: string; title?: string; status: 'running' | 'done' | 'error'; pct: number; file?: string; error?: string; needsLogin?: NeedsLogin }
 interface Term { src: string; tr: Record<string, string>; origin: 'auto' | 'user' }
 interface Dep { name: string; ok: boolean; hint?: string }
 interface Armed { jobId: string; rtmp?: string; key?: string }
@@ -46,8 +46,10 @@ export interface LiveViewInjected {
   chatFace?: SessionFaceLike
   /** Page mode: the session's messages, on DS-Harness versions that keep them apart. */
   chatSource?: { getSnapshot(): any; subscribe(fn: () => void): () => void }
-  /** Page mode: leave the video page. */
+  /** Page mode: leave the video page (older DS-Harness, where the page covers the window). */
   onClose?: () => void
+  /** Page mode as one of the app's main panels (no back button: the sidebar stays). */
+  page?: boolean
   /** A link to open right away (sidebar, paste prompt). */
   pending?: string
   onPendingDone?: () => void
@@ -120,7 +122,7 @@ const media = (dirId: string, file: string) => `/live/media/${encodeURIComponent
 
 export function LiveView(props: LiveViewInjected) {
   const { sessionId, t, chatFace, chatSource, onClose, pending, onPendingDone } = props
-  const pageMode = !!onClose
+  const pageMode = !!onClose || !!props.page
   // What to watch and how
   const [input, setInput] = useState('')
   // Default: the viewer's language + the original.
@@ -159,6 +161,8 @@ export function LiveView(props: LiveViewInjected) {
   const [tab, setTab] = useState<Tab>('transcript')
   const [query, setQuery] = useState('')
   const [trMode, setTrMode] = useState<'lines' | 'read'>('lines')
+  /** Video page: the workbench shown in place of the chat (companion plugins), if any. */
+  const [bench, setBench] = useState<string | null>(null)
   /** Reading view: which languages to show ('src' = original); empty = follow the subtitle lines. */
   const [readPick, setReadPick] = useState<string[]>([])
   const [now, setNow] = useState(0)
@@ -306,11 +310,6 @@ export function LiveView(props: LiveViewInjected) {
     }
   }
   const stop = async () => { if (job) await post('stop', { jobId: job.id }).catch(() => {}) }
-  const downloadOnly = async () => {
-    const c = classify(input)
-    if (c?.source !== 'url') return
-    try { await post('download', { conversationId: sessionId, url: c.url }); refreshTasks() } catch (e) { setError((e as Error).message) }
-  }
   const onFile = async (file: File) => {
     setError(''); setUploading(0)
     try {
@@ -458,7 +457,6 @@ export function LiveView(props: LiveViewInjected) {
 
   const missing = deps.filter(d => !d.ok && (d.name === 'ffmpeg' || (d.name === 'yt-dlp') || ((engine || 'local') === 'local' && d.name.startsWith('whisper'))))
   const needsModel = !hasTranslator && shownLines.some(l => l !== 'src')
-  const canDownloadLink = classify(input)?.source === 'url' && !/^(rtmps?|srt|rtsp|udp):/i.test(classify(input)!.url)
 
   const hasMain = !!job && !(job.status === 'error' && !job.files.length)
   const emptyBox = (
@@ -500,7 +498,9 @@ export function LiveView(props: LiveViewInjected) {
   // Companion plugins' tabs and player menus, and what they see of this video.
   const extPanels = useSyncExternalStore(vidiUi.panels.subscribe, vidiUi.panels.get)
   const extMenus = useSyncExternalStore(vidiUi.playerMenus.subscribe, vidiUi.playerMenus.get)
-  const view: VidiView | undefined = job ? { job, cues, sessionId, now, seek: s => player.current?.seek(s), style: subStyle, lines: shownLines, ui } : undefined
+  const extBenches = useSyncExternalStore(vidiUi.benches.subscribe, vidiUi.benches.get)
+  const activeBench = pageMode && job ? extBenches.find(b => b.id === bench) : undefined
+  const view: VidiView | undefined = job ? { job, cues, sessionId, now, seek: s => player.current?.seek(s), style: subStyle, lines: shownLines, ui, bench: activeBench?.id ?? null, openBench: setBench } : undefined
   /** Subtitle lines and glossary: under the player on the video page, beside it in a conversation. */
   const transcriptBox = (
     <>
@@ -533,11 +533,13 @@ export function LiveView(props: LiveViewInjected) {
             <div className="dshl-lines" ref={linesBox} onWheel={() => { userScrolled.current = Date.now() }} onTouchMove={() => { userScrolled.current = Date.now() }}>
               {shown.length === 0 && <div className="dshl-muted pad">{t('tr.empty')}</div>}
               {shown.map(c => (
-                <button className={`dshl-line ${c.id === activeId ? 'active' : ''} ${c.polished ? '' : 'raw'}`} key={c.id} onClick={() => player.current?.seek(c.start)}>
+                <button className={`dshl-line ${c.id === activeId ? 'active' : ''} ${c.polished ? 'ok' : 'raw'}`} key={c.id} onClick={() => player.current?.seek(c.start)}
+                  title={c.polished ? t('tr.polished') : t('tr.raw')}>
                   <span className="ts">{CLOCK(c.start)}</span>
                   <span className="txt">
                     {shownLines.map((k, i) => { const v = lineText(c, k); return v ? <span className={i === 0 ? 'main' : 'sub'} key={k}>{v}</span> : null })}
                   </span>
+                  <span className="mark" aria-hidden="true">{c.polished && <Icon.check />}</span>
                 </button>
               ))}
             </div>
@@ -565,7 +567,7 @@ export function LiveView(props: LiveViewInjected) {
   )
 
   return (
-    <div className={`dshl ${theater ? 'theater' : ''} ${pageMode ? 'page' : ''}`} data-dsh-own-drop="dsh-vidi"
+    <div className={`dshl ${theater && !activeBench ? 'theater' : ''} ${pageMode ? 'page' : ''} ${activeBench ? 'bench' : ''}`} data-dsh-own-drop="dsh-vidi"
       // Files dropped here belong to this view: keep them away from the chat composer's page-wide drop handler.
       onDragEnter={e => { if (e.dataTransfer.types.includes('Files')) e.stopPropagation() }}
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.stopPropagation(); e.preventDefault(); if (!active) setDragging(true) } }}
@@ -585,7 +587,6 @@ export function LiveView(props: LiveViewInjected) {
             <input ref={fileInput} type="file" accept="video/*,audio/*,.mkv,.ts,.flv" hidden
               onChange={e => { const f = e.target.files?.[0]; if (f) void onFile(f); e.target.value = '' }} />
           </label>
-          {canDownloadLink && <button className="dshl-btn icon" onClick={downloadOnly} title={t('in.download.tip')}><Icon.download /></button>}
           <button className="dshl-btn primary" onClick={() => start()} disabled={!classify(input)}>{t('in.open')}</button>
           <Settings engine={engine || 'local'} onEngine={setEngine} mode={mode} onMode={setMode} spoken={spoken} onSpoken={setSpoken} langOptions={langOptions}
             login={login} onLogin={chooseLogin} browsers={browsers} providers={providers} shared={keysShared} name={engineName}
@@ -598,11 +599,6 @@ export function LiveView(props: LiveViewInjected) {
       {needsModel && <div className="dshl-note">{t('note.noModel')}</div>}
       {(error || job?.status === 'error') && (
         <div className="dshl-note warn"><span>{error || job?.message}</span>{job && !active && <button className="dshl-link" onClick={() => start(job.url, job.source)}>{t('st.retry')}</button>}</div>
-      )}
-      {tasks.length > 0 && (
-        <div className="dshl-tasks">
-          {tasks.filter(x => x.kind === 'original').slice(0, 3).map(x => <TaskRow key={x.id} task={x} t={t} />)}
-        </div>
       )}
 
       {!hasMain && !pageMode ? (
@@ -639,7 +635,7 @@ export function LiveView(props: LiveViewInjected) {
                   label: job.restream?.running ? t('rs.live') : undefined, on: !!job.restream?.running,
                   content: <RestreamPanel jobId={job.id} status={job.restream} now={now} style={subStyle} t={t} />,
                 },
-                ...extMenus.map(m => ({ id: `ext:${m.id}`, icon: m.icon, title: m.title(ui), content: view ? m.render(view, () => {}) : null })),
+                ...extMenus.map(m => ({ id: `ext:${m.id}`, icon: m.icon, title: m.title(ui), content: view ? m.render(view, () => player.current?.closeMenu()) : null })),
                 {
                   id: 'download', icon: <Icon.download />, title: t('menu.download'), content: (
                     <DownloadPanel job={job} lines={shownLines} tasks={tasks.filter(x => x.dirId === job.id)} sessionId={sessionId}
@@ -661,7 +657,7 @@ export function LiveView(props: LiveViewInjected) {
           </div>
 
           <aside className="dshl-side">
-            {pageMode ? <ChatPanel face={chatFace} source={chatSource} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} /> : transcriptBox}
+            {activeBench && view ? <div className="dshl-benchbox">{activeBench.render(view)}</div> : pageMode ? <ChatPanel face={chatFace} source={chatSource} now={now} lines={shownLines.map(langName)} hasVideo={!!job} jobsDir={jobsDir} t={t} /> : transcriptBox}
           </aside>
         </main>
       )}
@@ -789,26 +785,13 @@ function UsagePill({ usage, t, ui }: { usage?: Usage; t: (k: LiveKey) => string;
   )
 }
 
-function TaskRow({ task, t }: { task: Task; t: (k: LiveKey) => string }) {
-  return (
-    <div className={`dshl-task ${task.status}`}>
-      <Icon.download />
-      <span className="name">{task.title ?? task.file}</span>
-      {task.status === 'running' && <span className="bar"><i style={{ width: `${task.pct}%` }} /></span>}
-      {task.status === 'running' && <span className="pct">{t('dl.pct').replace('{p}', String(task.pct))}</span>}
-      {task.status === 'done' && task.file && <a href={media(task.dirId, task.file)} download>{task.file}</a>}
-      {task.status === 'error' && <span className="bad" title={task.error}>{t('dl.failed')}</span>}
-    </div>
-  )
-}
-
 /** Download: choose what (video or subtitles), then one button that says exactly what you get. */
 function DownloadPanel(props: {
   job: Summary; lines: string[]; tasks: Task[]; sessionId: string; onTask: () => void
   langName: (k: string) => string; siteChips: { key: string; label: string }[]; t: (k: LiveKey) => string
 }) {
   const { job, lines, tasks, sessionId, onTask, langName, siteChips, t } = props
-  const [tab, setTab] = useState<'video' | 'subs'>('video')
+  const [tab, setTab] = useState<'video' | 'audio' | 'subs'>('video')
   const fileSource = job.source === 'file'
   const hasOriginal = job.files.some(f => /^original\./.test(f))
   const hasRecording = job.files.includes('recording.mp4')
@@ -824,6 +807,9 @@ function DownloadPanel(props: {
   const saveAs = `${title}（${[qLabel, withSubs ? subsLabel : ''].filter(Boolean).join('，')}）.mp4`
   // The task for exactly this choice (latest first).
   const task = tasks.find(x => x.kind === 'video' && x.saveAs === saveAs)
+  const audioAs = `${title}（${t('dl.tab.audio')}）`
+  const audioTask = tasks.find(x => x.kind === 'audio' && x.saveAs === audioAs)
+  const goAudio = () => post('audio', { conversationId: sessionId, jobId: job.id, saveAs: audioAs }).then(onTask).catch(() => onTask())
   const go = () => post('video', { conversationId: sessionId, jobId: job.id, quality: fileSource ? 'original' : quality, langs: withSubs ? ownLines : [], saveAs }).then(onTask).catch(() => onTask())
 
   const card = (on: boolean, title: string, desc: string, pick: () => void, disabled = false) => (
@@ -837,6 +823,7 @@ function DownloadPanel(props: {
     <div className="dshl-dl">
       <div className="dshl-seg wide">
         <button className={tab === 'video' ? 'on' : ''} onClick={() => setTab('video')}>{t('dl.tab.video')}</button>
+        <button className={tab === 'audio' ? 'on' : ''} onClick={() => setTab('audio')}>{t('dl.tab.audio')}</button>
         <button className={tab === 'subs' ? 'on' : ''} onClick={() => setTab('subs')}>{t('dl.tab.subs')}</button>
       </div>
       {tab === 'video' ? (
@@ -869,6 +856,20 @@ function DownloadPanel(props: {
             <button className="dshl-btn block primary" onClick={() => void go()}><Icon.download /> {t('dl.go').replace('{what}', what)}</button>
           )}
           {task?.status === 'error' && <p className="err">{task.error}</p>}
+        </>
+      ) : tab === 'audio' ? (
+        <>
+          <p className="dshl-dl-note">{t('dl.audio.d')}</p>
+          {audioTask?.status === 'running' ? (
+            <div className="dshl-btn block progress" style={{ ['--p' as string]: `${audioTask.pct}%` }}>
+              {audioTask.stage === 'mux' ? t('dl.stage.audio') : t('dl.stage.audioDl').replace('{p}', String(audioTask.pct))}
+            </div>
+          ) : audioTask?.status === 'done' && audioTask.file ? (
+            <a className="dshl-btn block primary" href={media(audioTask.dirId, audioTask.file)} download={`${audioAs}${audioTask.file.slice(audioTask.file.lastIndexOf('.'))}`}><Icon.download /> {t('dl.save')}</a>
+          ) : (
+            <button className="dshl-btn block primary" onClick={() => void goAudio()}><Icon.download /> {t('dl.go').replace('{what}', t('dl.audio.what'))}</button>
+          )}
+          {audioTask?.status === 'error' && <p className="err">{audioTask.error}</p>}
         </>
       ) : (
         <>

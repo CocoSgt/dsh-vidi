@@ -26,6 +26,32 @@ export interface SessionsLike {
 
 const PAGE_SESSION = 'dsh-live.pageSession'
 
+/** The id of the video page among DS-Harness's main panels (beside the conversation, Plugins…). */
+export const PANEL_ID = 'vidi'
+
+/**
+ * Newer DS-Harness (ctx.layout): the page is one of the main panels, so the
+ * sidebar stays with it and opens and closes with the app's own button.
+ * Without it the page covers the window (shell.overlay) with a back button.
+ */
+export interface PanelHost {
+  select(id: string | null): void
+  info: Source<{ activePanelId: string | null }>
+}
+let panelHost: PanelHost | undefined
+export function setPanelHost(host: PanelHost | undefined): () => void {
+  panelHost = host
+  if (!host) return () => {}
+  // Another panel or a conversation chosen in the sidebar: the page is no longer on screen.
+  const sync = () => {
+    const here = host.info.getSnapshot().activePanelId === PANEL_ID
+    if (pageStore.get().open !== here) pageStore.set({ open: here, ...(here ? {} : { pending: undefined }) })
+  }
+  const off = host.info.subscribe(sync)
+  return () => { off(); if (panelHost === host) panelHost = undefined }
+}
+export const inPanel = () => !!panelHost
+
 export interface WorkspacesLike {
   create(input: { path: string }): Promise<{ workspaceId?: string; id?: string; title?: string }>
   rename(workspaceId: string, title: string): Promise<unknown>
@@ -77,6 +103,12 @@ async function showPage(sessions: SessionsLike, opts: { sessionId?: string; pend
   const current = sessions.current()
   const sid = opts.sessionId ?? await pageSession(sessions, opts.workspaces!, opts.title ?? 'Video')
   if (sid !== current) sessions.open(sid)
+  if (panelHost) {
+    // Opening a conversation shows its chat; then put the video page in its place.
+    pageStore.set({ open: true, sessionId: sid, returnTo: undefined, pending: opts.pending })
+    panelHost.select(PANEL_ID)
+    return
+  }
   const prev = pageStore.get()
   pageStore.set({ open: true, sessionId: sid, returnTo: prev.open ? prev.returnTo : (sid !== current ? current : undefined), pending: opts.pending })
 }
@@ -87,7 +119,23 @@ export function closePage(sessions: SessionsLike): void {
   if (returnTo && sessions.has(returnTo)) sessions.open(returnTo)
 }
 
-/** Full-window video page (shell.overlay): player, subtitles, terms and the chat with DeepSeek. */
+/** The video page as a main panel (newer DS-Harness): the app's sidebar and its toggle stay. */
+export function VideoPanel(props: { sessions: SessionsLike; t: (k: LiveKey) => string }) {
+  const { sessions, t } = props
+  const page = useSyncExternalStore(pageStore.subscribe, pageStore.get)
+  const face = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.face(page.sessionId) : undefined)
+  const chat = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.chat(page.sessionId) : undefined)
+  if (!page.sessionId) return null
+  return (
+    <div className="dshl-panelwrap">
+      <LiveView key={page.sessionId} sessionId={page.sessionId} t={t} page
+        chatFace={face} chatSource={chat}
+        pending={page.pending} onPendingDone={() => pageStore.set({ pending: undefined })} />
+    </div>
+  )
+}
+
+/** Full-window video page (shell.overlay, older DS-Harness): player, subtitles, terms and the chat with DeepSeek. */
 export function VideoPage(props: { sessions: SessionsLike; t: (k: LiveKey) => string }) {
   const { sessions, t } = props
   const page = useSyncExternalStore(pageStore.subscribe, pageStore.get)
@@ -95,7 +143,7 @@ export function VideoPage(props: { sessions: SessionsLike; t: (k: LiveKey) => st
   const face = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.face(page.sessionId) : undefined)
   const chat = useSyncExternalStore(sessions.subscribe, () => page.sessionId ? sessions.chat(page.sessionId) : undefined)
   if (page.error && !page.open) return <div className="dshl-toast" role="alert">{t('page.failed').replace('{e}', page.error)}</div>
-  if (!page.open || !page.sessionId) return null
+  if (inPanel() || !page.open || !page.sessionId) return null
   return (
     <div className="dshl-pagewrap">
       <LiveView key={page.sessionId} sessionId={page.sessionId} t={t}

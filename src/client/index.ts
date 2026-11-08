@@ -1,7 +1,8 @@
 /**
  * dsh-vidi browser half:
  * - a "Video" tab beside Chat in every conversation (conversation.view);
- * - a "Watch video" button in the sidebar footer that opens the full video page (shell.overlay);
+ * - a "Vidi video" button in the sidebar footer that opens the video page: one of the app's
+ *   main panels where DS-Harness has them (ctx.layout), else a full-window page (shell.overlay);
  * - a prompt above the composer when a video link is pasted (conversation.input.dock);
  * - "show this video" requests from DeepSeek's live_open tool and the /video command.
  */
@@ -10,7 +11,7 @@ import { LiveView, type LiveViewInjected } from './LiveView.tsx'
 import { en, NS, zh, type LiveKey } from './locales.ts'
 import { vidiUi } from './extensions.ts'
 import { ensureStyles } from './styles.ts'
-import { openPage, PasteChip, SidebarButton, VideoPage, type SessionsLike } from './VideoPage.tsx'
+import { openPage, PANEL_ID, PasteChip, setPanelHost, SidebarButton, VideoPage, VideoPanel, type SessionsLike } from './VideoPage.tsx'
 
 export const inject = ['slots', 'locale', 'sessions', 'workspaces']
 
@@ -75,6 +76,20 @@ export function apply(ctx: any): void {
     label: () => t('page.open'),
     inject: () => ({ sessions: sessions(), t }),
   }, VideoPage))
+
+  // Newer DS-Harness: the page sits in the main column, beside the app's sidebar.
+  ctx.inject(['layout'], (c: any) => {
+    c.effect(() => setPanelHost({
+      select: id => c.layout.selectPanel(id),
+      info: { getSnapshot: () => c.layout.panelInfo.getSnapshot(), subscribe: fn => c.layout.panelInfo.subscribe(fn) },
+    }), 'dsh-vidi: main panel host')
+    c.slots.inject('main', () => c.slots.register({
+      name: 'main',
+      key: PANEL_ID,
+      locale: NS,
+      inject: () => ({ sessions: sessions(), t }),
+    }, VideoPanel))
+  })
 
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',

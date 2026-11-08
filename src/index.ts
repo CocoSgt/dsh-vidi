@@ -630,6 +630,17 @@ export function apply(ctx: Context, config: Config): void {
           saveAs: typeof b.saveAs === 'string' ? b.saveAs.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 150) : 'video.mp4',
         }))
       }
+      if (route === 'audio' && req.method === 'POST') {
+        const b = await readJson(req)
+        const job = jobs.get(String(b.jobId))
+        if (!job) return send(res, 404, { error: 'no such job' })
+        const s = job.summary()
+        return send(res, 200, downloads.audio({
+          conversationId: String(b.conversationId ?? s.conversationId), dirId: s.id, title: s.title, url: s.source === 'url' ? s.url : undefined,
+          browser: s.loginBrowser, localFile: s.source === 'file' ? s.url : undefined,
+          saveAs: typeof b.saveAs === 'string' ? b.saveAs.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 150) : 'audio',
+        }))
+      }
       if (route === 'job') {
         const jid = url.searchParams.get('jobId')
         const job = jid ? jobs.get(jid) : jobForConversation(url.searchParams.get('conversationId') ?? '')

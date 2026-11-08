@@ -161,9 +161,18 @@ const CSS = `
    with them, and its empty space moves the window like the app's own top strip. Full screen and
    the web page need none of this. */
 .dshl-pagewrap { top: var(--dsh-frame-chrome-top, 0px); }
-html[data-platform='darwin']:not([data-fullscreen]) .dshl.page .dshl-top { padding: 4px 16px 8px 84px; -webkit-app-region: drag; app-region: drag; }
-html[data-platform='darwin']:not([data-fullscreen]) .dshl.page .dshl-top :is(button, input, label, a, select, .dshl-pick) { -webkit-app-region: no-drag; app-region: no-drag; }
-@media (max-width: 600px) { html[data-platform='darwin']:not([data-fullscreen]) .dshl.page .dshl-top { padding-left: 80px; } }
+html[data-platform='darwin']:not([data-fullscreen]) .dshl-pagewrap .dshl.page .dshl-top { padding: 4px 16px 8px 84px; }
+@media (max-width: 600px) { html[data-platform='darwin']:not([data-fullscreen]) .dshl-pagewrap .dshl.page .dshl-top { padding-left: 80px; } }
+/* Newer DS-Harness: the page is a main panel beside the app's sidebar. When the sidebar is closed
+   the app puts its own controls (traffic lights, sidebar toggle, new chat) at the top-left and
+   publishes how much room they take: the top bar starts after them. */
+.dshl-panelwrap { height: 100%; min-height: 0; background: var(--dsw-alias-bg-base, #fff); }
+.dshl-panelwrap .dshl.page .dshl-top { padding-left: max(20px, var(--dsh-frame-leading-clearance, 0px)); }
+/* Narrow windows (sidebar as a drawer): the app gives its opener a row of its own above the page. */
+[data-sidebar-drawer] .dshl-panelwrap .dshl.page .dshl-top { padding-left: 12px; }
+html[data-platform='darwin']:not([data-fullscreen]) .dshl-panelwrap .dshl.page .dshl-top { padding-top: 4px; padding-bottom: 8px; }
+html[data-platform='darwin'] .dshl.page .dshl-top { -webkit-app-region: drag; app-region: drag; }
+html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, select, .dshl-pick) { -webkit-app-region: no-drag; app-region: no-drag; }
 .dshl.page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .dshl.page .dshl-main { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 420px); align-items: stretch; padding-bottom: 16px; }
 /* Video page: player on top, then the status row, then subtitles/glossary filling what is left; chat on the right. */
@@ -171,6 +180,9 @@ html[data-platform='darwin']:not([data-fullscreen]) .dshl.page .dshl-top :is(but
 .dshl.page .dshl-col > .dshl-drop { flex: 1; aspect-ratio: auto; min-height: 0; }
 .dshl.page .dshl-stage { flex: none; width: 100%; max-height: max(240px, calc(100cqh - 270px)); }
 .dshl.page .dshl-side { position: static; height: 100%; max-height: none; }
+/* Workbench open: the video and its subtitles keep a column on the left; the bench takes the rest. */
+.dshl.page.bench .dshl-main { grid-template-columns: clamp(340px, 32vw, 520px) minmax(0, 1fr); }
+.dshl-benchbox { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .dshl-under { display: flex; flex-direction: column; flex: 1; min-height: 210px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--l1); }
 .dshl-under .dshl-sidetabs { align-items: center; padding: 0 12px 0 10px; }
 .dshl-under .dshl-sidetabs > button { flex: none; padding: 0 14px; }
@@ -182,6 +194,9 @@ html[data-platform='darwin']:not([data-fullscreen]) .dshl.page .dshl-top :is(but
 .dshl.page.theater .dshl-stage { max-height: 100cqh; }
 @media (max-width: 1000px) {
   .dshl.page { display: block; overflow: auto; }
+  .dshl.page.bench .dshl-main { grid-template-columns: minmax(0, 1fr); }
+  .dshl.page.bench .dshl-side { height: auto; min-height: 0; }
+  .dshl-benchbox { overflow: visible; }
   .dshl.page .dshl-main { grid-template-columns: minmax(0, 1fr); align-items: start; }
   .dshl.page .dshl-col { container-type: normal; }
   .dshl.page .dshl-col > .dshl-drop { min-height: 320px; aspect-ratio: 16 / 9; }
@@ -190,6 +205,10 @@ html[data-platform='darwin']:not([data-fullscreen]) .dshl.page .dshl-top :is(but
   .dshl.page .dshl-side { height: 70vh; min-height: 420px; }
 }
 @media (max-width: 600px) {
+  /* Tabs keep their row; the search, line/reading switch and copy move to one of their own. */
+  .dshl-under .dshl-sidetabs { flex-wrap: wrap; row-gap: 0; }
+  .dshl-tools.inline { flex: 1 0 100%; justify-content: flex-start; padding: 6px 0 8px; }
+  .dshl-tools.inline .dshl-field { flex: 1 1 auto; }
   .dshl-top { padding: 10px 12px; }
   .dshl-bar { flex-wrap: nowrap; gap: 6px; }
   .dshl-bar .dshl-field { flex: 1 1 0; height: 38px; padding: 0 4px 0 10px; gap: 6px; }
@@ -381,6 +400,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .dshl.page .dshl-top :is(but
 .dshl-dl { display: grid; gap: 14px; padding: 0 6px; }
 .dshl-dl .grp { display: grid; gap: 8px; }
 .dshl-dl .cap { color: var(--muted); font-size: 12px; font-weight: 550; }
+.dshl-dl-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .dshl-dl .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .dshl-card-opt { display: grid; align-content: start; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--l1); color: var(--ink); text-align: left; cursor: pointer; }
 .dshl-card-opt b { font-size: 13px; font-weight: 600; }
@@ -437,7 +457,7 @@ html[data-platform='darwin']:not([data-fullscreen]) .dshl.page .dshl-top :is(but
 .dshl-lines { display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; margin: 0 -6px; overflow: auto; }
 .dshl:not(.page) .dshl-lines { max-height: calc(100vh - 330px); }
 @media (max-width: 1000px) { .dshl:not(.page) .dshl-lines { max-height: 60vh; } }
-.dshl-line { display: grid; grid-template-columns: 44px 1fr; gap: 6px; padding: 7px 6px; border: 0; border-radius: 8px; background: none; color: var(--ink); text-align: left; cursor: pointer; }
+.dshl-line { display: grid; grid-template-columns: 44px 1fr 14px; gap: 6px; padding: 7px 6px; border: 0; border-radius: 8px; background: none; color: var(--ink); text-align: left; cursor: pointer; }
 .dshl-lines > .pad { padding: 16px 6px; }
 .dshl-line:hover { background: var(--hover); }
 .dshl-line.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
@@ -447,6 +467,12 @@ html[data-platform='darwin']:not([data-fullscreen]) .dshl.page .dshl-top :is(but
 .dshl-line .main { font-weight: 550; }
 .dshl-line .sub { color: var(--muted); font-size: 13px; }
 .dshl-line.raw .main, .dshl-line.raw .sub { opacity: .62; }
+/* Polished lines: a quiet tick at the end; first-pass lines stay lighter until polished. */
+.dshl-line .mark { display: flex; padding-top: 4px; color: var(--faint); opacity: .7; }
+.dshl-line.active .mark { color: var(--accent); }
+/* Player: a faint tick on the subtitle button while the line on screen is polished (explained on hover). */
+.dshl-okmark { display: flex; margin: 0 -2px 0 1px; color: rgba(255,255,255,.45); }
+.dshl-okmark svg { width: 9px; height: 9px; }
 
 /* Reading (paragraphs by speaker) */
 .dshl-read { display: grid; align-content: start; gap: 16px; flex: 1; min-height: 0; overflow: auto; padding: 2px 2px 12px; }

@@ -20,6 +20,17 @@ export interface TermChange {
 
 const MAX = 80
 
+/** Does the text mention the term (its correct form or a known wrong one)? Latin words match whole words only. */
+function mentions(text: string, t: Term): boolean {
+  return [t.src, ...(t.aliases ?? [])].some(w => {
+    const k = w.trim().toLowerCase()
+    if (!k) return false
+    if (!/^[\x00-\x7f]+$/.test(k)) return text.includes(k)
+    const esc = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return new RegExp(`(^|[^a-z0-9])${esc}($|[^a-z0-9])`).test(text)
+  })
+}
+
 function readTerms(file?: string): Term[] {
   if (!file || !existsSync(file)) return []
   try { return JSON.parse(readFileSync(file, 'utf8')) as Term[] } catch { return [] }
@@ -30,10 +41,14 @@ function readTerms(file?: string): Term[] {
  * holds terms confirmed by polished text, and gets corrected as polishing
  * goes on). Used by recognition (correct spellings as hints), translation
  * and the next polishing round. Users can correct or remove entries; their
- * entries win and are kept in a shared library for later videos.
+ * entries win and are kept in a shared library for later videos. A library
+ * entry joins a video's glossary only once that video mentions it (title,
+ * description or subtitles), so one video's names never show up in another.
  */
 export class Glossary {
   terms: Term[] = []
+  /** Library entries this video has not mentioned yet: not shown, not in any prompt. */
+  private shelf: Term[] = []
 
   constructor(
     private readonly file: string,
@@ -44,13 +59,29 @@ export class Glossary {
     /** Shared library of user terms (kept across videos). */
     private readonly library?: string,
   ) {
-    this.terms = readTerms(file).map(t => ({ ...t, origin: t.origin ?? 'auto' }))
-    for (const t of readTerms(library)) if (!this.find(t.src)) this.terms.push({ ...t, origin: 'user' })
+    const lib = readTerms(library).map(t => ({ ...t, origin: 'user' as const }))
+    const inLib = (t: Term) => lib.some(x => x.src.toLowerCase() === t.src.toLowerCase())
+    // Older versions copied the whole library into every video: those copies wait on the shelf
+    // again and come back as soon as this video's text mentions them (see notice()).
+    this.terms = readTerms(file).map(t => ({ ...t, origin: t.origin ?? 'auto' })).filter(t => t.origin !== 'user' || !inLib(t))
+    this.shelf = lib.filter(t => !this.find(t.src))
     // Plugin setting: lines like "Dots = Dots" or "GPT-6.1 Sol".
     for (const line of seed.split('\n').map(l => l.trim()).filter(Boolean)) {
       const [src, rest] = line.split(/\s*=\s*/)
       if (src && !this.find(src)) this.terms.push({ src, tr: rest ? Object.fromEntries(this.targets.map(t => [t, rest])) : {}, origin: 'user' })
     }
+  }
+
+  /** New text from this video (title, description, subtitle lines): bring in the library entries it mentions. */
+  notice(text: string): void {
+    if (!this.shelf.length || !text) return
+    const low = text.toLowerCase()
+    const hit = this.shelf.filter(t => mentions(low, t) && !this.find(t.src))
+    if (!hit.length) return
+    this.shelf = this.shelf.filter(t => !hit.includes(t))
+    this.terms.push(...hit)
+    this.log(`glossary: ${hit.map(t => t.src).join(', ')} from the library`)
+    this.save()
   }
 
   setTargets(targets: string[]): void {
@@ -128,6 +159,7 @@ export class Glossary {
     } else this.terms.push({ src, tr: term.tr ?? {}, aliases: term.aliases, note: term.note, origin: 'user' })
     this.save()
     const t = this.find(src)!
+    this.shelf = this.shelf.filter(x => x.src.toLowerCase() !== src.toLowerCase())
     this.saveLibrary(lib => [...lib.filter(x => x.src.toLowerCase() !== src.toLowerCase()), { ...t, origin: 'user' }])
   }
 
@@ -135,6 +167,7 @@ export class Glossary {
     const t = this.find(src)
     if (!t) return
     this.terms = this.terms.filter(x => x !== t)
+    this.shelf = this.shelf.filter(x => x.src.toLowerCase() !== t.src.toLowerCase())
     this.save()
     this.saveLibrary(lib => lib.filter(x => x.src.toLowerCase() !== t.src.toLowerCase()))
   }

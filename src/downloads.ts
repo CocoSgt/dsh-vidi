@@ -1,17 +1,17 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { exportCues } from './export.ts'
 import { LANGS } from './translate.ts'
-import { downloadOriginal, findOriginal, installedBrowsers, siteOf, type CookieChoice } from './sites.ts'
+import { downloadAudio, downloadOriginal, findOriginal, installedBrowsers, siteOf, type CookieChoice } from './sites.ts'
 import type { Cue } from './types.ts'
 
 const run = promisify(execFile)
 
 export interface Task {
   id: string
-  kind: 'original' | 'subtitled' | 'video'
+  kind: 'original' | 'subtitled' | 'video' | 'audio'
   /** What is happening now, for multi-step tasks: 'download' (original) / 'mux' (adding subtitle tracks). */
   stage?: 'download' | 'mux'
   /** File name to save as (says which version it is). */
@@ -180,5 +180,42 @@ export class Downloads {
       })
     return task
   }
-}
 
+  /**
+   * Just the sound, as a file people can play anywhere (M4A, or the site's own
+   * MP3/M4A as is). Uses what is already here (original, recording, source
+   * file); otherwise fetches only the audio stream, never the whole video.
+   */
+  audio(opts: { conversationId: string; dirId: string; title?: string; url?: string; browser?: string; localFile?: string; saveAs: string }): Task {
+    const dir = join(this.jobsDir, opts.dirId)
+    const task = this.add({ kind: 'audio', conversationId: opts.conversationId, url: opts.url, dirId: opts.dirId, title: opts.title, saveAs: opts.saveAs })
+    void (async () => {
+      const recording = join(dir, 'recording.mp4')
+      let source = opts.localFile ?? findOriginal(dir) ?? (existsSync(recording) ? recording : undefined)
+      if (!source) {
+        if (!opts.url) throw new Error('nothing to take the sound from yet')
+        task.stage = 'download'
+        source = await downloadAudio(opts.url, dir, opts.browser, pct => { task.pct = Math.round(pct * 0.95) })
+      }
+      // Already a plain audio file in the job folder: hand it over as it is.
+      if (dirname(source) === dir && /^\.(m4a|mp3)$/i.test(extname(source))) { task.file = basename(source); return }
+      task.stage = 'mux'
+      task.pct = Math.max(task.pct, 95)
+      const out = join(dir, 'audio.m4a')
+      try {
+        await run('ffmpeg', ['-v', 'error', '-y', '-i', source, '-vn', '-map', '0:a:0', '-c:a', 'copy', '-movflags', '+faststart', out], { timeout: 900_000 })
+      } catch {
+        await run('ffmpeg', ['-v', 'error', '-y', '-i', source, '-vn', '-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out], { timeout: 1_800_000 })
+      }
+      task.file = basename(out)
+    })()
+      .then(() => { task.status = 'done'; task.pct = 100; task.stage = undefined })
+      .catch(err => {
+        const msg = String((err as { stderr?: string }).stderr || (err as Error).message)
+        task.status = 'error'
+        task.error = /HTTP Error (412|429)/.test(msg) ? 'The site is refusing requests for now (rate limit). Try again in a minute.' : msg.slice(-300)
+        this.log(`audio download failed: ${task.error}`)
+      })
+    return task
+  }
+}

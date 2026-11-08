@@ -8,16 +8,16 @@ A video tool for DeepSeek Harness: watch live streams, videos and podcasts with 
 
 - **Opens anything**: YouTube, Bilibili and other sites yt-dlp supports, Xiaoyuzhou podcast episodes, m3u8 / rtmp / srt streams, local files (drop them in), or a stream pushed from OBS.
 - **Subtitles start by themselves** when a video opens; pause and resume any time. One or two languages (a main line and a second line); the site's own subtitles can be shown too, or used as a reference.
-- **Two paces**: real-time shows lines as they are heard; polished arrives a little later with misheard words fixed from context.
+- **Two paces**: real-time shows lines as they are heard; polished arrives a little later with misheard words fixed from context. In the subtitle list, polished lines carry a small tick; lines not polished yet are lighter.
 - **The subtitle model looks at the video**: polishing uses the page's title, description and comments, and — when the chosen model reads images — a frame of that stretch. It also keeps a glossary of names and terms for the video.
 - **Chat with DeepSeek beside the video**: grab this moment, cut this part, summarise, download the original — all in one conversation, with files saved in the video's folder.
 - **Restream**: push the video with its subtitles drawn into the picture to Bilibili, Douyin, Kuaishou, WeChat Channels, Douyu, Huya, YouTube, Twitch or any RTMP/SRT address — several at once; each platform connects and reconnects on its own.
-- **Export**: SRT / VTT subtitles, transcripts by line or paragraph, clips with subtitle tracks.
+- **Download and export**: the original or a video with subtitle tracks, just the sound (M4A), SRT / VTT subtitles, transcripts by line or paragraph.
 - English and Chinese interface; works on phones.
 
 ## Install
 
-In DSH, open **Plugins → Install third-party plugin** and enter `dsh-vidi`. A **Video** button appears in the sidebar; pasting a video link in a chat also offers to open it.
+In DSH, open **Plugins → Install third-party plugin** and enter `dsh-vidi`. A **Vidi video** button appears in the sidebar (the video page takes the main area like a chat, and the sidebar opens and closes as usual); pasting a video link in a chat also offers to open it.
 
 Needs DSH 0.2.2 or later.
 
