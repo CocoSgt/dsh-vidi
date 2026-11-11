@@ -26,6 +26,8 @@ const FILE_LIKE = /\.(mp4|m4v|mov|mkv|webm|mp3|m4a|aac|wav|flac|ogg)(\?|$)/i
 /** Pace for subtitles: stop reading ahead once recognition or translation is this far behind (seconds / lines). */
 const AHEAD_MAX_SEC = 30
 const AHEAD_MAX_LINES = 10
+/** How long pausing waits for lines still being translated or polished before leaving them to finish behind it (ms). */
+export const SETTLE = { wait: 3000 }
 
 export interface JobDeps {
   dir: string
@@ -166,6 +168,8 @@ export class LiveJob extends EventEmitter {
   /** The video's language as the site states it (before any recognition). */
   siteLang?: string
   private readonly polisher: Polisher
+  /** Set off when the video is closed: model requests under way are given up. */
+  private readonly closing = new AbortController()
   nextId = 1
   private drafts = new Map<string, number>()
   ingest?: { rtmp?: string; srt?: string; key?: string }
@@ -186,7 +190,7 @@ export class LiveJob extends EventEmitter {
     this.polisher = new Polisher({
       llm: deps.llm, glossary: deps.glossary, log: m => deps.log(`[${id}] ${m}`),
       brief: () => this.brief, siteText: (a, b) => this.siteText(a, b), targets: () => this.targets(),
-      still: at => this.still(at),
+      still: at => this.still(at), signal: this.closing.signal,
       onLine: (cue, src, tr, speaker) => {
         if (!this.cues.includes(cue) || cue.edited) return // replaced by a later run, or shaped by the user
         this.deps.glossary.notice(src)
@@ -627,34 +631,53 @@ export class LiveJob extends EventEmitter {
     this.deps.glossary.setTargets(tgtLangs)
     this.persist()
     this.emit('state', this.summary())
+    await this.fill()
+  }
+  private filling = false
+
+  /**
+   * Give every finished line the translations it lacks (a language just added, or lines a failed
+   * request left behind), in batches. A line that cannot be translated is passed over, so the
+   * lines after it still get theirs; it stops only when the model gives nothing twice in a row.
+   */
+  private async fill(): Promise<void> {
     if (this.filling) return
     this.filling = true
+    const log = (m: string) => this.deps.log(`[${this.id}] ${m}`)
+    const failed = new Set<number>()
+    let empty = 0, filled = 0
     try {
-      for (;;) {
+      while (!this.closing.signal.aborted) {
         const targets = this.targets()
         const handle = this.deps.llm()
         if (!handle || !targets.length) break
-        const todo = this.cues.filter(c => c.final && c.src && targets.some(t => !c.tr?.[t])).slice(0, 15)
+        const todo = this.cues.filter(c => c.final && c.src.trim() && !failed.has(c.id) && targets.some(t => !c.tr?.[t])).slice(0, 15)
         if (!todo.length) break
         const missing = targets.filter(t => todo.some(c => !c.tr?.[t]))
-        const got = await translateBatch(handle, missing, todo.map(c => ({ id: c.id, src: c.src })), this.deps.glossary.forPrompt())
-        if (!got.size) break
+        const got = await translateBatch(handle, missing, todo.map(c => ({ id: c.id, src: c.src })), this.deps.glossary.forPrompt(), { signal: this.closing.signal, log })
         for (const c of todo) {
           const tr = got.get(c.id)
-          if (!tr) continue
-          c.tr = { ...c.tr, ...tr }
-          this.emit('cue', c)
-          this.record(c)
+          // Only what was missing: a translation already there (polished, or the user's) stays.
+          const add = Object.fromEntries(Object.entries(tr ?? {}).filter(([t]) => !c.tr?.[t]))
+          if (Object.keys(add).length) {
+            c.tr = { ...c.tr, ...add }
+            filled++
+            this.emit('cue', c)
+            this.record(c)
+          }
+          if (targets.some(t => !c.tr?.[t])) failed.add(c.id)
         }
+        empty = got.size ? 0 : empty + 1
+        if (empty >= 2) { log(`fill translations: the model gives nothing, stopping (${this.cues.filter(c => c.final && c.src.trim() && targets.some(t => !c.tr?.[t])).length} lines left)`); break }
       }
+      if (failed.size) log(`fill translations: ${failed.size} lines still without a translation (ids ${[...failed].slice(0, 20).join(', ')}${failed.size > 20 ? '…' : ''})`)
     } catch (err) {
-      this.deps.log(`[${this.id}] fill translations: ${(err as Error).message}`)
+      if (!this.closing.signal.aborted) log(`fill translations: ${(err as Error).message}`)
     } finally {
       this.filling = false
-      this.save()
+      if (filled) this.save()
     }
   }
-  private filling = false
 
   /** Pause subtitles; the next start resumes from here. */
   async pauseSubs(): Promise<void> {
@@ -673,11 +696,17 @@ export class LiveJob extends EventEmitter {
     this.subs = { state, at: this.subs.at }
     this.persist()
     this.emit('state', this.summary())
-    await this.translating
-    await this.polisher.flush()
-    this.save()
-    this.persist()
-    this.emit('state', this.summary())
+    const settled = (async () => {
+      await this.translating
+      await this.polisher.flush()
+      // Lines a failed request left without a translation get one now.
+      if (!this.reader) await this.fill()
+      this.save()
+      this.persist()
+      this.emit('state', this.summary())
+    })().catch(err => this.deps.log(`[${this.id}] finishing subtitles: ${(err as Error).message}`))
+    // Pausing does not wait for a slow or stuck model: what is left finishes behind it.
+    await Promise.race([settled, new Promise(r => setTimeout(r, SETTLE.wait))])
   }
 
   /**
@@ -765,13 +794,13 @@ export class LiveJob extends EventEmitter {
     this.translating = this.translating.then(async () => {
       try {
         const ref = this.siteText(cue.start, cue.end).map(x => `[${x.lang}${x.auto ? ', auto' : ''}] ${x.text}`).join('\n')
-        const tr = await this.deps.translator.translate(this.targets(), text, context, this.deps.glossary.forPrompt(), undefined, ref)
+        const tr = await this.deps.translator.translate(this.targets(), text, context, this.deps.glossary.forPrompt(), this.closing.signal, ref, m => this.deps.log(`[${this.id}] ${m}`))
         if (tr) {
           cue.tr = { ...cue.tr, ...tr }
           this.emit('cue', cue)
         }
       } catch (err) {
-        this.deps.log(`[${this.id}] translate: ${(err as Error).message}`)
+        if (!this.closing.signal.aborted) this.deps.log(`[${this.id}] translate: ${(err as Error).message}`)
       }
       this.pendingTranslations--
       this.record(cue)
@@ -896,6 +925,7 @@ export class LiveJob extends EventEmitter {
     await this.restreamer?.stop()
     await this.stop(reason)
     await this.pauseSubs()
+    this.closing.abort()
   }
 
   // ── Voiceover ──

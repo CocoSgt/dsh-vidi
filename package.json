@@ -37,7 +37,8 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "node --experimental-transform-types --no-warnings checks/subtitles.check.ts"
   },
   "dsh": {
     "bundle": {
