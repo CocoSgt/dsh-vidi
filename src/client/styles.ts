@@ -764,13 +764,20 @@ body > .dshl-menu { z-index: 2147483002; }
 
 /* ── Outside the plugin view: sidebar entry and the composer's paste prompt (host tokens directly) ── */
 .dshl-sidebtn { position: relative; isolation: isolate; display: flex; align-items: center; gap: 8px; flex: 0 0 auto; overflow: hidden; border: 0; background: none; cursor: pointer;
-  color: var(--dsw-alias-label-primary, #1b1b19); font-family: inherit; font-size: 14px; line-height: 22px; box-sizing: border-box; }
-.dshl-sidebtn.wide { width: calc(100% + 4px); height: 42px; margin: 4px -2px 0; padding: 0 10px 0 8px; border-radius: 12px; }
-.dshl-sidebtn.rail { justify-content: center; width: 36px; height: 36px; margin: 8px 0 0; padding: 0; border-radius: 50%; }
-.dshl-sidebtn:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.05)); }
+  color: var(--dsw-alias-label-primary, #1b1b19); font-family: inherit; font-size: 14px; line-height: 22px; text-align: left; box-sizing: border-box; border-radius: var(--dsw-radius-md, 12px); }
+/* Lined up with the account row at the sidebar foot: the same 2px inset and 6px padding, the icon centred in a
+   24px slot like the avatar, so icon centre and label start match the row below. */
+.dshl-sidebtn.wide { width: calc(100% - 4px); height: 34px; margin: 4px 2px 0; padding: 6px; }
+/* The footer row holds every plugin's button: wide buttons take a line each, rail icons stack.
+   DSH wraps each slot entry in a display:contents element, so the row is the button's grandparent. */
+div:has(> .dshl-sidebtn.wide), div:has(> div > .dshl-sidebtn.wide) { flex-wrap: wrap; }
+div:has(> .dshl-sidebtn.rail), div:has(> div > .dshl-sidebtn.rail) { flex-direction: column; align-items: center; }
+.dshl-sidebtn.rail { justify-content: center; width: 36px; height: 36px; margin: 8px 0 0; padding: 0; }
+.dshl-sidebtn:hover { background-color: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.05)); }
 .dshl-sidebtn svg { flex: none; }
-/* The mark is drawn at 18px; the host's sidebar icons are 16px. Same centre, same text start. */
-.dshl-sidebtn.wide svg { margin: 0 -1px; }
+/* The host's sidebar icons: 16px in the wide sidebar, 18px in the narrow one. */
+.dshl-sidebtn.wide svg { width: 16px; height: 16px; margin: 0 4px; }
+.dshl-sidebtn.rail svg { width: 18px; height: 18px; }
 .dshl-sidebtn .label { position: relative; overflow: hidden; white-space: nowrap; }
 .dshl-sidebtn .meta { margin-left: auto; color: var(--dsw-alias-label-secondary, #66655f); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dshl-sidebtn .bg { position: absolute; inset: 0; z-index: -1; background: var(--thumb) center / cover no-repeat; opacity: .38; filter: saturate(.85);
