@@ -241,7 +241,7 @@ export function SidebarButton(props: { wide?: boolean; sessions: SessionsLike; w
     <button className={`dshl-sidebtn ${wide ? 'wide' : 'rail'} ${busy ? 'busy' : ''} ${page.open ? 'here' : ''}`} title={tip} onClick={open}
       style={thumb ? { ['--thumb' as string]: `url(${thumb})` } : undefined}>
       {thumb && <span className="bg" aria-hidden="true" />}
-      <Icon.video busy={busy} live={live} />
+      <Icon.tile busy={busy} live={live} />
       {wide && <span className="label">{t('page.open')}</span>}
       {wide && meta && <span className="meta">{meta}</span>}
     </button>

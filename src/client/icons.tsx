@@ -48,4 +48,23 @@ export const Icon = {
       {live && <circle className="rec" cx="20.6" cy="4.2" r="2.6" fill="#e5484d" stroke="var(--dsw-alias-bg-base, #fff)" strokeWidth={1.2} />}
     </svg>
   ),
+  /**
+   * The app tile for the sidebar, where the other plugins show a coloured tile: the same mark in white
+   * on the plugin's blue, one caption line in the yellow of the logo. busy and live as above.
+   */
+  tile: ({ busy = false, live = false }: { busy?: boolean; live?: boolean }) => (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" shapeRendering="geometricPrecision" className={`dshl-mark tile ${busy ? 'busy' : ''}`}>
+      <defs>
+        <linearGradient id="dshl-tile-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#6E8DFF" /><stop offset="1" stopColor="#3552EC" /></linearGradient>
+      </defs>
+      <rect width="24" height="24" rx="5.5" fill="url(#dshl-tile-g)" />
+      <g fill="none" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+        <rect x="5" y="5" width="14" height="10" rx="2.6" stroke="#fff" />
+        <path className="play" d="M10.6 7.9v4.2l3.4-2.1z" fill="#fff" stroke="#fff" strokeWidth={0.9} />
+        <path className="c1" d="M6.5 18.6h7" stroke="#fff" />
+        <path className="c2" d="M16.2 18.6h1.3" stroke="#FFC53D" />
+      </g>
+      {live && <circle className="rec" cx="20.4" cy="3.6" r="3" fill="#e5484d" stroke="var(--dsw-alias-bg-base, #fff)" strokeWidth={1.4} />}
+    </svg>
+  ),
 }

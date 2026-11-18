@@ -775,9 +775,11 @@ div:has(> .dshl-sidebtn.rail), div:has(> div > .dshl-sidebtn.rail) { flex-direct
 .dshl-sidebtn.rail { justify-content: center; width: 36px; height: 36px; margin: 8px 0 0; padding: 0; }
 .dshl-sidebtn:hover { background-color: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.05)); }
 .dshl-sidebtn svg { flex: none; }
-/* The host's sidebar icons: 16px in the wide sidebar, 18px in the narrow one. */
-.dshl-sidebtn.wide svg { width: 16px; height: 16px; margin: 0 4px; }
+/* Like the other plugins' entries beside it (小红书舆情, 游戏商店…): a 20px coloured tile with 2px either side in the
+   wide sidebar, 18px in the narrow one; the open page keeps the hover background. */
+.dshl-sidebtn.wide svg { width: 20px; height: 20px; margin: 0 2px; }
 .dshl-sidebtn.rail svg { width: 18px; height: 18px; }
+.dshl-sidebtn.here { background-color: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.05)); }
 .dshl-sidebtn .label { position: relative; overflow: hidden; white-space: nowrap; }
 .dshl-sidebtn .meta { margin-left: auto; color: var(--dsw-alias-label-secondary, #66655f); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dshl-sidebtn .bg { position: absolute; inset: 0; z-index: -1; background: var(--thumb) center / cover no-repeat; opacity: .38; filter: saturate(.85);
