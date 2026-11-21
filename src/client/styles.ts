@@ -137,6 +137,18 @@ const CSS = `
   background: var(--l1); color: var(--muted); font-size: 13px; }
 .dshl-note.warn { color: var(--live); border-color: color-mix(in srgb, var(--live) 35%, transparent); background: color-mix(in srgb, var(--live) 6%, var(--bg)); }
 .dshl-note code { padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--ink); font-size: 12.5px; }
+.dshl-setup { flex-direction: column; align-items: stretch; }
+.dshl-setup .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.dshl-setup .row .dshl-btn { margin-left: auto; }
+.dshl-setup .steps { display: grid; gap: 4px; margin: 2px 0 0; padding: 0; list-style: none; color: var(--ink); font-size: 13px; }
+.dshl-setup .steps li { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dshl-setup .steps b { flex: none; min-width: 96px; font-weight: 600; }
+.dshl-setup .steps .detail { min-width: 0; overflow: hidden; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.dshl-setup .steps li.done .detail { color: var(--ok, #1f8f4e); }
+.dshl-setup .steps li.fail .detail { color: var(--live); white-space: normal; }
+.dshl-setup .steps .bar { flex: 0 0 120px; height: 4px; margin-left: auto; overflow: hidden; border-radius: 2px; background: var(--line); }
+.dshl-setup .steps .bar i { display: block; height: 100%; background: var(--accent, #3552ec); transition: width .4s; }
+.dshl-setup code.cmd { max-width: 100%; overflow-x: auto; white-space: nowrap; }
 
 .dshl-tasks { display: grid; gap: 4px; margin: 10px 20px 0; }
 .dshl-task { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 12px; border-radius: 8px; background: var(--l1); color: var(--muted); font-size: 13px; }

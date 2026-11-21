@@ -8,6 +8,7 @@ import { Icon } from './icons.tsx'
 import { langLabel } from './langs.ts'
 import { LineChips } from './LineChips.tsx'
 import { SubtitleMenu } from './SubtitleMenu.tsx'
+import { SetupNote } from './SetupNote.tsx'
 import type { LiveKey } from './locales.ts'
 import { LoginDialog } from './LoginDialog.tsx'
 import { DubMenu, useVoices, VoiceMaker } from './DubPanel.tsx'
@@ -358,7 +359,7 @@ export function LiveView(props: LiveViewInjected) {
   const options = () => ({ mode, srcLang: spoken, tgtLangs: translationsOf(lines), provider: usableEngine(), conversationId: sessionId })
 
   // ── Load environment and any job of this conversation ──
-  useEffect(() => {
+  const loadDeps = useCallback(() => {
     fetch('/live/api/deps').then(r => r.json()).then(d => {
       setDeps(d.deps ?? []); setLangs(d.langs ?? {}); setHasTranslator(!!d.translator)
       if (d.dataDir) setJobsDir(`${d.dataDir}/jobs`)
@@ -366,6 +367,9 @@ export function LiveView(props: LiveViewInjected) {
       // This computer when it can, else an online service with a key — unless the user already chose.
       setEngineRaw(prev => prev || d.defaultEngine || 'local')
     }).catch(() => {})
+  }, [])
+  useEffect(() => {
+    loadDeps()
     fetch('/live/api/settings').then(r => r.json()).then(s => { setLoginRaw(s.cookies ?? 'auto'); setBrowsers(s.browsers ?? []) }).catch(() => {})
     fetch(`/live/api/job?conversationId=${encodeURIComponent(sessionId)}`).then(r => r.json()).then(j => {
       if (!j) return
@@ -978,7 +982,7 @@ export function LiveView(props: LiveViewInjected) {
         </header>
       )}
 
-      {missing.length > 0 && <div className="dshl-note warn">{t('note.install')} {missing.map(d => <code key={d.name}>{d.hint}</code>)}</div>}
+      {missing.length > 0 && <SetupNote missing={missing} local={(engine || 'local') === 'local'} t={t} onDone={loadDeps} />}
       {needsModel && <div className="dshl-note">{t('note.noModel')}</div>}
       {accessIssue && (
         <div className="dshl-note warn"><span>{t('dev.denied').replace('{d}', accessIssue.map(k => t(`dev.k.${k}` as LiveKey)).join(t('dev.and')))}</span>

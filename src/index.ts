@@ -11,6 +11,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { checkDeps } from './deps.ts'
+import { ensureBrewPath, Setup } from './setup.ts'
 import { exportCues, type ExportFormat } from './export.ts'
 import { Glossary } from './glossary.ts'
 import { LiveJob, openedAt } from './job.ts'
@@ -215,6 +216,10 @@ export function apply(ctx: Context, config: Config): void {
       return () => { off?.(); keys.creds = undefined; void keys.refresh() }
     }, 'dsh-vidi: speech keys')
   })
+  // Tools from Homebrew are found even when the app was started from the Dock (short PATH).
+  ensureBrewPath()
+  /** One-click setup of the missing tools and the model (the page's "install" button). */
+  const setup = new Setup(config.whisperModel, log)
   /** Whether whisper.cpp and its model are installed (checked at start and on each deps request). */
   let localReady = false
   void checkDeps(config.whisperModel).then(d => { localReady = d.filter(x => ['ffmpeg', 'whisper-server', 'whisper model'].includes(x.name)).every(x => x.ok) })
@@ -542,6 +547,11 @@ export function apply(ctx: Context, config: Config): void {
     try {
       if ((route === 'dub' || route.startsWith('dub/') || route === 'voices' || route.startsWith('voices/')) && await voices(route, req, res, url)) return
       if (route === 'overlay') return send(res, 200, { url: `http://127.0.0.1:${config.overlayPort}/overlay`, screen: `http://127.0.0.1:${config.overlayPort}/screen`, screenLan: `http://${lanAddress()}:${config.overlayPort}/screen` })
+      if (route === 'setup') {
+        // GET: progress; POST { local }: install what is missing (local = also local subtitles: whisper-cpp and the model).
+        if (req.method === 'POST') { const b = await readJson(req); return send(res, 200, setup.start({ local: b.local !== false })) }
+        return send(res, 200, setup.state())
+      }
       if (route === 'deps') {
         const [deps] = await Promise.all([checkDeps(config.whisperModel), keys.refresh()])
         localReady = deps.filter(d => ['ffmpeg', 'whisper-server', 'whisper model'].includes(d.name)).every(d => d.ok)
