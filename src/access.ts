@@ -46,12 +46,12 @@ export async function askAccess(kind: 'camera' | 'microphone'): Promise<AccessSt
 export function openPrivacySettings(kind: AccessKind): boolean {
   if (process.platform === 'darwin') {
     const pane = kind === 'camera' ? 'Privacy_Camera' : kind === 'microphone' ? 'Privacy_Microphone' : 'Privacy_ScreenCapture'
-    spawn('open', [`x-apple.systempreferences:com.apple.preference.security?${pane}`], { stdio: 'ignore', detached: true }).unref()
+    spawn('open', [`x-apple.systempreferences:com.apple.preference.security?${pane}`], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
     return true
   }
   if (process.platform === 'win32') {
     const page = kind === 'camera' ? 'privacy-webcam' : kind === 'microphone' ? 'privacy-microphone' : 'privacy'
-    spawn('cmd', ['/c', 'start', '', `ms-settings:${page}`], { stdio: 'ignore', detached: true }).unref()
+    spawn('cmd', ['/c', 'start', '', `ms-settings:${page}`], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
     return true
   }
   return false

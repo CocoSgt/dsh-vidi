@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { type ChildProcess } from 'node:child_process'
+import { spawnTool } from './proc.ts'
 import { createReadStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
@@ -140,7 +141,7 @@ export function voiceRoutes(d: VoiceRoutesDeps) {
         const id = newId()
         const input = deviceInput({ audio: mic.id }, [])
         // The sample to a file, and a small copy of the sound on stdout for the level meter.
-        const proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...input.args, '-t', '30',
+        const proc = spawnTool('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...input.args, '-t', '30',
           '-map', input.audio, '-ac', '1', '-ar', String(SAMPLE_RATE), '-c:a', 'pcm_s16le', join(tmpDir, `${id}.raw.wav`),
           '-map', input.audio, '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] })
         const r: Rec = { proc, id, startedAt: Date.now(), level: 0 }

@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { type ChildProcess } from 'node:child_process'
+import { spawnTool } from './proc.ts'
 import { EventEmitter } from 'node:events'
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Readable, Writable } from 'node:stream'
@@ -272,7 +273,7 @@ export class Restream extends EventEmitter {
       // The subtitle-only picture carries no sound (the camera's own goes with it in OBS).
       ...this.outs.flatMap((o, i) => ['-map', `[o_${o}]`, ...video, ...(o === 'subs' ? ['-an'] : audioOf(o)), ...(dub ? ['-shortest'] : []), '-f', 'mpegts', `pipe:${fd(i)}`]),
     ]
-    const enc = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'] })
+    const enc = spawnTool('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'] })
     this.encoder = enc
     this.spawnedAt = Date.now()
     // If DSH itself goes away, take the ffmpeg processes with it (they would keep pushing on their own).
@@ -374,7 +375,7 @@ export class Restream extends EventEmitter {
     if (!p || this.stopped) return
     const url = pushUrl(p.target)
     // Info level: "Output #0" appears once the platform accepted the connection.
-    const proc = spawn('ffmpeg', ['-hide_banner', '-nostats', '-loglevel', 'info', '-f', 'mpegts', '-i', 'pipe:0', '-c', 'copy', '-f', 'flv', '-flvflags', 'no_duration_filesize', url], { stdio: ['pipe', 'ignore', 'pipe'] })
+    const proc = spawnTool('ffmpeg', ['-hide_banner', '-nostats', '-loglevel', 'info', '-f', 'mpegts', '-i', 'pipe:0', '-c', 'copy', '-f', 'flv', '-flvflags', 'no_duration_filesize', url], { stdio: ['pipe', 'ignore', 'pipe'] })
     p.proc = proc
     p.status = { ...p.status, state: p.tries ? 'retrying' : 'connecting', since: Date.now(), message: undefined }
     let errTail = ''

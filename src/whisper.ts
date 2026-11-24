@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { type ChildProcess } from 'node:child_process'
+import { spawnTool } from './proc.ts'
 import { createServer } from 'node:net'
 
 /** Pick a free loopback port. */
@@ -70,7 +71,7 @@ export class WhisperServer {
 
   private async boot(): Promise<number> {
     const port = await freePort()
-    const proc = spawn('whisper-server', ['-m', this.model, '--host', '127.0.0.1', '--port', String(port), '-t', '8', '-nt', ...(this.audioCtx ? ['-ac', String(this.audioCtx)] : [])], { stdio: ['ignore', 'ignore', 'pipe'] })
+    const proc = spawnTool('whisper-server', ['-m', this.model, '--host', '127.0.0.1', '--port', String(port), '-t', '8', '-nt', ...(this.audioCtx ? ['-ac', String(this.audioCtx)] : [])], { stdio: ['ignore', 'ignore', 'pipe'] })
     this.proc = proc
     proc.on('exit', code => {
       this.log(`whisper-server exited (${code})`)
@@ -80,6 +81,7 @@ export class WhisperServer {
     })
     const deadline = Date.now() + 60_000
     while (Date.now() < deadline) {
+      if (this.proc !== proc) throw new Error('whisper-server could not be started')
       try {
         const res = await fetch(`http://127.0.0.1:${port}/`)
         if (res.status < 500) {

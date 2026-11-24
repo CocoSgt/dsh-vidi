@@ -1,4 +1,5 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { execFile, type ChildProcess } from 'node:child_process'
+import { spawnTool, NOT_STARTED } from './proc.ts'
 import { EventEmitter } from 'node:events'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -455,7 +456,7 @@ export class LiveJob extends EventEmitter {
     // frames, so the speaker sees themselves at once while the recording (and anything pushed on) waits for subtitles.
     const preview = (this.opts.source === 'device' || this.opts.source === 'push') && !!input.video
     if (preview) args.push('-map', input.video!, '-an', '-vf', 'scale=-2:540,fps=15', '-c:v', 'mjpeg', '-q:v', '6', '-f', 'image2pipe', 'pipe:3')
-    const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe', preview ? 'pipe' : 'ignore'] })
+    const ff = spawnTool('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe', preview ? 'pipe' : 'ignore'] })
     this.previewOn = false
     if (preview) {
       let tail = Buffer.alloc(0)
@@ -510,6 +511,7 @@ export class LiveJob extends EventEmitter {
       // Replaced (quality switch) or stopped on purpose: the caller handles what comes next.
       if (this.ffmpeg !== ff) return
       this.ffmpeg = undefined
+      if (code === NOT_STARTED) { void this.finishCapture(this.ffmpegError(code), false); return }
       if (this.status !== 'running') return
       // A push listener that has received nothing yet (a sender with the wrong key, a dropped attempt): listen again.
       if (this.opts.source === 'push' && this.message && (rejected || !this.segments().length)) {
@@ -592,7 +594,7 @@ export class LiveJob extends EventEmitter {
       this.setStatus(this.status, (err as Error).message)
       return
     }
-    const rd = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostdin', ...input, '-vn', '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const rd = spawnTool('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostdin', ...input, '-vn', '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] })
     this.reader = rd
     const offset = at
     let bytes = 0
