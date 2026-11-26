@@ -1,0 +1,35 @@
+# Publish dsh-vidi to npm when a version tag (v0.10.6, …) is pushed.
+# npm trusts this workflow through Trusted Publishing (OIDC): no npm token, no login, no one-time password.
+# Set up once on npmjs.com: dsh-vidi → Settings → Trusted Publisher → GitHub Actions,
+# owner CocoSgt, repository dsh-vidi, workflow publish.yml.
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # npm Trusted Publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # Trusted Publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
+      - name: The tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: pnpm run typecheck
+      - run: pnpm run check
+      - run: pnpm run build
+      - run: npm publish
