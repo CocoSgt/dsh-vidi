@@ -27,6 +27,12 @@ export interface SpeechProvider {
   readonly name: string
   /** Seconds of audio received but not yet turned into finished lines (used to pace videos). */
   backlog?(): number
+  /**
+   * For engines that work in real time and pace themselves (live interpretation): audio not yet sent (s).
+   * Reading waits only on this: such an engine finishes a line once it hears what follows, so waiting
+   * for its lines would only starve it.
+   */
+  queuedAudio?(): number
   /** True when the provider already returns translations (no LLM pass needed). */
   readonly translates: boolean
   /** Seconds between audio and its text arriving, when the provider measures it. */

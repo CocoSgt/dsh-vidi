@@ -247,8 +247,12 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-under { display: flex; flex-direction: column; flex: 1; min-height: 210px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--l1); }
 .dshl-under .dshl-sidetabs { align-items: center; padding: 0 12px 0 10px; }
 .dshl-under .dshl-sidetabs > button { flex: none; padding: 0 14px; }
-.dshl-tools.inline { flex: 1; justify-content: flex-end; min-width: 0; margin: 0; padding-left: 12px; }
-.dshl-tools.inline .dshl-field { flex: 0 1 220px; width: auto; height: 30px; margin: 0; }
+.dshl-tools.inline { flex: 1 1 auto; flex-wrap: wrap; row-gap: 6px; justify-content: flex-end; min-width: min-content; margin: 0; padding-left: 12px; }
+/* When the column is too narrow for tabs and tools on one row, the tools go to a row of their own (instead of
+   spilling left over the tabs); this follows the column's own width, not the window's. */
+.dshl-under .dshl-sidetabs { flex-wrap: wrap; row-gap: 0; }
+.dshl-tools.inline .dshl-field { flex: 0 1 220px; width: auto; min-width: 90px; height: 30px; margin: 0; }
+.dshl-tools.inline .dshl-field input { width: 100%; min-width: 0; }
 .dshl-tools.inline .dshl-seg { flex: none; }
 .dshl-under .dshl-panel { padding-top: 8px; }
 .dshl.page.theater .dshl-under { display: none; }
@@ -451,7 +455,8 @@ html[data-platform='darwin'] .dshl.page .dshl-top :is(button, input, label, a, .
 .dshl-line { position: relative; }
 .dshl-line .tools { position: absolute; top: 4px; right: 4px; display: none; gap: 2px; padding: 2px; border-radius: 7px; background: var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
 .dshl-line:hover .tools, .dshl-line:focus-within .tools { display: flex; }
-.dshl-line .tools .ghost { position: relative; display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px 0 5px; border: 0; border-radius: 5px; background: none; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
+/* Icon and label: as wide as they need (the general small-button rule makes buttons 28px square). */
+.dshl-line .tools .ghost { position: relative; display: flex; align-items: center; gap: 4px; width: auto; height: 24px; padding: 0 7px 0 5px; border: 0; border-radius: 5px; background: none; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
 .dshl-line .tools svg { width: 14px; height: 14px; flex: none; }
 /* Says what a button does the moment the pointer is on it (the system tooltip takes a second). */
 .dshl-history .stop { position: relative; }
@@ -655,7 +660,10 @@ body > .dshl-menu { z-index: 2147483002; }
 .dshl-okmark svg { width: 9px; height: 9px; }
 
 /* Reading (paragraphs by speaker) */
-.dshl-read { display: grid; align-content: start; gap: 16px; flex: 1; min-height: 0; overflow: auto; padding: 2px 2px 12px; }
+.dshl-read { display: block; flex: 1; min-height: 0; overflow: auto; padding: 2px 2px 12px; }
+/* Paragraphs stacked as ordinary blocks: a grid here sized its rows before the scrollbar took its width,
+   and the text, wrapped onto more lines than its row, ran over the paragraph below. */
+.dshl-read > * + * { margin-top: 16px; }
 .dshl:not(.page) .dshl-read { max-height: calc(100vh - 330px); }
 .dshl-read > .dshl-muted { margin: 0; }
 .dshl-read section { padding: 2px 8px 2px 10px; border-left: 2px solid transparent; }

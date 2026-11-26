@@ -7,8 +7,9 @@ import { checkDeps } from './deps.ts'
 
 /**
  * One-click setup of what Vidi needs on this Mac: the missing command-line tools through Homebrew
- * (yt-dlp, ffmpeg, whisper-cpp), then the whisper model for local subtitles. Runs in the background;
- * the page polls `state()` for progress.
+ * (yt-dlp, ffmpeg, whisper-cpp) and the whisper model for local subtitles, both at once. The tools go
+ * into one `brew install` (Homebrew downloads them in parallel itself; two brew processes would only
+ * wait on each other's lock). Runs in the background; the page polls `state()` for progress.
  */
 
 /** Where Homebrew puts its commands (Apple silicon, Intel). */
@@ -84,38 +85,7 @@ export class Setup {
       steps: [...tools.map(id => ({ id, state: 'wait' as StepState })), ...(model ? [{ id: 'model', state: 'wait' as StepState }] : [])],
     }
     try {
-      if (tools.length) {
-        const brew = findBrew()
-        if (!brew) {
-          for (const t of tools) this.step(t).state = 'fail'
-          this.s.error = 'no-brew'
-          this.s.brewInstall = HOMEBREW_INSTALL
-        } else {
-          for (const t of tools) {
-            const st = this.step(t)
-            st.state = 'run'
-            try {
-              await this.brew(brew, FORMULA[t]!, st)
-              st.state = 'done'; st.detail = undefined
-            } catch (err) {
-              st.state = 'fail'; st.detail = (err as Error).message
-              this.s.error ??= `${t}: ${(err as Error).message}`
-            }
-          }
-          ensureBrewPath()
-        }
-      }
-      if (model) {
-        const st = this.step('model')
-        st.state = 'run'
-        try {
-          await this.download(st)
-          st.state = 'done'; st.detail = undefined; st.pct = 100
-        } catch (err) {
-          st.state = 'fail'; st.detail = (err as Error).message
-          this.s.error ??= `model: ${(err as Error).message}`
-        }
-      }
+      await Promise.all([tools.length ? this.tools(tools) : undefined, model ? this.model() : undefined])
     } finally {
       this.s.running = false
       this.s.finishedAt = Date.now()
@@ -123,16 +93,63 @@ export class Setup {
     }
   }
 
-  /** `brew install <formula>`, its last line of output shown as it goes. */
-  private brew(brew: string, formula: string, st: SetupStep): Promise<void> {
+  /** Every missing tool in one `brew install`; afterwards each is checked for itself. */
+  private async tools(tools: string[]): Promise<void> {
+    const brew = findBrew()
+    if (!brew) {
+      for (const t of tools) this.step(t).state = 'fail'
+      this.s.error ??= 'no-brew'
+      this.s.brewInstall = HOMEBREW_INSTALL
+      return
+    }
+    const steps = tools.map(t => this.step(t))
+    for (const st of steps) st.state = 'run'
+    let failure: string | undefined
+    try {
+      await this.brew(brew, tools.map(t => FORMULA[t]!), steps)
+    } catch (err) {
+      failure = (err as Error).message
+    }
+    ensureBrewPath()
+    // One tool failing does not mean the others did: ask each one.
+    const now = await checkDeps(this.whisperModel)
+    for (const st of steps) {
+      if (now.some(d => d.name === st.id && d.ok)) { st.state = 'done'; st.detail = undefined }
+      else { st.state = 'fail'; st.detail = failure ?? st.detail; this.s.error ??= `${st.id}: ${failure ?? 'not installed'}` }
+    }
+  }
+
+  private async model(): Promise<void> {
+    const st = this.step('model')
+    st.state = 'run'
+    try {
+      await this.download(st)
+      st.state = 'done'; st.detail = undefined; st.pct = 100
+    } catch (err) {
+      st.state = 'fail'; st.detail = (err as Error).message
+      this.s.error ??= `model: ${(err as Error).message}`
+    }
+  }
+
+  /**
+   * `brew install <formulas…>`. Each line of output goes to the step of the tool it names (Homebrew says
+   * "Pouring ffmpeg…", "Installing yt-dlp…"); lines naming none (dependencies) go to every step still running.
+   */
+  private brew(brew: string, formulas: string[], steps: SetupStep[]): Promise<void> {
     return new Promise((resolve, reject) => {
       const env = { ...process.env, HOMEBREW_NO_AUTO_UPDATE: '1', HOMEBREW_NO_ENV_HINTS: '1', HOMEBREW_NO_INSTALL_CLEANUP: '1', NONINTERACTIVE: '1', HOMEBREW_NO_COLOR: '1' }
-      const p = spawn(brew, ['install', formula], { env, stdio: ['ignore', 'pipe', 'pipe'] })
-      let tail = ''
+      const p = spawn(brew, ['install', ...formulas], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+      let tail = '', rest = ''
       const take = (b: Buffer) => {
         tail = (tail + b.toString()).slice(-4000)
-        const line = tail.split('\n').map(l => l.replace(/\x1b\[[0-9;]*m/g, '').trim()).filter(Boolean).at(-1)
-        if (line) st.detail = line.slice(0, 160)
+        const lines = (rest + b.toString()).split(/[\r\n]/)
+        rest = lines.pop() ?? ''
+        for (const raw of lines) {
+          const line = raw.replace(/\x1b\[[0-9;]*m/g, '').trim().slice(0, 160)
+          if (!line) continue
+          const named = steps.filter((_, i) => new RegExp(`(^|[\\s/])${formulas[i]!.replace(/-/g, '\\-')}(@|--|[:,/\\s]|$)`).test(line))
+          for (const st of named.length === 1 ? named : steps) if (st.state === 'run') st.detail = line
+        }
       }
       p.stdout!.on('data', take)
       p.stderr!.on('data', take)

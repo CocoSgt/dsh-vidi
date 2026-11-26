@@ -27,6 +27,8 @@ const FILE_LIKE = /\.(mp4|m4v|mov|mkv|webm|mp3|m4a|aac|wav|flac|ogg)(\?|$)/i
 /** Pace for subtitles: stop reading ahead once recognition or translation is this far behind (seconds / lines). */
 const AHEAD_MAX_SEC = 30
 const AHEAD_MAX_LINES = 10
+/** A wait for recognition to catch up that sees no progress for this long ends (ms). */
+const STALL_MS = 6000
 /** How long pausing waits for lines still being translated or polished before leaving them to finish behind it (ms). */
 export const SETTLE = { wait: 3000 }
 
@@ -608,9 +610,16 @@ export class LiveJob extends EventEmitter {
       // Recognition or translation behind: wait (the recording keeps everything).
       if (!rd.stdout!.isPaused() && this.behind()) {
         rd.stdout!.pause()
+        // Resume once caught up — or when nothing moves for a while: an engine that finishes a line only
+        // after hearing what follows (live interpretation) would otherwise wait for audio that never comes.
+        let mark = this.progress(), since = Date.now()
         const resume = setInterval(() => {
           if (this.reader !== rd) { clearInterval(resume); return }
-          if (!this.behind(0.5)) { clearInterval(resume); rd.stdout!.resume() }
+          const now = this.progress()
+          if (now !== mark) { mark = now; since = Date.now() }
+          const stuck = Date.now() - since > STALL_MS
+          if (stuck) this.deps.log(`[${this.id}] subtitles: no progress for ${STALL_MS / 1000} s while waiting, reading on`)
+          if (stuck || !this.behind(0.5)) { clearInterval(resume); rd.stdout!.resume() }
         }, 300)
       }
     })
@@ -729,8 +738,16 @@ export class LiveJob extends EventEmitter {
     return Math.max(0, ready)
   }
 
+  /** Something that changes whenever recognition, translation or polishing moves on (to notice a wait that never ends). */
+  private progress(): string {
+    return `${this.cues.length}:${this.cues.filter(c => c.final).length}:${this.provider?.backlog?.()?.toFixed(1)}:${this.pendingTranslations}:${this.polisher.backlog}`
+  }
+
   /** Is recognition or translation too far behind the media read so far? (`slack` < 1 waits until it is well caught up.) */
   private behind(slack = 1): boolean {
+    // A real-time engine (live interpretation) is waited on only for audio it has not been sent yet: it
+    // needs a steady stream to finish its lines, and polishing them can fall behind (it catches up later).
+    if (this.provider?.queuedAudio) return this.provider.queuedAudio() > AHEAD_MAX_SEC * slack
     const asr = this.provider?.backlog?.() ?? 0
     return asr > AHEAD_MAX_SEC * slack || this.pendingTranslations > AHEAD_MAX_LINES * slack || this.polisher.backlog > 3 * AHEAD_MAX_LINES * slack
   }

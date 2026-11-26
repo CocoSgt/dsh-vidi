@@ -12,6 +12,8 @@ export interface OpenAITranslateOptions {
   target: string
   log?: (msg: string) => void
   url?: string
+  /** How much faster than real time audio may go up (default 1.5); for measuring. */
+  pace?: number
 }
 
 /** A piece of streamed text and the audio position (s, run timeline) it came with. */
@@ -26,6 +28,8 @@ const END = /[.!?。！？]["'”’」』)）]*\s*$/
 const SOFT_CJK = 22, SOFT_LATIN = 70
 /** Never longer than this on one subtitle. */
 const HARD_CJK = 34, HARD_LATIN = 110
+/** Text is never placed further back than this before the audio sent when it arrives (s). */
+const MAX_LAG = 4
 /** A stream quiet this long ends its sentence (a pause without punctuation). */
 const QUIET_SEC = 1.6
 /** …or this long when it is only a few words so far. */
@@ -146,6 +150,10 @@ export class OpenAITranslateProvider implements SpeechProvider {
   private lag = 0
   private connectedAt = 0
   private quiet?: ReturnType<typeof setInterval>
+  /** Last audio position the service stamped on its text (s, run timeline), for the timing log. */
+  private lastStamp = 0
+  private timing?: ReturnType<typeof setInterval>
+  private warnedAt = 0
 
   constructor(private readonly opts: OpenAITranslateOptions) {
     if (!TRANSLATE_TARGETS.includes(opts.target)) {
@@ -163,6 +171,8 @@ export class OpenAITranslateProvider implements SpeechProvider {
     // Speech that stops without punctuation still becomes a line.
     this.quiet = setInterval(() => this.settle(), 400)
     this.drain = setInterval(() => this.sendDue(), 100)
+    // Every half minute: how the service's audio positions compare with the audio sent (to see drift).
+    this.timing = setInterval(() => this.opts.log?.(`openai-translate timing: sent ${this.sent.toFixed(1)} s, queued ${this.queued.toFixed(1)} s, last stamp ${this.lastStamp.toFixed(1)} s, lag ${this.lag.toFixed(1)} s, session ${((Date.now() - this.connectedAt) / 1000).toFixed(0)} s`), 30_000)
   }
 
   private connect(): Promise<void> {
@@ -209,13 +219,18 @@ export class OpenAITranslateProvider implements SpeechProvider {
   /** Send queued audio, everything including silence, no faster than 1.5× real time since the session began. */
   private sendDue(): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return
-    const allowed = this.base + ((Date.now() - this.connectedAt) / 1000) * 1.5 + 2
+    const allowed = this.base + ((Date.now() - this.connectedAt) / 1000) * (this.opts.pace ?? 1.5) + 2
     while (this.queue.length && this.sent < allowed) {
       const pcm = this.queue.shift()!
       this.queued -= pcm.length / BYTES_PER_SEC
       this.send({ type: 'session.input_audio_buffer.append', audio: this.up.push(pcm).toString('base64') })
       this.sent += pcm.length / BYTES_PER_SEC
     }
+  }
+
+  /** Audio waiting to go up (the service listens in real time; reading waits only on this). */
+  queuedAudio(): number {
+    return this.queued
   }
 
   /** Audio received but not yet in a finished line (queued, or sent and still being worked on). */
@@ -225,7 +240,16 @@ export class OpenAITranslateProvider implements SpeechProvider {
 
   private onEvent(ev: { type: string; delta?: string; elapsed_ms?: number; error?: { message?: string } }): void {
     if (ev.type === 'session.input_transcript.delta' || ev.type === 'session.output_transcript.delta') {
-      const t = this.base + (ev.elapsed_ms ?? 0) / 1000
+      const stamped = this.base + (ev.elapsed_ms ?? 0) / 1000
+      this.lastStamp = Math.max(this.lastStamp, stamped)
+      // Text comes back a second or two after its audio. On live audio the service sometimes stamps it far
+      // earlier than that (15–20 s, measured against the recording), which puts the line on screen long
+      // before it is said: never place text further back than MAX_LAG before the audio sent so far.
+      const t = Math.max(stamped, this.sent - MAX_LAG)
+      if (t > stamped + 1 && Date.now() - this.warnedAt > 30_000) {
+        this.warnedAt = Date.now()
+        this.opts.log?.(`openai-translate: position ${stamped.toFixed(1)} s is ${(this.sent - stamped).toFixed(1)} s behind the audio sent, using ${t.toFixed(1)} s`)
+      }
       // How far the text trails the audio already sent (smoothed), for the page.
       const behind = Math.max(0, this.sent - t)
       this.lag = this.lag ? this.lag * 0.9 + behind * 0.1 : behind
@@ -328,6 +352,7 @@ export class OpenAITranslateProvider implements SpeechProvider {
     await new Promise(r => setTimeout(r, 2500))
     if (this.quiet) clearInterval(this.quiet)
     if (this.drain) clearInterval(this.drain)
+    if (this.timing) clearInterval(this.timing)
     this.src.close(); this.tr.close(); this.pair(true)
     this.stopped = true
     try { this.ws?.close() } catch {}

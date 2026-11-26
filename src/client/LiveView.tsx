@@ -616,10 +616,12 @@ export function LiveView(props: LiveViewInjected) {
   // ── Transcript ──
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const rows = cues.filter(c => c.src && c.final)
+    // A line can have only its translation (live interpretation sends the source with the next line): list it too.
+    const rows = cues.filter(c => c.final && (c.src.trim() || Object.values(c.tr ?? {}).some(v => v?.trim())))
     return q ? rows.filter(c => c.src.toLowerCase().includes(q) || Object.values(c.tr ?? {}).some(v => v.toLowerCase().includes(q))) : rows
   }, [cues, query])
-  const activeId = useMemo(() => cues.filter(c => c.start <= now + 0.2).at(-1)?.id, [cues, now])
+  // The playing line among those listed, so the list always has a row to follow.
+  const activeId = useMemo(() => shown.filter(c => c.start <= now + 0.2).at(-1)?.id, [shown, now])
   // Follow the playing line inside the list only (scrollIntoView would also scroll the whole page),
   // and leave the list alone for a few seconds after the user scrolls it.
   const userScrolled = useRef(0)
@@ -875,7 +877,8 @@ export function LiveView(props: LiveViewInjected) {
                   title={c.polished ? t('tr.polished') : t('tr.raw')}>
                   <span className="ts">{CLOCK(c.start)}</span>
                   <span className="txt">
-                    {shownLines.map((k, i) => { const v = lineText(c, k); return v ? <span className={i === 0 ? 'main' : 'sub'} key={k}>{v}</span> : null })}
+                    {/* The first text there is reads as the main one (a line with only its translation yet shows that). */}
+                    {shownLines.map(k => [k, lineText(c, k)] as const).filter(([, v]) => v).map(([k, v], i) => <span className={i === 0 ? 'main' : 'sub'} key={k}>{v}</span>)}
                   </span>
                   <span className="mark" aria-hidden="true">{c.polished && <Icon.check />}</span>
                   {c.final && (

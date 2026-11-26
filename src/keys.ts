@@ -18,7 +18,7 @@ export type KeyName = keyof typeof KEY_REFS
 export const KEY_NAMES = Object.keys(KEY_REFS) as KeyName[]
 
 /** A model provider configured in DSH that can also do speech recognition. */
-export interface DshProvider { service: KeyName; ref?: string; base?: string; name: string }
+export interface DshProvider { service: KeyName; ref?: string; base?: string; name: string; id?: string }
 
 export interface KeyInfo {
   set: boolean
@@ -37,7 +37,13 @@ export interface Credentials {
   resolve(ref: string): Promise<{ value: string; source: string } | undefined>
   set(ref: string, value: string): Promise<void>
   unset(ref: string): Promise<void>
+  /** Stored records (a key entered for a provider on DSH's Models page is one: "llm-pi-ai/openai"). */
+  listRecords?(): Promise<readonly { key: string; kind: string }[]>
+  readRecord?(key: string): Promise<{ kind: string; key?: string } | undefined>
 }
+
+/** Where DSH's model setup keeps a provider's key entered on the Models page (a record per provider id). */
+const MODEL_RECORDS = 'llm-pi-ai/'
 
 const mask = (k: string) => (k.length > 10 ? `${k.slice(0, 3)}…${k.slice(-4)}` : '••••')
 
@@ -57,6 +63,8 @@ export class KeyStore {
   discover?: () => DshProvider[]
   /** Addresses from DSH's provider setup, per service (e.g. SiliconFlow's international endpoint). */
   bases = new Map<KeyName, string>()
+  /** Which speech service a DSH model provider id is (openai, google…), for keys stored as records. */
+  serviceOf?: (providerId: string) => KeyName | undefined
 
   constructor(private readonly file: string, private readonly settings: () => Partial<Record<KeyName, string>>) {}
 
@@ -70,6 +78,19 @@ export class KeyStore {
     const next = new Map<KeyName, { key: string; info: KeyInfo }>()
     const found = (() => { try { return this.discover?.() ?? [] } catch { return [] } })()
     this.bases = new Map(found.filter(p => p.base).map(p => [p.service, p.base!]))
+    // Keys entered on DSH's Models page for a provider (OpenAI, Google…): stored as records, not under a key name.
+    const records = new Map<KeyName, { key: string; provider: string; ref: string }>()
+    try {
+      for (const r of await this.creds?.listRecords?.() ?? []) {
+        if (r.kind !== 'api-key' || !String(r.key).startsWith(MODEL_RECORDS)) continue
+        const id = String(r.key).slice(MODEL_RECORDS.length)
+        const service = this.serviceOf?.(id) ?? found.find(p => p.id === id)?.service
+        if (!service || records.has(service)) continue
+        const rec = await this.creds!.readRecord?.(String(r.key)).catch(() => undefined)
+        const key = rec?.kind === 'api-key' ? rec.key?.trim() : undefined
+        if (key) records.set(service, { key, provider: found.find(p => p.id === id)?.name ?? id, ref: String(r.key) })
+      }
+    } catch {}
     for (const name of KEY_NAMES) {
       let hit: { key: string; info: KeyInfo } | undefined
       // First the providers set up in DSH (whatever their key is called), then the usual names.
@@ -79,6 +100,8 @@ export class KeyStore {
         const r = await this.creds?.resolve(ref).catch(() => undefined)
         if (r?.value.trim()) { hit = { key: r.value.trim(), info: { set: true, source: r.source === 'file' || provider ? 'dsh' : 'env', ref, provider } }; break }
       }
+      const rec = records.get(name)
+      if (!hit && rec) hit = { key: rec.key, info: { set: true, source: 'dsh', ref: rec.ref, provider: rec.provider } }
       if (!hit && file[name]?.trim()) hit = { key: file[name]!.trim(), info: { set: true, source: 'page' } }
       if (!hit && this.settings()[name]?.trim()) hit = { key: this.settings()[name]!.trim(), info: { set: true, source: 'settings' } }
       if (!hit && !this.creds) {
@@ -109,9 +132,12 @@ export class KeyStore {
     if (this.creds) {
       // Replace the stored key under the name it already has (e.g. GOOGLE_API_KEY), else the usual name.
       const cur = this.info(name)
-      const ref = cur.source === 'dsh' && cur.ref ? cur.ref : KEY_REFS[name][0]
+      // A key from the Models page (a provider record) stays DSH's: one entered here goes under the usual name
+      // (which is read first), and clearing it here never removes the Models page's key.
+      const record = cur.ref?.startsWith(MODEL_RECORDS)
+      const ref = cur.source === 'dsh' && cur.ref && !record ? cur.ref : KEY_REFS[name][0]
       if (key.trim()) await this.creds.set(ref, key.trim())
-      else if (cur.source === 'dsh') await this.creds.unset(ref)
+      else if (cur.source === 'dsh' && !record) await this.creds.unset(ref)
     } else {
       const all = this.readFile()
       if (key.trim()) all[name] = key.trim(); else delete all[name]

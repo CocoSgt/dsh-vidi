@@ -202,11 +202,12 @@ export function apply(ctx: Context, config: Config): void {
         const p = val(raw) ?? {}
         const base = typeof val(p.baseURL) === 'string' ? String(val(p.baseURL)).replace(/\/+$/, '') : undefined
         const service = speechServiceOf(id, base)
-        if (service) out.push({ service, ref: val(p.apiKeyEnv), base: service === 'gemini' || service === 'openai' ? undefined : base, name: String(val(p.displayName) ?? id) })
+        if (service) out.push({ service, ref: val(p.apiKeyEnv), base: service === 'gemini' || service === 'openai' ? undefined : base, name: String(val(p.displayName) ?? id), id })
       }
     }
     return out
   }
+  keys.serviceOf = id => speechServiceOf(id)
   void keys.refresh()
   ctx.inject(['credentials'], (c: any) => {
     c.effect(() => {
@@ -545,6 +546,9 @@ export function apply(ctx: Context, config: Config): void {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const route = url.pathname.replace(/^\/live\/api\/?/, '')
     try {
+      // Keys are read again whenever something may need one, so a key added in DSH (Models page, or the
+      // key settings) while it runs counts at once: no restart.
+      if (['start', 'subs', 'voices', 'restream'].includes(route) || route.startsWith('dub')) await keys.refresh()
       if ((route === 'dub' || route.startsWith('dub/') || route === 'voices' || route.startsWith('voices/')) && await voices(route, req, res, url)) return
       if (route === 'overlay') return send(res, 200, { url: `http://127.0.0.1:${config.overlayPort}/overlay`, screen: `http://127.0.0.1:${config.overlayPort}/screen`, screenLan: `http://${lanAddress()}:${config.overlayPort}/screen` })
       if (route === 'setup') {
