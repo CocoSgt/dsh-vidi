@@ -20,10 +20,11 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11
+      # No registry-url here: with it, setup-node writes an .npmrc holding a placeholder token, which npm
+      # then sends instead of using Trusted Publishing (and gets a 404).
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
       # Trusted Publishing needs npm 11.5.1 or later.
       - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
